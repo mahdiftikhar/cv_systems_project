@@ -268,6 +268,8 @@ class SpecModel(nn.Module):
 
         if is_llama3:
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
+        if max_new_tokens < 1:
+            raise ValueError("max_new_tokens must be positive")
         max_length = max_length - self.spec_layer.total_tokens - 10
 
         if temperature > 1e-5:
@@ -508,7 +510,16 @@ class SpecModel(nn.Module):
             best_candidate, accept_length, sample_p = evaluate_posterior(
                 logits, candidates, logits_processor
             )
-            # print(accept_length)
+            # Commit only the prefix within the output budget and through first EOS.
+            accept_length = min(int(accept_length), max_new_tokens - new_token - 1)
+            selected = candidates[best_candidate, : accept_length + 1].tolist()
+            stop_ids = {self.tokenizer.eos_token_id}
+            if is_llama3:
+                stop_ids.add(stop_token_id)
+            for offset, token in enumerate(selected):
+                if token in stop_ids:
+                    accept_length = offset
+                    break
             if return_acceptance_len:
                 acceptance_len.append(int(accept_length))
             # with Timer("update_inference_inputs"):
@@ -548,7 +559,7 @@ class SpecModel(nn.Module):
             if self.tokenizer.eos_token_id in input_ids[0, input_len:]:
                 stop_reason = "eos"
                 break
-            if new_token > max_new_tokens:
+            if new_token >= max_new_tokens:
                 stop_reason = "token_limit"
                 break
         # if input_ids.shape[1] > max_length:

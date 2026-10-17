@@ -47,14 +47,16 @@ bash experiment/01_baseline_draft/run.sh
 
 ## Settings
 
-Override settings through environment variables. Defaults follow `exp.sh`.
+Override model/data and draft-tree settings through environment variables.
+Temperature is fixed at **0.0 (greedy)**; `TEMPERATURE` does not override it.
+Draft-tree defaults follow `exp.sh`.
 
 | Variable          | Default                                              | Purpose                                                           |
 | ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
 | `BENCH_DIR`       | `<repo>/bench_data`                                  | Benchmark data root                                               |
 | `SPEC_DIR`        | Prepared local draft, then the Hugging Face ID above | Draft checkpoint                                                  |
 | `BASE_MODEL_PATH` | Prepared local copy detected automatically           | Optional local copy of the same LLaVA checkpoint                  |
-| `TEMPERATURE`     | `1.0`                                                | Sampling temperature; same as experiment 00                       |
+| Temperature | `0.0` (fixed) | Greedy decoding; same as experiment 00; no environment override |
 | `PYTHON_BIN`      | `<repo>/.venv/bin/python`                                             | Python executable; same as experiment 00                          |
 | `DEPTH`           | `3`                                                  | Draft-tree depth                                                  |
 | `TOP_K`           | `8`                                                  | Draft-tree width                                                  |
@@ -64,6 +66,19 @@ Override settings through environment variables. Defaults follow `exp.sh`.
 Both experiments load with `torch_dtype="auto"`. Record actual precision for comparisons.
 
 ## Evaluation
+
+Current runs fix temperature at 0.0 and pass `--max-new-token 1024` for
+both warmup and measured questions. The cap counts all returned token IDs,
+including EOS. Both methods stop at first EOS or exactly 1,024 output tokens.
+ViSpec clips the final accepted prefix before committing it, so it cannot
+return tokens beyond EOS or the cap. Prompt construction is unchanged.
+
+Raw generated token IDs and the EOS ID are saved in each turn's `measurement`,
+before decoding cleanup. Use the [comparison command](../METRICS.md#compare-methods-and-repeats)
+to check exact sequences through first EOS and inspect first mismatch positions.
+Greedy correctness is pending until matching cluster runs complete; no judge
+is needed. Matching capped prefixes do not establish full-answer equivalence,
+and truncated runs keep controlled speedup pending.
 
 - **Order:** TextVQA → GQA → MM-Vet; stop on the first failure.
 - **Defaults:** batch size 1, one GPU, three warmups per benchmark.
@@ -131,12 +146,11 @@ and hardware links.
 
 ### Generation and timing
 
-- The CLI's `--max-new-token` is not forwarded to `specgenerate()`.
-- Draft generation defaults to `max_new_tokens=512` with a strict `>` stop check;
-  a verification iteration can overshoot the limit.
-- Its iteration budget is `2048 - total_tokens - 10`; EOS may stop generation earlier.
-- 00 instead allows 2048 autoregressive steps with an ineffective 1024-token check.
-  These inherited limits differ; truncated outputs prevent a controlled speed comparison.
+- CLI `--max-new-token` is forwarded for warmup and measured generation.
+- Experiment runners enforce the same 1,024-output-token cap for both methods.
+- ViSpec retains its separate verification-iteration safety budget; an iteration
+  stop or token-cap stop keeps controlled speedup pending.
+- Historical runs used different inherited limits; keep them separate.
 - TTFT is captured before drafting: the initial token is sampled directly from LLaVA.
 - TTFT is `null` for other speculative methods (EAGLE/Medusa), outside this experiment.
 - Draft `decode_time` covers the verification loop after initial drafting; use total latency/TTFT for matching comparisons.

@@ -200,7 +200,8 @@ def get_model_answers(
         start_time = time.time()
 
         output_ids, new_token, idx = model.specgenerate(
-            **model_inputs, temperature=temperature, log=True
+            **model_inputs, temperature=temperature, log=True,
+            max_new_tokens=args.max_new_token
         )
         torch.cuda.synchronize()
         total_time = time.time() - start_time
@@ -246,6 +247,7 @@ def get_model_answers(
             generation_output = model.specgenerate(
                 **model_inputs,
                 temperature=temperature,
+                max_new_tokens=args.max_new_token,
                 log=True,
                 return_acceptance_len=True,
                 **(

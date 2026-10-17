@@ -57,6 +57,8 @@ class GenerationMeasurement(FirstTokenTimer):
             "schema_version": 1,
             "input_ids_sha256": self.input_fingerprint,
             "input_ids_tokens": self.input_tokens,
+            "output_token_ids": ids,
+            "eos_token_id": eos,
             "output_tokens": len(ids),
             "reported_new_tokens": int(reported_tokens),
             "token_count_matches": len(ids) == int(reported_tokens),

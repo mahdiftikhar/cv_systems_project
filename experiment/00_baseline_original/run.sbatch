@@ -6,6 +6,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=06:00:00
+# evc26 had no usable GPU in job 942134; revisit after cluster support confirms repair.
+#SBATCH --exclude=evc26
 
 set -euo pipefail
 : "${SLURM_JOB_ID:?Run this script with sbatch, not on a login node}"

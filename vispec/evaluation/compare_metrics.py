@@ -42,6 +42,54 @@ def runtime_signature(report, benchmark):
     }
 
 
+
+def token_agreement(original_maps, draft_maps, common):
+    """Compare raw generated IDs through first EOS, including EOS itself."""
+    checked = matched = 0
+    missing = 0
+    mismatches = []
+    for original_run, original in enumerate(original_maps):
+        for draft_run, draft in enumerate(draft_maps):
+            for key in sorted(common):
+                sequences = []
+                for row in (original[key], draft[key]):
+                    measurement = row["measurement"]
+                    ids = measurement.get("output_token_ids")
+                    eos = measurement.get("eos_token_id")
+                    if ids is None:
+                        break
+                    if eos is not None and eos in ids:
+                        ids = ids[: ids.index(eos) + 1]
+                    sequences.append(ids)
+                if len(sequences) != 2:
+                    missing += 1
+                    continue
+                checked += 1
+                a, b = sequences
+                if a == b:
+                    matched += 1
+                    continue
+                position = next(
+                    (i for i in range(min(len(a), len(b))) if a[i] != b[i]),
+                    min(len(a), len(b)),
+                )
+                mismatches.append({
+                    "original_run_index": original_run,
+                    "draft_run_index": draft_run,
+                    "question_id": key[0], "choice": key[1], "turn": key[2],
+                    "first_mismatch_index": position,
+                    "original_token_id": a[position] if position < len(a) else None,
+                    "draft_token_id": b[position] if position < len(b) else None,
+                    "original_length": len(a), "draft_length": len(b),
+                })
+    return {
+        "checked_pairs": checked, "matched_pairs": matched,
+        "missing_pairs": missing,
+        "sequence_agreement_rate": matched / checked if checked else None,
+        "mismatches": mismatches,
+    }
+
+
 def compare(original_paths, draft_paths, output_dir):
     original = [load_report(path) for path in original_paths]
     draft = [load_report(path) for path in draft_paths]
@@ -227,6 +275,21 @@ def compare(original_paths, draft_paths, output_dir):
                         )
                         / len(common)
                     )
+        tokens = token_agreement(maps[: len(original)], maps[len(original) :], common)
+        greedy = all(
+            float(report["summary"]["metadata"].get("temperature", "nan")) == 0
+            for report in all_reports
+        )
+        caps = [(row["measurement"].get("generation_limits") or {}).get("max_new_tokens")
+                for row in matched_rows]
+        if not caps or any(cap is None for cap in caps):
+            issues.append("Missing output-token limit evidence")
+        elif len(set(caps)) != 1:
+            issues.append("Output-token limits differ across methods or runs")
+        if greedy and (tokens["missing_pairs"] or not tokens["checked_pairs"]):
+            issues.append("Missing generated token IDs for greedy correctness validation")
+        if greedy and tokens["mismatches"]:
+            issues.append("Greedy token sequences differ; inspect first mismatches")
         quality_sets = [
             {key for key in common if rows[key].get("score") is not None}
             for rows in maps
@@ -262,6 +325,11 @@ def compare(original_paths, draft_paths, output_dir):
             else None,
             "ttft_ratio_original_over_draft": ratio("run_mean_ttft_s"),
             "answer_agreement_rate": statistics.mean(agreement) if agreement else None,
+            "token_agreement": tokens,
+            "greedy_correctness_validated": (
+                tokens["checked_pairs"] > 0 and tokens["missing_pairs"] == 0
+                and not tokens["mismatches"] and not issues
+            ) if greedy else None,
             "quality_delta_percentage_points": quality_b - quality_a
             if quality_comparable
             else None,
@@ -278,6 +346,8 @@ def compare(original_paths, draft_paths, output_dir):
         "- Ratios compare means of per-run means on matching completed turns.",
         "- Repeated-run standard deviations are in `comparison.json`; one run cannot estimate variability.",
         "- Answer agreement ignores whitespace differences; it is not an accuracy score.",
+        "- Token agreement compares IDs through first EOS inclusive; indices are zero-based. Missing IDs stay pending.",
+        "- At nonzero temperature, token agreement does not validate sampling correctness.",
         "- Controlled speedup stays pending when coverage, settings, or stop reasons are unsuitable.",
         "",
         "| Benchmark | Matched turns/run | Original mean (s) | Draft mean (s) | Latency ratio | Controlled speedup | Agreement | Quality Δ (pp) |",
@@ -290,6 +360,30 @@ def compare(original_paths, draft_paths, output_dir):
             f"{fmt(row['controlled_latency_speedup'])} | {fmt(row['answer_agreement_rate'])} | {fmt(row['quality_delta_percentage_points'])} |"
         )
     lines += [
+        "",
+        "| Benchmark | Token pairs checked | Matching sequences | Missing pairs | Token agreement | Greedy validated |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    mismatch_lines = []
+    for benchmark, row in result["benchmarks"].items():
+        tokens = row["token_agreement"]
+        lines.append(
+            f"| {benchmark} | {tokens['checked_pairs']} | {tokens['matched_pairs']} | "
+            f"{tokens['missing_pairs']} | {fmt(tokens['sequence_agreement_rate'])} | "
+            f"{row['greedy_correctness_validated']} |"
+        )
+        for mismatch in tokens["mismatches"]:
+            mismatch_lines.append(
+                f"- {benchmark}, question {mismatch['question_id']}, choice {mismatch['choice']}, "
+                f"turn {mismatch['turn']}, original run {mismatch['original_run_index']}, "
+                f"draft run {mismatch['draft_run_index']}: first mismatch at output index "
+                f"{mismatch['first_mismatch_index']}; token IDs "
+                f"{mismatch['original_token_id']} vs {mismatch['draft_token_id']} "
+                "(null means sequence ended)."
+            )
+    lines += [
+        "",
+        *mismatch_lines,
         "",
         *[
             f"- **{benchmark}:** " + "; ".join(row["warnings"])

@@ -13,7 +13,7 @@ cd "$repo_dir"
 # step 02 -- Reject positional arguments; configure this run with environment variables.
 # ==========================================
 if [[ $# -gt 0 ]]; then
-    echo "Usage: [BENCH_DIR=/absolute/path] [SPEC_DIR=/absolute/path/or/hf-id] [TEMPERATURE=1.0] [PYTHON_BIN=python] $0" >&2
+    echo "Usage: [BENCH_DIR=/absolute/path] [SPEC_DIR=/absolute/path/or/hf-id] [PYTHON_BIN=python] $0" >&2
     exit 2
 fi
 
@@ -44,7 +44,9 @@ fi
 if [[ -f "$bench_dir/gqa/testdev_balanced_questions.json" ]]; then
     export GQA_ANNOTATIONS="${GQA_ANNOTATIONS:-$bench_dir/gqa/testdev_balanced_questions.json}"
 fi
-temperature="${TEMPERATURE:-1.0}"
+# Fixed greedy decoding for baseline/speculative agreement; ignore TEMPERATURE.
+temperature="0.0"
+max_new_tokens=1024
 python_bin="${PYTHON_BIN:-$repo_dir/.venv/bin/python}"
 benchmarks=(textvqa gqa mmvet)
 
@@ -60,6 +62,7 @@ git status --short > "$run_dir/git-status.txt"
 git diff HEAD --binary > "$run_dir/tracked-changes.patch"
 cp "$experiment_dir/run.sh" "$run_dir/runner.sh"
 cp "$repo_dir/experiment/capture_device.sh" "$run_dir/capture_device.sh"
+cp "$repo_dir/experiment/check_cuda.sh" "$run_dir/check_cuda.sh"
 if [[ -f "$repo_dir/.preparation/assets.json" ]]; then
     cp "$repo_dir/.preparation/assets.json" "$run_dir/prepared-assets.json"
 fi
@@ -105,6 +108,7 @@ trap 'exit 143' TERM
     printf 'base_model=%s\nspec_model=%s\nbench_dir=%s\ntemperature=%s\n' "$base_model" "$spec_dir" "$bench_dir" "$temperature"
     printf 'python=%s\nslurm_job_id=%s\ncuda_visible_devices=%s\n' "$(command -v "$python_bin")" "${SLURM_JOB_ID:-unset}" "${CUDA_VISIBLE_DEVICES:-unset}"
     printf 'method=autoregressive\n'
+    printf 'max_new_tokens=%s\n' "$max_new_tokens"
     printf 'benchmarks=%s\n' "${benchmarks[*]}"
 } > "$run_dir/metadata.txt"
 echo "Run artifacts: $run_dir"
@@ -120,6 +124,7 @@ fi
 "$python_bin" "$repo_dir/experiment/capture_packages.py" > "$run_dir/packages.txt"
 bash "$run_dir/capture_device.sh" "$python_bin" > "$run_dir/device.txt" 2>&1
 echo "Launch device report: $run_dir/device.txt"
+bash "$run_dir/check_cuda.sh" "$python_bin"
 export PYTHONUNBUFFERED=1
 
 # ==========================================
@@ -134,6 +139,7 @@ for benchmark in "${benchmarks[@]}"; do
         --spec-model-path "$spec_dir"
         --model-id test
         --bench-name "$run_dir/results/${benchmark}_test/baseline_llava"
+        --max-new-token "$max_new_tokens"
         --temperature "$temperature")
 
     # ==========================================

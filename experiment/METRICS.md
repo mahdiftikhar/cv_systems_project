@@ -23,6 +23,7 @@
 | Draft acceptance length | Accepted draft tokens per verification iteration; add one for the target token            |
 | Peak GPU memory         | PyTorch allocated/reserved bytes, separately for each visible GPU                         |
 | Quality score           | Benchmark-specific score on choice 0, turn 0; percent                                     |
+| Token sequence agreement | Exact generated IDs through first EOS inclusive; matched / checked cross-method turn pairs |
 | Answer agreement        | Matching answers between methods, ignoring whitespace differences                         |
 | Latency speedup         | Original mean latency / draft mean latency on matching turns                              |
 | Repeat variation        | Sample standard deviation of independent per-run means; pending for one run               |
@@ -104,8 +105,22 @@ python -m vispec.evaluation.compare_metrics \
 - Ratios use matching question/choice/turn IDs; repeated runs are weighted equally.
 - `comparison.md` and `comparison.json` include latency/TTFT ratios, agreement, quality deltas, and repeat variation.
 - Quality deltas require complete matching score coverage and scoring protocols/judge settings.
-- Controlled speedup remains pending for incomplete runs, unknown stop reasons, or truncation.
-- Original and draft generation limits remain inherited and different; inspect lengths and stop reasons.
+- Current runners use greedy decoding and the same exact 1,024-output-token cap,
+  including EOS. Historical runs retain their original settings.
+- Token IDs and EOS ID are stored in `measurement` before decoded-text cleanup.
+- `token_agreement` in comparison JSON gives checked/matched/missing pair counts,
+  sequence agreement, and every mismatching turn's first differing token index
+  (zero-based), token IDs, lengths, and report indices. A null token ID means
+  that sequence ended. Each original/draft run pair is checked on common turns.
+- Old runs without IDs remain pending for token validation; do not reconstruct
+  IDs by re-tokenizing cleaned answers. Nonzero-temperature sequence agreement
+  is descriptive, not sampling-distribution validation.
+- `greedy_correctness_validated` requires full matching coverage, settings and
+  hardware evidence, EOS completion, and exact token agreement on all pairs.
+- Controlled speedup remains pending for incomplete runs, unknown stop reasons,
+  truncation, missing/different output caps, or greedy token evidence failures.
+  Raw latency ratios are still reported. Capped-prefix agreement does not
+  establish full-answer equivalence.
 - Token fingerprints verify prompt IDs; model/data revisions remain unpinned, so retain dataset/cache revision notes.
 - Sample token counts, compare answer quality, and repeat runs before drawing conclusions.
 - Record verified results in each experiment README and the register, with hardware and artifact links.

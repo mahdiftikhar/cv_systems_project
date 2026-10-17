@@ -55,6 +55,7 @@ def baseline_forward(
     tree_choices,
     logits_processor=None,
     max_steps=2048,
+    max_new_tokens=1024,
     on_first_token=None,
     generation_stats=None,
     **kwargs,
@@ -122,13 +123,15 @@ def baseline_forward(
         **kwargs,
     )
 
+    if max_new_tokens < 1:
+        raise ValueError("max_new_tokens must be positive")
     new_token = 0
 
     torch.cuda.synchronize()
     start_time = time.time()
 
     stop_reason = "iteration_limit"
-    for idx in range(max_steps):
+    for idx in range(min(max_steps, max_new_tokens)):
         if logits_processor is not None:
             logits = outputs.logits[:, -1]
             logits = logits_processor(None, logits)
@@ -146,7 +149,7 @@ def baseline_forward(
         if tokenizer.eos_token_id in input_ids[0, input_len:].tolist():
             stop_reason = "eos"
             break
-        if new_token > 1024:
+        if input_ids.shape[1] - input_len >= max_new_tokens:
             stop_reason = "token_limit"
             break
         # if input_ids.shape[1] > 1960:
@@ -157,9 +160,9 @@ def baseline_forward(
     if generation_stats is not None:
         generation_stats.update(
             stop_reason=stop_reason, iterations=idx + 1,
-            generation_limits={"iteration_limit": max_steps, "max_new_tokens": None},
+            generation_limits={"iteration_limit": max_steps, "max_new_tokens": max_new_tokens},
         )
-    # Count the returned token IDs without changing the inherited stopping behavior.
+    # Count exactly the returned token IDs.
     new_token = input_ids.shape[1] - input_len
     return input_ids, new_token, idx, end_time - start_time
 
@@ -276,6 +279,7 @@ def get_model_answers(
             tokenizer=tokenizer,
             tree_choices=tree_choices,
             logits_processor=logits_processor,
+            max_new_tokens=args.max_new_token,
         )
 
         torch.cuda.synchronize()
@@ -324,6 +328,7 @@ def get_model_answers(
                 tokenizer=tokenizer,
                 tree_choices=tree_choices,
                 logits_processor=logits_processor,
+                max_new_tokens=args.max_new_token,
                 on_first_token=first_token_timer.mark,
                 generation_stats=generation_stats,
             )

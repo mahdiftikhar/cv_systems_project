@@ -29,7 +29,7 @@ SOURCES = {
     "textvqa_images": "https://dl.fbaipublicfiles.com/textvqa/images/train_val_images.zip",
     "gqa_images": "https://downloads.cs.stanford.edu/nlp/data/gqa/images.zip",
     "gqa_questions": "https://downloads.cs.stanford.edu/nlp/data/gqa/questions1.2.zip",
-    "gqa_prompts": "https://drive.google.com/file/d/1atZSBBrAX54yYpxtVVW33zFvcnaHeFPy/view",
+    "gqa_prompts": "https://drive.google.com/uc?id=1atZSBBrAX54yYpxtVVW33zFvcnaHeFPy",
     "textvqa_evaluator": "https://raw.githubusercontent.com/haotian-liu/LLaVA/main/llava/eval/m4c_evaluator.py",
 }
 
@@ -199,7 +199,7 @@ def download_prompts(path):
         ) from None
     # gdown's cookie file otherwise lives in the user's home directory.
     result = gdown.download(
-        SOURCES["gqa_prompts"], str(path), fuzzy=True, resume=True, use_cookies=False
+        SOURCES["gqa_prompts"], str(path), resume=True, use_cookies=False
     )
     if not result:
         raise RuntimeError("GQA prompt download failed; rerun preparation to resume")
