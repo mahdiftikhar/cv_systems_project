@@ -1,0 +1,29 @@
+# Use: rsync -av --exclude-from=.rsyncignore ./ USER@HOST:/path/to/cv_systems_project/
+# Generated assets stay on the machine where prepare.sh runs.
+/models/
+/bench_data/
+/vispec_data/
+/downloads/
+/.preparation/
+/.cache/
+/envs/
+/.venv/
+/tools/downloaded/
+/models.env
+/model_snapshots.json
+/env.sh
+/experiment/*/runs/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+.env
+.env.*
+.delta
+
+# Other generated/legacy local assets.
+/cache/
+/logs/
+/nohup.out
+/tools/m4c_evaluator.py

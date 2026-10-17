@@ -214,3 +214,26 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Generated experiment logs, environment snapshots, and model responses.
+/experiment/*/runs/
+
+# Prepared models, benchmark data, archives, local environments, and setup evidence.
+/models/
+/bench_data/
+/vispec_data/
+/downloads/
+/.preparation/
+/.cache/
+/envs/
+/tools/downloaded/
+# Legacy generated setup files (new runners discover repo-local assets directly).
+/models.env
+/model_snapshots.json
+/env.sh
+
+# Other generated/legacy local assets.
+/cache/
+/logs/
+/nohup.out
+/tools/m4c_evaluator.py

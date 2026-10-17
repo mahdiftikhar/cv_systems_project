@@ -271,6 +271,7 @@ def initialize_tree(
     inputs_embeds=None,
     embed_weights=None,
     image_mask=None,
+    on_first_token=None,
     **kwargs,
 ):
     outputs, orig, hidden_states = model(
@@ -289,6 +290,9 @@ def initialize_tree(
     else:
         token = torch.argmax(orig[:, -1])
         token = token[None, None]
+    # This token comes directly from the target model; no draft verification is needed.
+    if on_first_token is not None:
+        on_first_token(token)
     input_ids = torch.cat((input_ids, token.to(input_ids.device)), dim=1)
     # Clone the output hidden states
 

@@ -21,6 +21,12 @@ from transformers import LlavaNextForConditionalGeneration
 from ..model.kv_cache import initialize_past_key_values
 from ..model.utils import *
 from .textvqa_prompt import build_prompt
+from .measurement import (
+    GenerationMeasurement,
+    references,
+    write_manifest,
+    write_runtime,
+)
 
 
 def load_data(args):
@@ -44,7 +50,9 @@ def load_data(args):
         )
         question = d["question"]
         qid = d["question_id"]
-        new_data.append({"image": image, "question": question, "qid": qid})
+        new_data.append(
+            {"image": image, "question": question, "qid": qid, "answers": d["answers"]}
+        )
 
     return Dataset.from_list(new_data).shuffle(seed=42).select(range(0, 100))
 
@@ -67,6 +75,7 @@ def run_eval(
 ):
 
     data = load_data(args)
+    write_manifest(answer_file, data, "textvqa")
 
     # Split the question file into `num_gpus` files
     assert num_gpus_total % num_gpus_per_model == 0
@@ -170,6 +179,7 @@ def get_model_answers(
         logits_processor = None
 
     model.eval()
+    write_runtime(answer_file, model)
     print("Check model training state:", model.training)
 
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
@@ -231,18 +241,29 @@ def get_model_answers(
             # generate prompt
             model_inputs = build_prompt(d, args)
 
-            torch.cuda.synchronize()
-            start_time = time.time()
-
-            output_ids, new_token, idx, accp_len = model.specgenerate(
+            first_token_timer = GenerationMeasurement(model_inputs)
+            generation_stats = {}
+            generation_output = model.specgenerate(
                 **model_inputs,
                 temperature=temperature,
                 log=True,
                 return_acceptance_len=True,
+                **(
+                    {
+                        "on_first_token": first_token_timer.mark,
+                        "generation_stats": generation_stats,
+                        "return_decode_time": True,
+                    }
+                    if args.use_ours else {}
+                ),
             )
-            torch.cuda.synchronize()
-            total_time = time.time() - start_time
+            total_time = first_token_timer.elapsed()
+            output_ids, new_token, idx, accp_len = generation_output[:4]
+            dec_time = generation_output[4] if args.use_ours else None
             output_ids = output_ids[0][len(model_inputs["input_ids"][0]) :]
+            measurement = first_token_timer.finish(
+                output_ids, tokenizer, new_token, generation_stats
+            )
 
             output_ids[output_ids > tokenizer.vocab_size] = 0
             output = tokenizer.decode(
@@ -262,7 +283,7 @@ def get_model_answers(
 
             turns.append(output)
             idxs.append(int(idx))
-            new_tokens.append(int(new_token))
+            new_tokens.append(measurement["output_tokens"])
             wall_time.append(total_time)
             acceptance_length.extend(accp_len)
 
@@ -273,6 +294,9 @@ def get_model_answers(
                     "idxs": idxs,
                     "new_tokens": new_tokens,
                     "wall_time": wall_time,
+                    "ttft": [first_token_timer.seconds],
+                    "measurement": [measurement],
+                    "decode_time": [dec_time],
                     "acceptance_length": acceptance_length,
                 }
             )
@@ -282,6 +306,7 @@ def get_model_answers(
         with open(os.path.expanduser(answer_file), "a") as fout:
             ans_json = {
                 "question_id": d["qid"],
+                "reference_answers": references(d),
                 "answer_id": shortuuid.uuid(),
                 "model_id": model_id,
                 "choices": choices,

@@ -28,7 +28,6 @@ from .utils import *
 
 
 class SpecModel(nn.Module):
-
     def __init__(
         self,
         base_model,
@@ -258,6 +257,8 @@ class SpecModel(nn.Module):
         inputs_embeds=None,
         return_acceptance_len=False,
         return_decode_time=False,
+        on_first_token=None,
+        generation_stats=None,
         **kwargs,
     ):
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -471,6 +472,7 @@ class SpecModel(nn.Module):
             inputs_embeds,
             embed_weights,
             image_mask=special_image_mask,
+            on_first_token=on_first_token,
             **kwargs,
         )
         new_token = 0
@@ -481,6 +483,7 @@ class SpecModel(nn.Module):
             torch.cuda.synchronize()
             start_time = time.time()
 
+        stop_reason = "iteration_limit"
         for idx in range(max_length):
             # with Timer("all"):
             if not hasattr(self.base_model, "language_model"):
@@ -539,11 +542,14 @@ class SpecModel(nn.Module):
 
             if is_llama3:
                 if stop_token_id in input_ids[0, input_len:]:
+                    stop_reason = "eos"
                     break
 
             if self.tokenizer.eos_token_id in input_ids[0, input_len:]:
+                stop_reason = "eos"
                 break
             if new_token > max_new_tokens:
+                stop_reason = "token_limit"
                 break
         # if input_ids.shape[1] > max_length:
         #     break
@@ -552,6 +558,15 @@ class SpecModel(nn.Module):
         # else:
         #     return input_ids, new_token, idx
 
+        if generation_stats is not None:
+            generation_stats.update(
+                stop_reason=stop_reason,
+                iterations=idx + 1,
+                generation_limits={
+                    "iteration_limit": max_length,
+                    "max_new_tokens": max_new_tokens,
+                },
+            )
         outputs = (input_ids,)
         if log:
             outputs += (new_token, idx)

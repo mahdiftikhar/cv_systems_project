@@ -23,6 +23,12 @@ from ..model.kv_cache import initialize_past_key_values
 from ..model.spec_model import SpecModel
 from ..model.utils import *
 from .textvqa_prompt import build_prompt
+from .measurement import (
+    GenerationMeasurement,
+    references,
+    write_manifest,
+    write_runtime,
+)
 
 
 def load_data(args):
@@ -46,7 +52,9 @@ def load_data(args):
         )
         question = d["question"]
         qid = d["question_id"]
-        new_data.append({"image": image, "question": question, "qid": qid})
+        new_data.append(
+            {"image": image, "question": question, "qid": qid, "answers": d["answers"]}
+        )
 
     return Dataset.from_list(new_data).shuffle(seed=42).select(range(0, 100))
 
@@ -58,6 +66,8 @@ def baseline_forward(
     tree_choices,
     logits_processor=None,
     max_steps=2048,
+    on_first_token=None,
+    generation_stats=None,
     **kwargs,
 ):
     assert input_ids.shape[0] == 1, "Only support batch size 1 for now!!"
@@ -128,6 +138,7 @@ def baseline_forward(
     torch.cuda.synchronize()
     start_time = time.time()
 
+    stop_reason = "iteration_limit"
     for idx in range(max_steps):
         if logits_processor is not None:
             logits = outputs.logits[:, -1]
@@ -136,20 +147,31 @@ def baseline_forward(
             input_id = torch.multinomial(probabilities, 1)
         else:
             input_id = outputs.logits[:, -1:].argmax(dim=-1)
+        if idx == 0 and on_first_token is not None:
+            on_first_token(input_id)
         outputs = model.base_model(
             input_id, use_cache=True, past_key_values=past_key_values
         )
         input_ids = torch.cat([input_ids, input_id], dim=-1)
 
         if tokenizer.eos_token_id in input_ids[0, input_len:].tolist():
+            stop_reason = "eos"
             break
         if new_token > 1024:
+            stop_reason = "token_limit"
             break
         # if input_ids.shape[1] > 1960:
         #     break
     torch.cuda.synchronize()
     end_time = time.time()
 
+    if generation_stats is not None:
+        generation_stats.update(
+            stop_reason=stop_reason, iterations=idx + 1,
+            generation_limits={"iteration_limit": max_steps, "max_new_tokens": None},
+        )
+    # Count the returned token IDs without changing the inherited stopping behavior.
+    new_token = input_ids.shape[1] - input_len
     return input_ids, new_token, idx, end_time - start_time
 
 
@@ -170,6 +192,7 @@ def run_eval(
     tree_choices,
 ):
     data = load_data(args)
+    write_manifest(answer_file, data, "textvqa")
 
     # Split the question file into `num_gpus` files
     assert num_gpus_total % num_gpus_per_model == 0
@@ -238,6 +261,7 @@ def get_model_answers(
         logits_processor = None
 
     model.eval()
+    write_runtime(answer_file, model)
     print("Check model training state:", model.training)
 
     cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
@@ -303,19 +327,22 @@ def get_model_answers(
 
             model_inputs = build_prompt(d, args)
 
-            torch.cuda.synchronize()
-            start_time = time.time()
-
+            first_token_timer = GenerationMeasurement(model_inputs)
+            generation_stats = {}
             output_ids, new_token, idx, dec_time = baseline_forward(
                 **model_inputs,
                 model=model,
                 tokenizer=tokenizer,
                 tree_choices=tree_choices,
                 logits_processor=logits_processor,
+                on_first_token=first_token_timer.mark,
+                generation_stats=generation_stats,
             )
-            torch.cuda.synchronize()
-            total_time = time.time() - start_time
+            total_time = first_token_timer.elapsed()
             output_ids = output_ids[0][len(model_inputs["input_ids"][0]) :]
+            measurement = first_token_timer.finish(
+                output_ids, tokenizer, new_token, generation_stats
+            )
 
             output_ids[output_ids > tokenizer.vocab_size] = 0
             output = tokenizer.decode(
@@ -335,7 +362,7 @@ def get_model_answers(
 
             turns.append(output)
             idxs.append(int(idx))
-            new_tokens.append(int(new_token))
+            new_tokens.append(measurement["output_tokens"])
             wall_time.append(total_time)
             decode_time.append(dec_time)
 
@@ -346,6 +373,8 @@ def get_model_answers(
                     "idxs": idxs,
                     "new_tokens": new_tokens,
                     "wall_time": wall_time,
+                    "ttft": [first_token_timer.seconds],
+                    "measurement": [measurement],
                     "decode_time": decode_time,
                 }
             )
@@ -355,6 +384,7 @@ def get_model_answers(
         with open(os.path.expanduser(answer_file), "a") as fout:
             ans_json = {
                 "question_id": d["qid"],
+                "reference_answers": references(d),
                 "answer_id": shortuuid.uuid(),
                 "model_id": model_id,
                 "choices": choices,
