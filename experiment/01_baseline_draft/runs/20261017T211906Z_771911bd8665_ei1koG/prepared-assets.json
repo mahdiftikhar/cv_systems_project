@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "textvqa_json": "https://dl.fbaipublicfiles.com/textvqa/data/TextVQA_0.5.1_val.json",
+    "textvqa_images": "https://dl.fbaipublicfiles.com/textvqa/images/train_val_images.zip",
+    "gqa_images": "https://downloads.cs.stanford.edu/nlp/data/gqa/images.zip",
+    "gqa_questions": "https://downloads.cs.stanford.edu/nlp/data/gqa/questions1.2.zip",
+    "gqa_prompts": "https://drive.google.com/file/d/1atZSBBrAX54yYpxtVVW33zFvcnaHeFPy/view",
+    "textvqa_evaluator": "https://raw.githubusercontent.com/haotian-liu/LLaVA/main/llava/eval/m4c_evaluator.py"
+  },
+  "ready": true,
+  "models": {
+    "base": {
+      "repo_id": "llava-hf/llava-v1.6-vicuna-7b-hf",
+      "revision": "c916e6cdcd760b4cecd1dd4907f84ac649f93b23",
+      "path": "models/llava-v1.6-vicuna-7b-hf"
+    },
+    "draft": {
+      "repo_id": "JLKang/ViSpec-llava-v1.6-vicuna-7b-hf",
+      "revision": "6e85ec0569c5095cee7cbd39c06a144965e085c4",
+      "path": "models/ViSpec-llava-v1.6-vicuna-7b-hf"
+    }
+  },
+  "counts": {
+    "textvqa_input_rows": 5000,
+    "gqa_input_rows": 12578
+  },
+  "mmvet": {
+    "test_rows": 218,
+    "fingerprint": "42ff97d27f5aba0f"
+  },
+  "finished_utc": "2026-10-17T04:11:48.664488+00:00",
+  "textvqa_evaluator_sha256": "8b49e1033e29d551c0bdd86d9149e2b54370e4cd17e52176ac9061b3521f0774"
+}

@@ -1,0 +1,34 @@
+{
+  "devices": [
+    {
+      "index": 0,
+      "name": "NVIDIA H100 PCIe",
+      "uuid": "c8aca2f5-7741-b9ef-76aa-48901fe44401",
+      "total_memory_bytes": 85017624576
+    }
+  ],
+  "parameter_dtypes": [
+    "torch.float16"
+  ],
+  "allocation": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "SLURM_CPUS_PER_TASK": "8",
+    "SLURM_CPUS_ON_NODE": "8",
+    "SLURM_MEM_PER_NODE": "65536",
+    "SLURM_MEM_PER_CPU": null,
+    "SLURM_GPUS": null,
+    "SLURM_GPUS_PER_TASK": null,
+    "SLURM_GPUS_ON_NODE": "1"
+  },
+  "cpu_affinity": [
+    0,
+    2,
+    4,
+    6,
+    32,
+    34,
+    36,
+    38
+  ],
+  "base_model_revision": null
+}

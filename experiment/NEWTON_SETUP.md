@@ -5,7 +5,7 @@
 - Jobs invoke `.venv/bin/python` directly; activation, Conda, pip inside `.venv`, and uv on compute nodes at runtime are not required.
 - Environment creation/installation and preparation belong on compute nodes.
   [UCF environment policy](https://arcc.ist.ucf.edu/docs/software/anaconda/).
-- These instructions have not been executed on Newton; local checks use mocked downloads only.
+- The [experiment register](README.md) links the current completed runs and their hardware evidence.
 
 ## Login shell: request a GPU session
 
@@ -19,7 +19,6 @@ srun --account="$NEWTON_ACCOUNT" --partition=normal \
   --mem=64G --time=03:00:00 --pty bash
 ```
 
-- `evc26` failed GPU detection in your earlier session; `evc39` worked.
 - Verify the assigned node with `hostname` and `nvidia-smi`.
 - If a previous allocation survives disconnection, reuse its job ID with
   `srun --jobid=JOB_ID --overlap --gres=gpu:nvidia_h100_pcie:1 --pty bash`.
@@ -84,7 +83,8 @@ cv_systems_project/              # contains .git/
 └── experiment/*/runs/          # evaluation evidence and reports
 ```
 
-- Generated directories are excluded from Git and from rsync when using `.rsyncignore`.
+- Generated assets are ignored by default. Only the two run snapshots selected
+  in `.gitignore` are versioned for team review. `.rsyncignore` controls transfer exclusions.
 - No `PROJECT_ROOT`, `models.env`, or manual source commands are needed.
 - Offline check after preparation:
 
@@ -145,7 +145,8 @@ bash experiment/submit.sh experiment/01_baseline_draft
 - Reports are under each run's `reports/` folder. MM-Vet accuracy needs external judge grades afterward.
 - Metric definitions and comparison/re-scoring commands: [METRICS.md](METRICS.md).
 - Check truncation before interpreting speedup: the inherited generation limits still differ.
-- Keep raw runs on project storage and commit concise verified results with artifact references.
+- Preserve raw runs on project storage. The current jobs 950793 and 950803 are
+  also versioned for team review through explicit `.gitignore` exceptions.
 
 ## Sync code without copying downloads back and forth
 

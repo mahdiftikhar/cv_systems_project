@@ -1,0 +1,103 @@
+{
+  "matplotlib_version": "3.9.4",
+  "benchmark_order": [
+    "textvqa",
+    "gqa",
+    "mmvet"
+  ],
+  "plotted_values": {
+    "latency": [
+      [
+        9.674778959676622,
+        1.3804354815976694,
+        4.108819625126796
+      ],
+      [
+        3.364660405968316,
+        0.6399968434870243,
+        1.6507091679900816
+      ]
+    ],
+    "ttft": [
+      [
+        0.28568258746527136,
+        0.2728676254162565,
+        0.2765539269381707
+      ],
+      [
+        0.2868618748150766,
+        0.2622219049045816,
+        0.27761857599925693
+      ]
+    ],
+    "throughput": [
+      [
+        44.373106795439305,
+        35.40911592871254,
+        43.71442294538295
+      ],
+      [
+        127.40661709562043,
+        76.32850145610198,
+        108.68834287456703
+      ]
+    ],
+    "tpot": [
+      [
+        22.027920685309837,
+        23.155312328737818,
+        21.65916910434475
+      ],
+      [
+        7.5605852634949935,
+        8.704236403254471,
+        8.026309810008119
+      ]
+    ],
+    "gpu_memory": [
+      [
+        20.87205934524536,
+        20.82830810546875,
+        20.930435180664062
+      ],
+      [
+        21.72055149078369,
+        21.67185640335083,
+        21.78524923324585
+      ]
+    ]
+  },
+  "token_agreement": {
+    "textvqa": {
+      "matched": 76,
+      "total": 100
+    },
+    "gqa": {
+      "matched": 99,
+      "total": 100
+    },
+    "mmvet": {
+      "matched": 192,
+      "total": 218
+    }
+  },
+  "sources": [
+    {
+      "path": "experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/reports/20261017T220622Z_df807dd5/summary.json",
+      "sha256": "f7ccec2e234f986106e98611ff743f80f45ac5363b3374e8db5c06a79bc18ad1"
+    },
+    {
+      "path": "experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/reports/20261017T220622Z_df807dd5/samples.jsonl",
+      "sha256": "757bb1ab96ebe09e0f727a83a55a715322e0fa37a416fcaf9e8147a54c1a195a"
+    },
+    {
+      "path": "experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/reports/20261017T214508Z_37fa2d97/summary.json",
+      "sha256": "9a300f03e6feab31d531e34cb5ca6d1589391b1ea564c6a3b2c210d045ed5047"
+    },
+    {
+      "path": "experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/reports/20261017T214508Z_37fa2d97/samples.jsonl",
+      "sha256": "2fa12e5cefd3018d9077b2edae0aeb15f67762a393a3ecafc5aad007dce31936"
+    }
+  ],
+  "limitations": "Observed timings \u00b7 Different physical H100s / CPU bindings \u00b7 One run per method\n51/418 token sequences differ \u00b7 14 capped responses per method \u00b7 Quality not validated"
+}

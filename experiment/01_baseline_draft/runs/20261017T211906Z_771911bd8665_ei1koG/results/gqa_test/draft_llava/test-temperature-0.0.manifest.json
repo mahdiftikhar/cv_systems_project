@@ -1,0 +1,405 @@
+{
+  "benchmark": "gqa",
+  "questions": [
+    {
+      "question_id": "202227935",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20899424",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201079761",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202003711",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20865555",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201185787",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202156890",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20903027",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201068836",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20827259",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201996732",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201804660",
+      "reference_answers": []
+    },
+    {
+      "question_id": "2075698",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201896554",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20491941",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201861265",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20317285",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201794876",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201880477",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202227832",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20794227",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202081092",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20480057",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202223187",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202004237",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201795620",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202286593",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20434993",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20480292",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20385650",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20541567",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20295524",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201065125",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201639249",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20178097",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201207117",
+      "reference_answers": []
+    },
+    {
+      "question_id": "2075356",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201462514",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201067634",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20818697",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20654994",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201400101",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202073332",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202147865",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202108035",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201393537",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202122066",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201759403",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201972804",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201704599",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20412445",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201480278",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201156113",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20588950",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20162320",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20295376",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20416784",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201175530",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20898990",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20330200",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20416562",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201322827",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20709924",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201980742",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20248012",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201528095",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201759150",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201590208",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202162013",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201064996",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201428996",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201663614",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201336960",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202266070",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201879053",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202218778",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201663452",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20149593",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20341125",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20302785",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202125912",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202144320",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20923055",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201654420",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20511576",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202243791",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20866501",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20711630",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202116873",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20381224",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20644733",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20551620",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20518335",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201185933",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20826975",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201393605",
+      "reference_answers": []
+    },
+    {
+      "question_id": "20412198",
+      "reference_answers": []
+    },
+    {
+      "question_id": "202060113",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201336930",
+      "reference_answers": []
+    },
+    {
+      "question_id": "201896499",
+      "reference_answers": []
+    }
+  ]
+}

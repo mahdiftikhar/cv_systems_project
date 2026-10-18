@@ -1,5 +1,12 @@
 # Experiment workflowz
 
+- Use judgment when formatting documentation: write explanations and connected
+  reasoning as short paragraphs, use bullets for genuinely parallel items or
+  checklists, use numbered lists for steps, and use tables for comparisons.
+  Do not turn every sentence into a bullet or pack fragments together with
+  semicolons. Explain relevant context and what each metric measures and why.
+- Keep reader-facing results focused on the current relevant runs. Preserve raw
+  evidence from all launches, but omit earlier-run summaries unless requested.
 - Do not create or modify test files in this project. Use lightweight checks or
   direct verification as appropriate instead.
 - Maintain experiments under `experiment/NN_descriptive_name/`, starting with
@@ -36,5 +43,7 @@
 - The baseline suite is TextVQA (priority, run first), GQA, and MM-Vet. Keep future
   comparisons on this same suite unless the user changes it; do not restore all
   eight upstream benchmarks by default.
-- Keep raw generated run directories out of Git; preserve evidence on project
-  storage and commit concise documentation/results with artifact references.
+- Keep generated runs out of Git by default and preserve their evidence on project
+  storage. The user selected the exact snapshots for jobs 950793 and 950803 for
+  versioning so teammates can inspect all answers, reports, and launch evidence.
+  Their explicit `.gitignore` exceptions do not authorize tracking other runs.

@@ -257,8 +257,8 @@ project storage and commit concise verified results with evidence links in the
 | Offline model/dataset loading fails | Repair preparation first, then resubmit evaluation |
 | Google Drive throttles the GQA download | Retry preparation later; completed downloads are retained |
 | Job fails before evaluation | Read the scheduler log, then the run's `output.log` if one exists |
-| A requested GPU is unavailable or CUDA fails | Check account/partition/GRES and the assigned node; the existing Newton notes record a prior failure on `evc26` |
+| A requested GPU is unavailable or CUDA fails | Check the account, partition, GPU resource request and assigned node. Verify GPU access with `nvidia-smi` inside the allocation. |
 
-The commands match the current scripts and have lightweight local verification.
-Downloads and full GPU evaluation still require verification on Newton. Additional
-cluster notes are in [NEWTON_SETUP.md](experiment/NEWTON_SETUP.md).
+The [experiment register](experiment/README.md) records the current completed runs
+and their hardware evidence. Additional cluster setup details are in
+[NEWTON_SETUP.md](experiment/NEWTON_SETUP.md).

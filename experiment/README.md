@@ -1,126 +1,141 @@
-# Experiment register
+# Experiments
 
-The UCF project compares autoregressive inference with ViSpec speculative decoding
-on **TextVQA → GQA → MM-Vet**, in that order. All experiments run on the UCF cluster.
+We compare standard autoregressive generation (**00**) with ViSpec speculative
+decoding (**01**) using **LLaVA-1.6 Vicuna 7B**. The benchmark suite is
+**TextVQA → GQA → MM-Vet**. Runs execute on the UCF cluster.
 
-Each numbered directory contains an experiment guide and a runnable shell script.
-Every invocation saves its evidence in a unique `runs/` subdirectory.
+Standard autoregressive generation produces one token at a time. ViSpec uses a
+smaller draft model to propose several tokens, then asks the original model to
+verify them together. We want faster completed answers without changing their
+content or reducing correctness.
 
-## Choose an experiment
+**TextVQA** tests reading text inside images, **GQA** tests visual reasoning, and
+**MM-Vet** tests broader open-ended visual understanding. We use 100, 100 and 218
+questions, respectively. These results describe those subsets.
 
-| Experiment                                                | Question / method                                | Model               | Fixed temperature | Status  |
-| --------------------------------------------------------- | ------------------------------------------------ | ------------------- | ------------------- | ------- |
-| [00 — Original baseline](00_baseline_original/README.md)  | Reference latency with autoregressive inference  | LLaVA-1.6 Vicuna 7B | 0.0                 | Completed 418/418; quality needs diagnosis |
-| [01 — ViSpec draft baseline](01_baseline_draft/README.md) | Does ViSpec speculative decoding reduce latency? | LLaVA-1.6 Vicuna 7B | 0.0                 | Not run |
+## Latest results
 
-Both runners fix temperature at **0.0 (greedy)**, including batch submissions;
-the `TEMPERATURE` environment variable is ignored. The completed baseline below
-used **1.0**. A matching temperature-0 baseline and speculative comparison remain
-pending; preserve the historical measurements separately.
+[Plots and how to read them](plots/README.md) · [Full metric tables by benchmark](COMPARISON.md).
 
-Both runners also enforce **1,024 output tokens**, counting EOS, and save raw
-output token IDs. Greedy comparisons report exact sequence agreement and first
-mismatches; missing token evidence, mismatches, or truncation keep validated
-speedup pending. These changes have not yet been evaluated on the cluster.
+**ViSpec took about 62% less generation time overall.** This is a promising
+timing result, but we have not validated that it preserves the baseline output:
+51 of 418 responses differ, and 14 responses per method hit the output limit.
 
-## Submit a run
+Both methods completed all questions. Times below are mean generation latency
+in **seconds per question**. Lower is better.
 
-Complete the [Newton setup guide](NEWTON_SETUP.md), then submit an experiment from
-the repository checkout:
+| Benchmark | Questions per method | 00: Standard | 01: ViSpec | Observed speedup |
+| --------- | -------------------: | -----------: | ---------: | ---------------: |
+| TextVQA   |                  100 |      9.675 s |    3.365 s |            2.88× |
+| GQA       |                  100 |      1.380 s |    0.640 s |            2.16× |
+| MM-Vet    |                  218 |      4.109 s |    1.651 s |            2.49× |
+
+### Overall results
+
+| Method       | Mean generation time | Mean time to first token |
+| ------------ | -------------------: | -----------------------: |
+| 00: Standard |              4.788 s |                  0.278 s |
+| 01: ViSpec   |              1.819 s |                  0.276 s |
+
+The overall ratio is **2.63×**. Each of the 418 questions contributes equally to
+these means. Generation time includes prefill and decoding. It excludes model
+loading, prompt preparation, converting token IDs to text, and scoring.
+
+### What the headline metrics mean
+
+**Generation time** measures how long the model takes to finish an answer.
+**Time to first token (TTFT)** measures how soon it can begin answering. We
+measure both because earlier completion does not necessarily mean an earlier
+start. The observed speedup divides standard mean generation time by ViSpec's:
+a 2.63× ratio means ViSpec took about 38% as long in this pair.
+
+**Output agreement** checks whether both methods say the same thing.
+**Quality** checks their answers against references. We need both measures
+because identical answers can still be wrong. A **capped** answer was stopped by
+the output limit and may be incomplete. A **pending** result is unavailable,
+not zero.
+
+The detailed tables also report the **mean** (average), **median** (middle value)
+and **p95** (a threshold covering about 95% of measurements). The
+[metric guide](METRICS.md#what-each-metric-means) explains these and the remaining
+measurements, including throughput, memory and draft acceptance.
+
+### What still needs work
+
+- **Output agreement:** exact token sequences match on 76/100 TextVQA,
+  99/100 GQA, and 192/218 MM-Vet questions: **367/418 overall (87.8%)**.
+- **Long answers:** 11 TextVQA and 3 MM-Vet responses per method reached the
+  1,024-token cap. Agreement on a capped response only checks its saved prefix.
+- **Answer quality:** both methods scored 0% on TextVQA consensus and GQA exact
+  match, with 100/100 questions scored for each benchmark. Verbose answers can
+  fail strict scoring even when they contain the right answer. MM-Vet judging
+  is pending (0/218 scored). Quality scores are not combined across benchmarks.
+- **Comparison conditions:** the jobs overlapped on the same node but used
+  different physical GPUs and CPU bindings. We have one run per method, so
+  repeat variability is unknown.
+
+Next: diagnose the token differences, then repeat with the same GPU and CPU
+binding. Resolve answer formatting before claiming preserved answer quality.
+The [detailed review](01_baseline_draft/RESULTS_20261017.md) contains every
+first token mismatch, memory measurements, artifact checks, and limitations.
+
+## Experiments and run evidence
+
+| Experiment                                              | Purpose                           | Latest status                                    |
+| ------------------------------------------------------- | --------------------------------- | ------------------------------------------------ |
+| [00: Standard baseline](00_baseline_original/README.md) | Measure autoregressive generation | 418/418 completed                                |
+| [01: ViSpec baseline](01_baseline_draft/README.md)      | Measure speculative generation    | 418/418 completed. Output equivalence unresolved |
+
+The latest pair used temperature **0.0 (greedy)**, FP16, and a maximum of
+**1,024 output token IDs, including EOS**. Both launch trees were clean at
+commit `771911bd8665846e9ab8cb698cb22c2929d296b5`.
+
+Each job received **one H100 PCIe with 79.2 GiB visible VRAM, 8 logical CPUs,
+and 64 GiB RAM** on `evc46`. These are job resources, not host totals.
+
+| Run             | Physical GPU UUID                      | Hardware evidence                                                                          |
+| --------------- | -------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 00 · job 950793 | `c8aca2f5-7741-b9ef-76aa-48901fe44401` | [Device report](00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/device.txt) |
+| 01 · job 950803 | `cd5e5946-fc28-f3cf-978d-635f8e613aa4` | [Device report](01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/device.txt)    |
+
+## Run an experiment
+
+Follow the [Newton setup guide](NEWTON_SETUP.md), then submit from the repository
+root:
 
 ```bash
+# 00: Standard baseline
 bash experiment/submit.sh experiment/00_baseline_original
-```
 
-For the ViSpec experiment:
-
-```bash
+# 01: ViSpec baseline
 bash experiment/submit.sh experiment/01_baseline_draft
 ```
 
-Each experiment has its own `run.sbatch`, with independent resource directives and
-job name. Jobs reuse the prepared environment.
+Both runners enforce greedy decoding and the 1,024-token cap. The `TEMPERATURE`
+environment variable is ignored. Each experiment has its own `run.sbatch` and
+reuses the prepared environment. Both check CUDA before loading models.
 
-Both batch files exclude `evc26`, where job `942134` could not access a GPU.
-After saving `device.txt`, both runners require a small CUDA allocation,
-computation, and synchronization on `cuda:0` before loading models. A failed
-check stops the run with a nonzero exit code and preserves the launch evidence.
+Scheduler logs go to `$PROJECT_ROOT/logs/`. Answers, reports, and launch evidence
+go to a unique `<experiment>/runs/<run>/` directory. The current snapshots for
+jobs **950793** and **950803** are versioned so teammates can inspect all answers,
+raw token IDs, reports, logs and launch evidence. Other generated runs remain
+ignored by default. Preserve these snapshots as evidence and use new run folders
+for reruns.
+See the [metrics guide](METRICS.md) for scoring and comparison commands.
 
-| Output                       | Location                          |
-| ---------------------------- | --------------------------------- |
-| Combined scheduler logs      | `$PROJECT_ROOT/logs/`             |
-| Detailed experiment evidence | `<experiment>/runs/<unique-run>/` |
+## Adding experiments
 
-## Overall results
+Use `NN_descriptive_name/` with a runnable shell script and a brief README covering
+the hypothesis, changes, models, data/subsets, settings, cluster prerequisites,
+exact command, metrics, results, and limitations. Update this register when
+verified measurements arrive. Mark unmeasured results **pending**.
 
-**Pending** means no measurements have been collected; it is not a zero result.
-Completed measurements below link to their evidence in the experiment README.
+Each launch must preserve the full commit, working-tree status/diff, commands,
+environment, scheduler job ID, timestamps, combined stdout/stderr, raw outputs,
+and exit status. Prefer committed code and preserve reruns separately.
 
-| Experiment                                                | Mean wall time (s/turn) | Mean TTFT (s/turn) | Device / allocation report | Commit / run |
-| --------------------------------------------------------- | ----------------------: | -----------------: | -------------------------- | ------------ |
-| [00 — Original baseline](00_baseline_original/README.md)  | 5.3592 | 0.2707 | H100 PCIe ×1, 79.2 GiB; 8 CPUs, 64 GiB RAM; [device report](00_baseline_original/runs/20261017T091226Z_a2ac5b103129_IN6ujH/device.txt) | `a2ac5b1031296589c6714aff2f8e6eb97922f0bf` + dirty tree / job `943935` |
-| [01 — ViSpec draft baseline](01_baseline_draft/README.md) |                 Pending |            Pending | Pending                    | Pending      |
-
-Per-benchmark baseline results (job `943935`, temperature **1.0**, FP16, same H100 allocation):
-
-| Benchmark | Completed questions | Mean latency (s/turn) | Mean TTFT (s/turn) | Quality / scored |
-| --- | ---: | ---: | ---: | --- |
-| TextVQA | 100/100 | 10.3908 | 0.2819 | 0% consensus; 100/100 |
-| GQA | 100/100 | 1.7808 | 0.2566 | 0% exact match; 100/100 |
-| MM-Vet | 218/218 | 4.6926 | 0.2721 | Pending judge; 0/218 |
-
-The overall means pool all 418 completed turns, weighted by turn count; quality
-scores are not aggregated. All outputs stopped at EOS without recorded
-truncation. The 0% scores need diagnosis: inspected answers contain verbose
-explanations, sometimes including a correct short answer that strict scoring
-rejects. They do not establish zero underlying visual understanding. No ViSpec
-run or speedup comparison is available yet. See the
-[verified results, limitations, and artifact links](00_baseline_original/README.md#completed-rerun--job-943935).
-
-Earlier baseline job `942134` on `evc26` completed zero questions because no GPU
-was accessible. Its evidence remains preserved in the
-[run diagnosis](00_baseline_original/README.md#earlier-failed-attempt--job-942134).
-
-### Metrics and comparisons
-
-- **Per-run reports:** latency, time to first token (TTFT), throughput, time per
-  output token (TPOT), output lengths, stop reasons, and per-GPU allocator peaks.
-- **Quality:** TextVQA consensus, GQA exact match, and imported MM-Vet judge scores.
-- **Comparisons:** matching-question speedup, answer agreement, quality deltas,
-  and repeated-run variation.
-
-See the [metrics guide](METRICS.md) for definitions, scoring prerequisites, and commands.
-Report per-benchmark counts and results before suite aggregation; never average
-benchmark quality scores. Keep results from different hardware or settings
-separate, and link the device report with verified results.
-
-## Add or update an experiment
-
-Use `NN_descriptive_name/` for each new experiment. Its brief `README.md` must cover:
-
-- Purpose or hypothesis and changes from baseline.
-- Models, data, splits, settings, and exact run commands.
-- Environment and cluster resource requirements.
-- Metric definitions, results, and limitations.
-
-Update this register when adding an experiment and when recording verified results.
-Never report paper numbers as measurements from this project.
-
-### Preserve evidence for every run
-
-Keep logs, the full launch commit, working-tree status and diff, exact commands,
-environment, device report, and raw outputs. Never overwrite previous runs.
-
-Use [`capture_device.sh`](capture_device.sh) before evaluation to capture:
-
-- GPU identity and VRAM; CPU and RAM.
-- OS, CUDA, driver, and PyTorch versions.
-- GPU operating state and scheduler allocation.
-
-Optional probes explicitly report missing tools or failures. For each result row,
-summarize the allocated GPU model, count, and VRAM, plus CPU/RAM allocation, and
-link the run's `device.txt`.
-
-Host totals can exceed job allocations: retain both and use allocated resources
-in comparisons. Keep separate rows for different devices. Launch snapshots do
-not measure runtime peak memory, energy use, or sustained utilization.
+Capture hardware before evaluation with [capture_device.sh](capture_device.sh).
+Report allocated resources separately from host totals, link device evidence,
+and keep different hardware/settings in separate result rows. Device snapshots
+do not measure runtime peak memory, energy, or utilization. Report benchmark
+counts before aggregating. Never substitute paper results for measured results.

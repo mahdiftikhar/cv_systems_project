@@ -215,8 +215,12 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Generated experiment logs, environment snapshots, and model responses.
-/experiment/*/runs/
+# Ignore generated runs except the two snapshots selected for team review.
+/experiment/*/runs/*
+!/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/
+!/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/**
+!/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/
+!/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/**
 
 # Prepared models, benchmark data, archives, local environments, and setup evidence.
 /models/
@@ -237,3 +241,6 @@ __marimo__/
 /logs/
 /nohup.out
 /tools/m4c_evaluator.py
+
+# macOS folder metadata is not a project artifact.
+.DS_Store

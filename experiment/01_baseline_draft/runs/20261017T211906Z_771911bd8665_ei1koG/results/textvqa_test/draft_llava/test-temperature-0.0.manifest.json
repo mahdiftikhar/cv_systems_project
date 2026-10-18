@@ -1,0 +1,1505 @@
+{
+  "benchmark": "textvqa",
+  "questions": [
+    {
+      "question_id": "36137",
+      "reference_answers": [
+        "10:10",
+        "10:10",
+        "10:10",
+        "10:10",
+        "10:10",
+        "10:10",
+        "10:10",
+        "10:10",
+        "10:10",
+        "10:10"
+      ]
+    },
+    {
+      "question_id": "35785",
+      "reference_answers": [
+        "less",
+        "23",
+        "its .23",
+        "23",
+        ":23",
+        "23",
+        "23",
+        "23",
+        "23",
+        "23"
+      ]
+    },
+    {
+      "question_id": "37980",
+      "reference_answers": [
+        "constabulary ",
+        "constabulary",
+        "constabulary",
+        "argyllshire",
+        "constabulary",
+        "constabulary",
+        "constabulary",
+        "constabulary",
+        "constabulary",
+        "constabulary"
+      ]
+    },
+    {
+      "question_id": "38427",
+      "reference_answers": [
+        "unanswerable",
+        "unanswerable",
+        "virgin",
+        "virgin money",
+        "virgin",
+        "unanswerable",
+        "virgin",
+        "northern rock",
+        "unanswerable",
+        "unanswerable"
+      ]
+    },
+    {
+      "question_id": "35245",
+      "reference_answers": [
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "new orleans",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes"
+      ]
+    },
+    {
+      "question_id": "34692",
+      "reference_answers": [
+        "7:28",
+        "7:28",
+        "7:28",
+        "7:28",
+        "7:28",
+        "7:28",
+        "7:28",
+        "7:28",
+        "7:28",
+        "7:28"
+      ]
+    },
+    {
+      "question_id": "37437",
+      "reference_answers": [
+        "if",
+        "if",
+        "if",
+        "if",
+        "if",
+        "if",
+        "if",
+        "if",
+        "if",
+        "if"
+      ]
+    },
+    {
+      "question_id": "38467",
+      "reference_answers": [
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "no",
+        "no",
+        "yes"
+      ]
+    },
+    {
+      "question_id": "36822",
+      "reference_answers": [
+        "welcome",
+        "welcome",
+        "welcome",
+        "welcome",
+        "welcome",
+        "welcom",
+        "498",
+        "welcome",
+        "welcome",
+        "welcome"
+      ]
+    },
+    {
+      "question_id": "36779",
+      "reference_answers": [
+        "sampoerna",
+        "hila",
+        "samporina",
+        "nampoerna",
+        "nampoerna",
+        "nampoerna",
+        "nampoerna",
+        "sampoerna",
+        "sampoerna",
+        "nampoerna"
+      ]
+    },
+    {
+      "question_id": "38355",
+      "reference_answers": [
+        "pontet cane",
+        "pontet-cane",
+        "pontet-cane",
+        "chateau pontet-canet",
+        "pontet- canet",
+        "chateau pontet-canet",
+        "pontet-cane",
+        "chateau pontet-canet",
+        "chateua pontet cane",
+        "chateau pontet-cane"
+      ]
+    },
+    {
+      "question_id": "38154",
+      "reference_answers": [
+        "no",
+        "no",
+        "no",
+        "no",
+        "no",
+        "no",
+        "no",
+        "no",
+        "no",
+        "no"
+      ]
+    },
+    {
+      "question_id": "35537",
+      "reference_answers": [
+        "65",
+        ".65",
+        "65 cents",
+        "65",
+        "65",
+        "65",
+        "65",
+        "65",
+        "751",
+        "75"
+      ]
+    },
+    {
+      "question_id": "38838",
+      "reference_answers": [
+        "city centre",
+        "city centre ",
+        "city centre",
+        "city centre",
+        "city centre",
+        "city centre",
+        "city center",
+        "city centre via st budreaux",
+        "city centre",
+        "city centre"
+      ]
+    },
+    {
+      "question_id": "35321",
+      "reference_answers": [
+        "skol",
+        "600",
+        "600",
+        "600",
+        "600",
+        "600",
+        "600",
+        "600",
+        "600",
+        "600"
+      ]
+    },
+    {
+      "question_id": "35927",
+      "reference_answers": [
+        "1",
+        "unanswerable",
+        "zte",
+        "zte",
+        "1",
+        "unanswerable",
+        "zte (letters--no numbers)",
+        "zte",
+        "unanswerable",
+        "no text in image"
+      ]
+    },
+    {
+      "question_id": "35057",
+      "reference_answers": [
+        "alternate treansportation",
+        "alternative transportation",
+        "sf muni shutdown",
+        "alternative transportation",
+        "alternative transportation",
+        "alternative transportation",
+        "sf muni shutdown",
+        "alternative transportation",
+        "alternative transportation",
+        "alternative transportation"
+      ]
+    },
+    {
+      "question_id": "38448",
+      "reference_answers": [
+        "five",
+        "five",
+        "5",
+        "5",
+        "30",
+        "30 hot dishes",
+        "five",
+        "5",
+        "five",
+        "five"
+      ]
+    },
+    {
+      "question_id": "37120",
+      "reference_answers": [
+        "2009",
+        "2009",
+        "2009",
+        "2009",
+        "2009",
+        "2009",
+        "2009",
+        "january 25, 2009",
+        "2009",
+        "2009"
+      ]
+    },
+    {
+      "question_id": "39496",
+      "reference_answers": [
+        "elizabeth a lynn",
+        "elizabeth a. lynn",
+        "elizabeth a. lynn",
+        "elizabeth a lynn",
+        "elizabeth a. lynn",
+        "elizabeth a.lynn",
+        "elizabeth a lynn",
+        "elizabeth a. lynn",
+        "elizabeth a. lynn",
+        "elizabeth a. lynn"
+      ]
+    },
+    {
+      "question_id": "37517",
+      "reference_answers": [
+        "horses",
+        "horses",
+        "horses",
+        "horses",
+        "horses",
+        "horses",
+        "horses",
+        "horses",
+        "horses",
+        "coach & horses"
+      ]
+    },
+    {
+      "question_id": "37652",
+      "reference_answers": [
+        "teoria della socelta",
+        "terio delia societa",
+        "teorria dela societa",
+        "teoria della societ",
+        "teoria della societh",
+        "teoria della societa",
+        "teoria della societa",
+        "teoria della",
+        "teoria della societa",
+        "teoria della societa"
+      ]
+    },
+    {
+      "question_id": "39348",
+      "reference_answers": [
+        "windows 98",
+        "windows 98",
+        "98",
+        "windows 98",
+        "windows 98",
+        "98",
+        "windows 98",
+        "98",
+        "98",
+        "98"
+      ]
+    },
+    {
+      "question_id": "38594",
+      "reference_answers": [
+        "hanakdrawing.cc",
+        "hanokdrawing.cc",
+        "kozaza.com",
+        "hanokdrawing.cc",
+        "withkozaza.com",
+        "hanokdrawing.cc",
+        "kozaza.com",
+        "kozaza.com",
+        "hanokdrawing.cc",
+        "honokdrawing.cc"
+      ]
+    },
+    {
+      "question_id": "35262",
+      "reference_answers": [
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok",
+        "ok"
+      ]
+    },
+    {
+      "question_id": "37280",
+      "reference_answers": [
+        "unanswerable",
+        "unanswerable",
+        "unanswerable",
+        "unanswerable",
+        "no text in image",
+        "macbook",
+        "macbook",
+        "mac book",
+        "unanswerable",
+        "macbook"
+      ]
+    },
+    {
+      "question_id": "35827",
+      "reference_answers": [
+        "harvers",
+        "croft",
+        "croft",
+        "croft",
+        "croft",
+        "croft",
+        "croft",
+        "croft",
+        "croft",
+        "croft"
+      ]
+    },
+    {
+      "question_id": "37707",
+      "reference_answers": [
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "not a question"
+      ]
+    },
+    {
+      "question_id": "36875",
+      "reference_answers": [
+        "lg optimus vu",
+        "lg optimus",
+        "lg optimus",
+        "lg optimus",
+        "lg tablet, apps",
+        "lg optimus",
+        "lg optimus",
+        "unanswerable",
+        "lg optimus",
+        "unanswerable"
+      ]
+    },
+    {
+      "question_id": "38662",
+      "reference_answers": [
+        "viet-nam",
+        "vietnam",
+        "vietnam",
+        "vietnam",
+        "no",
+        "vietnam",
+        "vietnam",
+        "vietnam",
+        "vietnam",
+        "vietnam"
+      ]
+    },
+    {
+      "question_id": "34932",
+      "reference_answers": [
+        "2",
+        "2",
+        "2",
+        "2",
+        "3",
+        "2",
+        "two",
+        "two",
+        "2",
+        "2"
+      ]
+    },
+    {
+      "question_id": "36297",
+      "reference_answers": [
+        "hornswoggle",
+        "dylan hornswoggle postl",
+        "dylan \"hornswoggle\" postl",
+        "dylan postl",
+        "dylan \"hornswoggle\" postl ",
+        "answering does not require reading text in the image",
+        "dylan hornswoggle postl",
+        "dylan \"hornswoggle\" postl",
+        "carly",
+        "dylan hornswoggle postl"
+      ]
+    },
+    {
+      "question_id": "37466",
+      "reference_answers": [
+        "phillips crazy 8's",
+        "crazy 8's",
+        "crazy 8s",
+        "crazy 8's",
+        "mi morris & co ltd",
+        "crazy 8's",
+        "crazy 8's",
+        "crazy 8's",
+        "crazy 8's",
+        "crazy 8's"
+      ]
+    },
+    {
+      "question_id": "37305",
+      "reference_answers": [
+        "walgreens",
+        "walgreens",
+        "walgreens",
+        "walgreens",
+        "wallgreens",
+        "walgreens",
+        "walgreens",
+        "walgreens",
+        "walgreens",
+        "walgreens "
+      ]
+    },
+    {
+      "question_id": "39341",
+      "reference_answers": [
+        "ford",
+        "policia",
+        "ford",
+        "ford",
+        "ford",
+        "dave erica",
+        "ford",
+        "ford",
+        "ford",
+        "engesig"
+      ]
+    },
+    {
+      "question_id": "34983",
+      "reference_answers": [
+        "march",
+        "mar",
+        "march",
+        "march ",
+        "march",
+        "march",
+        "march",
+        "mar",
+        "march",
+        "march"
+      ]
+    },
+    {
+      "question_id": "37584",
+      "reference_answers": [
+        "tongue-in-cheek",
+        "tongue-in-cheek",
+        "tongue-in-cheek",
+        "tongue-in-cheek warnings",
+        "danger fence, beware of meteorites, earthquakes, land crab",
+        "tongue in cheek",
+        "tongue-in-cheek warnings",
+        "beware of meteorites",
+        "tongue in cheek",
+        "tounge and cheek"
+      ]
+    },
+    {
+      "question_id": "39598",
+      "reference_answers": [
+        "nike",
+        "unanswerable",
+        "united emirates",
+        "unanswerable",
+        "jan",
+        "erea",
+        "unanswerable",
+        "nike",
+        "unanswerable",
+        "nike"
+      ]
+    },
+    {
+      "question_id": "38062",
+      "reference_answers": [
+        "8",
+        "8 days",
+        "9 days",
+        " 8",
+        "8",
+        "8",
+        "8 days ",
+        "8",
+        "8",
+        "8"
+      ]
+    },
+    {
+      "question_id": "36097",
+      "reference_answers": [
+        "new jersey",
+        "the consumption of food or drink in a funeral home",
+        "new jersey state law",
+        "forbids the consumption of food or drink in a funeral home",
+        "new jersey",
+        "new jersey",
+        "new jersey",
+        "new jersey",
+        "new jersey",
+        "new jersey"
+      ]
+    },
+    {
+      "question_id": "38775",
+      "reference_answers": [
+        "none",
+        "no events today",
+        "no events",
+        "no events",
+        "no events",
+        "none",
+        "no events",
+        "no events",
+        "june",
+        "no events today"
+      ]
+    },
+    {
+      "question_id": "37912",
+      "reference_answers": [
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes"
+      ]
+    },
+    {
+      "question_id": "39000",
+      "reference_answers": [
+        "22:23:22",
+        "22:23",
+        "22:23",
+        "22:23:22",
+        "22:23",
+        "22:23",
+        "22:23",
+        "22:23",
+        "22:23 ",
+        "22:23:22"
+      ]
+    },
+    {
+      "question_id": "37969",
+      "reference_answers": [
+        "palm ",
+        "palm",
+        "palm",
+        "palm",
+        "palm",
+        "palm",
+        "palm",
+        "palm",
+        "palm",
+        "palm"
+      ]
+    },
+    {
+      "question_id": "37443",
+      "reference_answers": [
+        "yes",
+        "yes, in the top right of the screen",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes"
+      ]
+    },
+    {
+      "question_id": "37575",
+      "reference_answers": [
+        "2nd",
+        "no more toll gates.",
+        "no more toll gates",
+        "no more toll gates.",
+        "no more toll gates",
+        "what's next? no more toll gates",
+        "holmes",
+        "no more toll gates",
+        "no more toll gates",
+        "no more toll gates"
+      ]
+    },
+    {
+      "question_id": "34895",
+      "reference_answers": [
+        "english",
+        "english",
+        "english",
+        "english",
+        "english",
+        "english",
+        "english",
+        "english",
+        "english",
+        "english"
+      ]
+    },
+    {
+      "question_id": "34989",
+      "reference_answers": [
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes"
+      ]
+    },
+    {
+      "question_id": "38808",
+      "reference_answers": [
+        "woolworths",
+        "woolworths",
+        "woolworths",
+        "woolworths",
+        "viking",
+        "woolworths",
+        "woolworths",
+        "woolworths",
+        "woolworths",
+        "woolworths"
+      ]
+    },
+    {
+      "question_id": "39365",
+      "reference_answers": [
+        "8.0",
+        "8.0",
+        "8.0",
+        "8.0",
+        "8.0",
+        "tokyo gas",
+        "9.0",
+        "8.0",
+        "8.0",
+        "8.0"
+      ]
+    },
+    {
+      "question_id": "37809",
+      "reference_answers": [
+        "ice",
+        "ice",
+        "ice",
+        "ice",
+        "ice",
+        "ice",
+        "ice",
+        "ice brand water resistant watch",
+        "ice",
+        "ice"
+      ]
+    },
+    {
+      "question_id": "38903",
+      "reference_answers": [
+        "20",
+        "20",
+        "20",
+        "2",
+        "20 ml",
+        "20",
+        "20",
+        "20",
+        "20",
+        "20"
+      ]
+    },
+    {
+      "question_id": "37428",
+      "reference_answers": [
+        "2007",
+        "2007",
+        "2007",
+        "2007 ",
+        "2007",
+        "2007",
+        "2007",
+        "2007",
+        "2007",
+        "2007"
+      ]
+    },
+    {
+      "question_id": "36702",
+      "reference_answers": [
+        "enter",
+        "enter",
+        "enter",
+        "alt",
+        "enter",
+        "enter",
+        "enter",
+        "enter",
+        "enter",
+        "enter"
+      ]
+    },
+    {
+      "question_id": "35684",
+      "reference_answers": [
+        "river rock casino resort",
+        "river rock casino",
+        "river rock casino",
+        "river rock casino",
+        "river rock casino",
+        "river rock casino",
+        "river rock casino",
+        "river rock casino",
+        "river rock casino",
+        "river rock casino"
+      ]
+    },
+    {
+      "question_id": "36065",
+      "reference_answers": [
+        "detroit",
+        "detroit",
+        "detroit",
+        "detroit",
+        "detroit",
+        "detroit",
+        "indians",
+        "detroit ",
+        "detroit",
+        "indians"
+      ]
+    },
+    {
+      "question_id": "37324",
+      "reference_answers": [
+        "12/12/25",
+        "12/12/25",
+        "12.12.25",
+        "12/12/25",
+        "12/12/25",
+        "12-12-25",
+        "12.12.25",
+        "12.12.25",
+        "12.12.25",
+        "12-12-25"
+      ]
+    },
+    {
+      "question_id": "39519",
+      "reference_answers": [
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix",
+        "sean williams and shane dix"
+      ]
+    },
+    {
+      "question_id": "34682",
+      "reference_answers": [
+        "coors",
+        "coors light",
+        "secret",
+        "coors light",
+        "coors light",
+        "coors light ",
+        "coors light",
+        "coors light",
+        "coors light",
+        "coors light"
+      ]
+    },
+    {
+      "question_id": "38057",
+      "reference_answers": [
+        "kc",
+        "kc",
+        "kc",
+        "kc",
+        "kc",
+        "fc",
+        "kc",
+        "kc",
+        "kc",
+        "kc"
+      ]
+    },
+    {
+      "question_id": "35472",
+      "reference_answers": [
+        "identity",
+        "identity matrix",
+        "identity",
+        "identity",
+        "identity",
+        "identity",
+        "identity matrix",
+        "identity",
+        "identity",
+        "identity"
+      ]
+    },
+    {
+      "question_id": "38780",
+      "reference_answers": [
+        "4 005401 190042",
+        "4 005401 190042",
+        "4 005401 190042",
+        "4005401 190042",
+        "4 005401 190042",
+        "4 005401 190042",
+        "4005401 190042",
+        "4 005401 190042",
+        "4 005401 190042",
+        "4 005401 190042"
+      ]
+    },
+    {
+      "question_id": "39434",
+      "reference_answers": [
+        "unanswerable",
+        "unanswerable",
+        "unanswerable",
+        "unanswerable",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "unanswerable"
+      ]
+    },
+    {
+      "question_id": "36057",
+      "reference_answers": [
+        "recol-f.mora",
+        "recol-f.mora",
+        "recol-f.mora",
+        "recol-f. mora",
+        "via",
+        "recol-f mora",
+        "recol f.mora",
+        "recol-f.mora",
+        "recol-f.mora",
+        "recol - f. mora"
+      ]
+    },
+    {
+      "question_id": "38679",
+      "reference_answers": [
+        "03.02.2013",
+        "03/02/2013",
+        "02.02.2013",
+        "03 - 02 - 2013",
+        "03.02.2013",
+        "03.02.2013",
+        "03.02.2013",
+        "8/12/2013",
+        "03.02.2013",
+        "03.02.2013"
+      ]
+    },
+    {
+      "question_id": "39158",
+      "reference_answers": [
+        "lion gate",
+        "lion gate",
+        "lion gate",
+        "lion gate",
+        "lion gate",
+        "lion gate",
+        "lion gate",
+        "lion gate",
+        "lion gate",
+        "liongate"
+      ]
+    },
+    {
+      "question_id": "36235",
+      "reference_answers": [
+        "virginia",
+        "virginia",
+        "virginia",
+        "virginia",
+        "virgina",
+        "virginia",
+        "virginia",
+        "virginia",
+        "virginia",
+        "virginia"
+      ]
+    },
+    {
+      "question_id": "38237",
+      "reference_answers": [
+        "big mac",
+        "big mac",
+        "big mac",
+        "big mac",
+        "big mac",
+        "big mac",
+        "big mac",
+        "big mac",
+        "big mac",
+        "big mac"
+      ]
+    },
+    {
+      "question_id": "38260",
+      "reference_answers": [
+        "o. henry",
+        "o. henry",
+        "o. henry",
+        "o. henry",
+        "o.henry ",
+        "o. henry",
+        "o. henry",
+        "o henry",
+        "o.henry",
+        "o.henry"
+      ]
+    },
+    {
+      "question_id": "36024",
+      "reference_answers": [
+        "chicago cubs",
+        "chicago cubs",
+        "home of chicago cubs",
+        "chicago cubs",
+        "chicago cubs",
+        "chicago cubs",
+        "chicago cubs",
+        "chicago cubs",
+        "chicago cubs",
+        "chicago cubs"
+      ]
+    },
+    {
+      "question_id": "34867",
+      "reference_answers": [
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "le web",
+        "yes",
+        "yes",
+        "yes",
+        "yes"
+      ]
+    },
+    {
+      "question_id": "35187",
+      "reference_answers": [
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop",
+        "stop"
+      ]
+    },
+    {
+      "question_id": "38733",
+      "reference_answers": [
+        "paddy reillys",
+        "paddy reillys",
+        "paddy reillys",
+        "paddy reillys",
+        "reillys",
+        "paddy reillys",
+        "paddy reillys",
+        "paddy riellys",
+        "paddy reillys ",
+        "paddy reillys"
+      ]
+    },
+    {
+      "question_id": "38912",
+      "reference_answers": [
+        "travel",
+        "unanswerable",
+        "travel",
+        "travel",
+        "travel",
+        "guravel",
+        "travel",
+        "travel",
+        "travel",
+        "travel"
+      ]
+    },
+    {
+      "question_id": "37785",
+      "reference_answers": [
+        "eau fraiche",
+        "versace man eau fraiche",
+        "fau fraiche",
+        "versace man eau fraiche",
+        "fau fraiche",
+        "versace men fau fraiche",
+        "fau fraiche",
+        "fau fraiche",
+        "eau fraichi",
+        "fau fraiche"
+      ]
+    },
+    {
+      "question_id": "37088",
+      "reference_answers": [
+        "every day",
+        "every day",
+        "day",
+        "day",
+        "every day",
+        "every day",
+        "every day",
+        "everyday",
+        "every day",
+        "everyday "
+      ]
+    },
+    {
+      "question_id": "36799",
+      "reference_answers": [
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes",
+        "yes"
+      ]
+    },
+    {
+      "question_id": "35762",
+      "reference_answers": [
+        "temptation:lust",
+        "the silver surfer temptation: lust",
+        "silver surfer temptation: lust",
+        "the silver surfer temptation: lust",
+        "temptation:lust",
+        "temptation lust",
+        "temptation:lust",
+        "temptation:lust",
+        "temptation:lust",
+        "temptation lust"
+      ]
+    },
+    {
+      "question_id": "37804",
+      "reference_answers": [
+        "g",
+        "g",
+        "g",
+        "g",
+        "g",
+        "g",
+        "g",
+        "g",
+        "g",
+        "g"
+      ]
+    },
+    {
+      "question_id": "35830",
+      "reference_answers": [
+        "lg",
+        "lg",
+        "lg",
+        "lg doubleplay",
+        "lg doubleplay",
+        "doubleplay",
+        "double play",
+        "lg",
+        "lg",
+        "lg double play"
+      ]
+    },
+    {
+      "question_id": "39346",
+      "reference_answers": [
+        "42d",
+        "420",
+        "420",
+        "420",
+        "42d",
+        "42d",
+        "42d",
+        "420",
+        "subway",
+        "420"
+      ]
+    },
+    {
+      "question_id": "36322",
+      "reference_answers": [
+        "edwards",
+        "edwards",
+        "edwards",
+        "edwards",
+        "edwards",
+        "the dead rabbit",
+        "edwards",
+        "edwards",
+        "gene edwards",
+        "edwards"
+      ]
+    },
+    {
+      "question_id": "38411",
+      "reference_answers": [
+        "beasa",
+        "beaba",
+        "babycook",
+        "beaba",
+        "beasa",
+        "beaba",
+        "beaba",
+        "beaba",
+        "beaba",
+        "babycook"
+      ]
+    },
+    {
+      "question_id": "38603",
+      "reference_answers": [
+        "1868",
+        "1868",
+        "1868",
+        "1868",
+        "1868",
+        "1868",
+        "1868",
+        "1868",
+        "1868",
+        "1868"
+      ]
+    },
+    {
+      "question_id": "38517",
+      "reference_answers": [
+        "jpg",
+        "twu",
+        "twu",
+        "twu",
+        "twu",
+        "twu",
+        "twu",
+        "twu",
+        "twu",
+        "twu"
+      ]
+    },
+    {
+      "question_id": "37155",
+      "reference_answers": [
+        "9",
+        "9",
+        "8",
+        "9",
+        "9",
+        "9",
+        "9",
+        "9",
+        "9",
+        "9"
+      ]
+    },
+    {
+      "question_id": "37641",
+      "reference_answers": [
+        "taking",
+        "taking",
+        "taking",
+        "taking",
+        "taking",
+        "taking",
+        "taking",
+        "taking",
+        "taking",
+        "taking"
+      ]
+    },
+    {
+      "question_id": "37133",
+      "reference_answers": [
+        "burman gearboxes",
+        "burman gearboxes",
+        "burman gearboxes",
+        "burman gearboxes",
+        "gearboxes",
+        "burman gearboxes",
+        "gearboxes",
+        "burman gearboxes",
+        "burman gearboxes",
+        "burman gearboxes"
+      ]
+    },
+    {
+      "question_id": "35694",
+      "reference_answers": [
+        "the beatles",
+        "the beatles",
+        "the beatles",
+        "beatles",
+        "the beatles",
+        "the beatles",
+        "beatles",
+        "the beatles",
+        "beatles",
+        "beatles"
+      ]
+    },
+    {
+      "question_id": "36226",
+      "reference_answers": [
+        "unanswerable",
+        "your hottest rocks, reads movies, eateries and celeb hangouts",
+        "your hottest rocks, reads, movies, eateries, and celeb hangouts",
+        "hottest rocks, reads, movies, eateries, and celeb hangouts",
+        "your hottest rocks, read, movies, eateries and celeb hangouts",
+        "my weekend",
+        "glamour",
+        "your hottest rocks,reads, movies, eateries, and celeb hangouts",
+        "celeb hangouts, movies, eateries, reads, and rocks",
+        "rocks, reads, movies, eateries, and celeb hangouts"
+      ]
+    },
+    {
+      "question_id": "39150",
+      "reference_answers": [
+        "800",
+        "800",
+        "800",
+        "800",
+        "800",
+        "800",
+        "800",
+        "800",
+        "800",
+        "800"
+      ]
+    },
+    {
+      "question_id": "39122",
+      "reference_answers": [
+        "divina gracieln",
+        "unanswerable",
+        "20/12",
+        "divina gracia",
+        "la divina graciela",
+        "divina gracicla",
+        "la divina graciela",
+        "la divina graciela",
+        "divina graciela",
+        "divina gracicia"
+      ]
+    },
+    {
+      "question_id": "36436",
+      "reference_answers": [
+        "soft farm",
+        "soft farm",
+        "soft farm",
+        "farm animal",
+        "soft farm",
+        "soft farm",
+        "soft farm",
+        "soft farm",
+        "soft farm",
+        "soft farm"
+      ]
+    },
+    {
+      "question_id": "34847",
+      "reference_answers": [
+        "107",
+        "107",
+        "106",
+        "107",
+        "107",
+        "107",
+        "107",
+        "107",
+        "107",
+        "107"
+      ]
+    },
+    {
+      "question_id": "36849",
+      "reference_answers": [
+        "minis",
+        "minis",
+        "minis",
+        "minis ",
+        "minis 2013",
+        "minis ",
+        "mini's",
+        "minis",
+        "minis",
+        "wolverines"
+      ]
+    },
+    {
+      "question_id": "35740",
+      "reference_answers": [
+        "i7",
+        "i7",
+        "i7",
+        "7",
+        "7",
+        "7",
+        "i7",
+        "i7",
+        "i7",
+        "i7"
+      ]
+    },
+    {
+      "question_id": "38963",
+      "reference_answers": [
+        "nokia",
+        "nokia",
+        "nokia ",
+        "nokia",
+        "nokia",
+        "nokia",
+        "nokia",
+        "nokia",
+        "nokia",
+        "nokia"
+      ]
+    },
+    {
+      "question_id": "36441",
+      "reference_answers": [
+        "50",
+        "50",
+        "50",
+        "50",
+        "50",
+        "50",
+        "50",
+        "50",
+        "50",
+        "50"
+      ]
+    },
+    {
+      "question_id": "36449",
+      "reference_answers": [
+        "skol",
+        "skoj",
+        "koi",
+        "skoj",
+        "skoj",
+        "skoi",
+        "skoj",
+        "skol",
+        "skol",
+        "no"
+      ]
+    },
+    {
+      "question_id": "37674",
+      "reference_answers": [
+        "11:10",
+        "10:11",
+        "10:11",
+        "10:11",
+        "10:11",
+        "10:11",
+        "10:12",
+        "10:12",
+        "10:11",
+        "10:11"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,580 @@
+{
+  "schema_version": 1,
+  "run_dir": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY",
+  "evaluation_exit_code": 0,
+  "metadata": {
+    "started_utc": "2026-10-17T21:18:58Z",
+    "commit": "771911bd8665846e9ab8cb698cb22c2929d296b5",
+    "host": "evc46",
+    "base_model": "/home/ma076549/cv_systems_project/models/llava-v1.6-vicuna-7b-hf",
+    "spec_model": "/home/ma076549/cv_systems_project/models/ViSpec-llava-v1.6-vicuna-7b-hf",
+    "bench_dir": "/home/ma076549/cv_systems_project/bench_data",
+    "temperature": "0.0",
+    "python": "/home/ma076549/cv_systems_project/.venv/bin/python",
+    "slurm_job_id": "950793",
+    "cuda_visible_devices": "0",
+    "method": "autoregressive",
+    "max_new_tokens": "1024",
+    "benchmarks": "textvqa gqa mmvet"
+  },
+  "runtime": {
+    "textvqa": {
+      "devices": [
+        {
+          "index": 0,
+          "name": "NVIDIA H100 PCIe",
+          "uuid": "c8aca2f5-7741-b9ef-76aa-48901fe44401",
+          "total_memory_bytes": 85017624576
+        }
+      ],
+      "parameter_dtypes": [
+        "torch.float16"
+      ],
+      "allocation": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "SLURM_CPUS_PER_TASK": "8",
+        "SLURM_CPUS_ON_NODE": "8",
+        "SLURM_MEM_PER_NODE": "65536",
+        "SLURM_MEM_PER_CPU": null,
+        "SLURM_GPUS": null,
+        "SLURM_GPUS_PER_TASK": null,
+        "SLURM_GPUS_ON_NODE": "1"
+      },
+      "cpu_affinity": [
+        0,
+        2,
+        4,
+        6,
+        32,
+        34,
+        36,
+        38
+      ],
+      "base_model_revision": null
+    },
+    "gqa": {
+      "devices": [
+        {
+          "index": 0,
+          "name": "NVIDIA H100 PCIe",
+          "uuid": "c8aca2f5-7741-b9ef-76aa-48901fe44401",
+          "total_memory_bytes": 85017624576
+        }
+      ],
+      "parameter_dtypes": [
+        "torch.float16"
+      ],
+      "allocation": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "SLURM_CPUS_PER_TASK": "8",
+        "SLURM_CPUS_ON_NODE": "8",
+        "SLURM_MEM_PER_NODE": "65536",
+        "SLURM_MEM_PER_CPU": null,
+        "SLURM_GPUS": null,
+        "SLURM_GPUS_PER_TASK": null,
+        "SLURM_GPUS_ON_NODE": "1"
+      },
+      "cpu_affinity": [
+        0,
+        2,
+        4,
+        6,
+        32,
+        34,
+        36,
+        38
+      ],
+      "base_model_revision": null
+    },
+    "mmvet": {
+      "devices": [
+        {
+          "index": 0,
+          "name": "NVIDIA H100 PCIe",
+          "uuid": "c8aca2f5-7741-b9ef-76aa-48901fe44401",
+          "total_memory_bytes": 85017624576
+        }
+      ],
+      "parameter_dtypes": [
+        "torch.float16"
+      ],
+      "allocation": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "SLURM_CPUS_PER_TASK": "8",
+        "SLURM_CPUS_ON_NODE": "8",
+        "SLURM_MEM_PER_NODE": "65536",
+        "SLURM_MEM_PER_CPU": null,
+        "SLURM_GPUS": null,
+        "SLURM_GPUS_PER_TASK": null,
+        "SLURM_GPUS_ON_NODE": "1"
+      },
+      "cpu_affinity": [
+        0,
+        2,
+        4,
+        6,
+        32,
+        34,
+        36,
+        38
+      ],
+      "base_model_revision": null
+    }
+  },
+  "sources": [
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/textvqa_test/baseline_llava/test-temperature-0.0.manifest.json",
+      "sha256": "955409af7481e9871c62f1c1b706258783dc79accb5015eb482c20a82a359ac2"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/textvqa_test/baseline_llava/test-temperature-0.0.jsonl",
+      "sha256": "e6916efafe142dc260b1b42903d39d518985fbba102dc98a85aac985952c2182"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/textvqa_test/baseline_llava/test-temperature-0.0.runtime.json",
+      "sha256": "5404a802dda07eeeb2a347990b2ee6e0c729606eb29902547832fc8625eba189"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/gqa_test/baseline_llava/test-temperature-0.0.manifest.json",
+      "sha256": "8329ed4faf2dc55ff1ccce98dbb78b19a170f1d49bc3c72bf2d7a3c730195ac2"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/gqa_test/baseline_llava/test-temperature-0.0.jsonl",
+      "sha256": "6ee0f785da5372fcd1beceeeeef7527dca99ad13021852bb89b8c36bbcf10dfc"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/gqa_test/baseline_llava/test-temperature-0.0.runtime.json",
+      "sha256": "5404a802dda07eeeb2a347990b2ee6e0c729606eb29902547832fc8625eba189"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/mmvet_test/baseline_llava/test-temperature-0.0.manifest.json",
+      "sha256": "6d4fc0f5609ca817adbe73c1bbe2297f80bec8b48ecbabdf185f500377af6f18"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/mmvet_test/baseline_llava/test-temperature-0.0.jsonl",
+      "sha256": "2c72fc7f9bebcf11cbbd98d9bce77a18706405132556800477b93183360edcf6"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/00_baseline_original/runs/20261017T211853Z_771911bd8665_9RRsjY/results/mmvet_test/baseline_llava/test-temperature-0.0.runtime.json",
+      "sha256": "5404a802dda07eeeb2a347990b2ee6e0c729606eb29902547832fc8625eba189"
+    }
+  ],
+  "scoring_sources": {
+    "textvqa_annotations": {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/bench_data/textvqa/TextVQA_0.5.1_val.json",
+      "sha256": "4ceb5aadc1a41719d0a3e4dfdf06838bcfee1db569a9a65ee67d31c99893081d"
+    },
+    "gqa_annotations": {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/bench_data/gqa/testdev_balanced_questions.json",
+      "sha256": "14039069c0b3c797c7aa9bcd5f4c2aa4b5976e02c0b6773e1a584d942a03a318"
+    },
+    "textvqa_evaluator": {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/tools/downloaded/m4c_evaluator.py",
+      "sha256": "8b49e1033e29d551c0bdd86d9149e2b54370e4cd17e52176ac9061b3521f0774",
+      "upstream": "https://github.com/haotian-liu/LLaVA/blob/main/llava/eval/m4c_evaluator.py"
+    }
+  },
+  "benchmarks": {
+    "textvqa": {
+      "completed_questions": 100,
+      "completed_turns": 100,
+      "expected_questions": 100,
+      "missing_question_ids": [],
+      "unexpected_question_ids": [],
+      "wall_time_s": {
+        "count": 100,
+        "mean": 9.674778959676622,
+        "median": 9.527889712480828,
+        "p95": 22.80537742972374,
+        "stdev": 5.743182126613435
+      },
+      "ttft_s": {
+        "count": 100,
+        "mean": 0.28568258746527136,
+        "median": 0.2781412450131029,
+        "p95": 0.3850456399843097,
+        "stdev": 0.0473926766050642
+      },
+      "missing_latency_turns": 0,
+      "missing_ttft_turns": 0,
+      "decode_time_s": {
+        "count": 100,
+        "mean": 9.389140141010284,
+        "median": 9.208470225334167,
+        "p95": 22.401221883296966,
+        "stdev": 5.736908445987369
+      },
+      "output_tokens": {
+        "count": 100,
+        "mean": 429.3,
+        "median": 421.0,
+        "p95": 1024.0,
+        "stdev": 261.9596506828076
+      },
+      "answer_tokens": {
+        "count": 100,
+        "mean": 428.41,
+        "median": 420.0,
+        "p95": 1024.0,
+        "stdev": 262.2119620274846
+      },
+      "throughput_tokens_per_second": 44.373106795439305,
+      "throughput_turns": 100,
+      "per_answer_tokens_per_second": {
+        "count": 100,
+        "mean": 42.913151152645334,
+        "median": 44.30943816048128,
+        "p95": 45.01863092583905,
+        "stdev": 4.603677218903235
+      },
+      "time_per_output_token_s": {
+        "count": 100,
+        "mean": 0.022027920685309836,
+        "median": 0.021951687800354565,
+        "p95": 0.022340724404065815,
+        "stdev": 0.0004110435243838485
+      },
+      "accepted_draft_tokens_per_iteration": {
+        "count": 0,
+        "mean": null,
+        "median": null,
+        "p95": null,
+        "stdev": null
+      },
+      "output_tokens_per_verification_iteration": {
+        "count": 0,
+        "mean": null,
+        "median": null,
+        "p95": null,
+        "stdev": null
+      },
+      "stop_reasons": {
+        "eos": 89,
+        "token_limit": 11
+      },
+      "known_stop_turns": 100,
+      "truncation_rate": 0.11,
+      "post_eos_tokens": 0,
+      "post_eos_counted_turns": 100,
+      "token_counter_checked_turns": 100,
+      "token_counter_mismatch_turns": 0,
+      "gpu_memory_by_visible_device": {
+        "0": {
+          "peak_allocated_bytes": 22411203072,
+          "peak_reserved_bytes": 26531069952
+        }
+      },
+      "quality": {
+        "scored_questions": 100,
+        "eligible_questions": 100,
+        "score_percent": 0.0,
+        "status": "complete",
+        "methods": [
+          "VQA consensus (0\u20131)"
+        ]
+      }
+    },
+    "gqa": {
+      "completed_questions": 100,
+      "completed_turns": 100,
+      "expected_questions": 100,
+      "missing_question_ids": [],
+      "unexpected_question_ids": [],
+      "wall_time_s": {
+        "count": 100,
+        "mean": 1.3804354815976694,
+        "median": 1.2513687047176063,
+        "p95": 2.7894797350978475,
+        "stdev": 0.9722340057693114
+      },
+      "ttft_s": {
+        "count": 100,
+        "mean": 0.2728676254162565,
+        "median": 0.26150013972073793,
+        "p95": 0.3471929957158862,
+        "stdev": 0.08723792664574329
+      },
+      "missing_latency_turns": 0,
+      "missing_ttft_turns": 0,
+      "decode_time_s": {
+        "count": 100,
+        "mean": 1.1077197194099426,
+        "median": 0.9763275384902954,
+        "p95": 2.4885956048965454,
+        "stdev": 0.9586664375162564
+      },
+      "output_tokens": {
+        "count": 100,
+        "mean": 48.88,
+        "median": 45.0,
+        "p95": 112.1,
+        "stdev": 35.573591385189154
+      },
+      "answer_tokens": {
+        "count": 100,
+        "mean": 47.88,
+        "median": 44.0,
+        "p95": 111.1,
+        "stdev": 35.573591385189154
+      },
+      "throughput_tokens_per_second": 35.40911592871254,
+      "throughput_turns": 100,
+      "per_answer_tokens_per_second": {
+        "count": 100,
+        "mean": 32.59437236142767,
+        "median": 35.154620617705305,
+        "p95": 42.19030209726465,
+        "stdev": 8.030786126304017
+      },
+      "time_per_output_token_s": {
+        "count": 100,
+        "mean": 0.02315531232873782,
+        "median": 0.022241606885250398,
+        "p95": 0.024048010031563333,
+        "stdev": 0.0055327026858227645
+      },
+      "accepted_draft_tokens_per_iteration": {
+        "count": 0,
+        "mean": null,
+        "median": null,
+        "p95": null,
+        "stdev": null
+      },
+      "output_tokens_per_verification_iteration": {
+        "count": 0,
+        "mean": null,
+        "median": null,
+        "p95": null,
+        "stdev": null
+      },
+      "stop_reasons": {
+        "eos": 100
+      },
+      "known_stop_turns": 100,
+      "truncation_rate": 0.0,
+      "post_eos_tokens": 0,
+      "post_eos_counted_turns": 100,
+      "token_counter_checked_turns": 100,
+      "token_counter_mismatch_turns": 0,
+      "gpu_memory_by_visible_device": {
+        "0": {
+          "peak_allocated_bytes": 22364225536,
+          "peak_reserved_bytes": 24400363520
+        }
+      },
+      "quality": {
+        "scored_questions": 100,
+        "eligible_questions": 100,
+        "score_percent": 0.0,
+        "status": "complete",
+        "methods": [
+          "exact match, strip/lowercase (0\u20131)"
+        ]
+      }
+    },
+    "mmvet": {
+      "completed_questions": 218,
+      "completed_turns": 218,
+      "expected_questions": 218,
+      "missing_question_ids": [],
+      "unexpected_question_ids": [],
+      "wall_time_s": {
+        "count": 218,
+        "mean": 4.108819625126796,
+        "median": 2.940845828037709,
+        "p95": 10.61448819907382,
+        "stdev": 3.6206698856098165
+      },
+      "ttft_s": {
+        "count": 218,
+        "mean": 0.2765539269381707,
+        "median": 0.27278614579699934,
+        "p95": 0.4125076892087236,
+        "stdev": 0.08258301899503137
+      },
+      "missing_latency_turns": 0,
+      "missing_ttft_turns": 0,
+      "decode_time_s": {
+        "count": 218,
+        "mean": 3.832311584315169,
+        "median": 2.6609957218170166,
+        "p95": 10.333165836334228,
+        "stdev": 3.6087816759988183
+      },
+      "output_tokens": {
+        "count": 218,
+        "mean": 179.61467889908258,
+        "median": 125.0,
+        "p95": 483.1999999999998,
+        "stdev": 168.91761186804996
+      },
+      "answer_tokens": {
+        "count": 218,
+        "mean": 178.62844036697248,
+        "median": 124.0,
+        "p95": 482.1999999999998,
+        "stdev": 168.9867459104674
+      },
+      "throughput_tokens_per_second": 43.71442294538295,
+      "throughput_turns": 218,
+      "per_answer_tokens_per_second": {
+        "count": 218,
+        "mean": 40.98362433152074,
+        "median": 42.91928853706432,
+        "p95": 45.8211453271629,
+        "stdev": 5.744891527379022
+      },
+      "time_per_output_token_s": {
+        "count": 218,
+        "mean": 0.021659169104344747,
+        "median": 0.021550241458495396,
+        "p95": 0.022807996585278916,
+        "stdev": 0.0004797287961032793
+      },
+      "accepted_draft_tokens_per_iteration": {
+        "count": 0,
+        "mean": null,
+        "median": null,
+        "p95": null,
+        "stdev": null
+      },
+      "output_tokens_per_verification_iteration": {
+        "count": 0,
+        "mean": null,
+        "median": null,
+        "p95": null,
+        "stdev": null
+      },
+      "stop_reasons": {
+        "eos": 215,
+        "token_limit": 3
+      },
+      "known_stop_turns": 218,
+      "truncation_rate": 0.013761467889908258,
+      "post_eos_tokens": 0,
+      "post_eos_counted_turns": 218,
+      "token_counter_checked_turns": 218,
+      "token_counter_mismatch_turns": 0,
+      "gpu_memory_by_visible_device": {
+        "0": {
+          "peak_allocated_bytes": 22473883648,
+          "peak_reserved_bytes": 33241956352
+        }
+      },
+      "quality": {
+        "scored_questions": 0,
+        "eligible_questions": 218,
+        "score_percent": null,
+        "status": "pending",
+        "methods": [
+          "pending: import official MM-Vet judge grades"
+        ]
+      }
+    }
+  },
+  "overall": {
+    "completed_questions": 418,
+    "completed_turns": 418,
+    "expected_questions": null,
+    "missing_question_ids": null,
+    "unexpected_question_ids": null,
+    "wall_time_s": {
+      "count": 418,
+      "mean": 4.787665364605433,
+      "median": 2.824463720433414,
+      "p95": 12.49331315762829,
+      "stdev": 4.861014762033728
+    },
+    "ttft_s": {
+      "count": 418,
+      "mean": 0.277855926700177,
+      "median": 0.27289538900367916,
+      "p95": 0.41209965038578955,
+      "stdev": 0.07688025842306419
+    },
+    "missing_latency_turns": 0,
+    "missing_ttft_turns": 0,
+    "decode_time_s": {
+      "count": 418,
+      "mean": 4.509880170867774,
+      "median": 2.5453906059265137,
+      "p95": 12.24285076856613,
+      "stdev": 4.8511693647225
+    },
+    "output_tokens": {
+      "count": 418,
+      "mean": 208.07177033492823,
+      "median": 117.5,
+      "p95": 559.15,
+      "stdev": 222.88480236309593
+    },
+    "answer_tokens": {
+      "count": 418,
+      "mean": 207.10526315789474,
+      "median": 116.5,
+      "p95": 558.15,
+      "stdev": 223.00774453124671
+    },
+    "throughput_tokens_per_second": 43.45996524175956,
+    "throughput_turns": 418,
+    "per_answer_tokens_per_second": {
+      "count": 418,
+      "mean": 39.438235539901484,
+      "median": 42.30759371283811,
+      "p95": 45.59170919507329,
+      "stdev": 7.272835224229822
+    },
+    "time_per_output_token_s": {
+      "count": 418,
+      "mean": 0.022105316186966317,
+      "median": 0.0217904648675898,
+      "p95": 0.023680669444464994,
+      "stdev": 0.0027923227362361227
+    },
+    "accepted_draft_tokens_per_iteration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "p95": null,
+      "stdev": null
+    },
+    "output_tokens_per_verification_iteration": {
+      "count": 0,
+      "mean": null,
+      "median": null,
+      "p95": null,
+      "stdev": null
+    },
+    "stop_reasons": {
+      "eos": 404,
+      "token_limit": 14
+    },
+    "known_stop_turns": 418,
+    "truncation_rate": 0.03349282296650718,
+    "post_eos_tokens": 0,
+    "post_eos_counted_turns": 418,
+    "token_counter_checked_turns": 418,
+    "token_counter_mismatch_turns": 0,
+    "gpu_memory_by_visible_device": {
+      "0": {
+        "peak_allocated_bytes": 22473883648,
+        "peak_reserved_bytes": 33241956352
+      }
+    }
+  },
+  "definitions": {
+    "wall_time_s": "generation call; excludes loading, prompt preparation and reporting",
+    "ttft_s": "generation entry to first authoritative target token ready; not streamed delivery",
+    "output_tokens": "returned token IDs, including special tokens and post-EOS tokens; not retokenized text",
+    "throughput": "sum(output_tokens) / sum(wall_time_s) on turns with both measurements",
+    "time_per_output_token_s": "(wall_time_s - ttft_s) / (output_tokens - 1), only for output_tokens > 1",
+    "percentile": "linear interpolation at (n - 1) * quantile",
+    "memory": "per-visible-device PyTorch allocator peaks during each call; includes resident model/KV cache; excludes non-PyTorch allocations",
+    "quality": "choice 0, turn 0 only; subset score, no averaging across benchmarks"
+  },
+  "warnings": [
+    "Generation limits differ between original and draft; inspect stop reasons before interpreting speedups.",
+    "Inherited TextVQA prompts request OCR explanations; strict answer scoring may penalize verbose responses.",
+    "Memory is measured after warmup; initial cache/model allocation peaks are excluded."
+  ]
+}

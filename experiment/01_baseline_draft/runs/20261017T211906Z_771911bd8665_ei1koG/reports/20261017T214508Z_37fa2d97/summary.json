@@ -1,0 +1,584 @@
+{
+  "schema_version": 1,
+  "run_dir": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG",
+  "evaluation_exit_code": 0,
+  "metadata": {
+    "started_utc": "2026-10-17T21:19:06Z",
+    "commit": "771911bd8665846e9ab8cb698cb22c2929d296b5",
+    "host": "evc46",
+    "base_model": "/home/ma076549/cv_systems_project/models/llava-v1.6-vicuna-7b-hf",
+    "spec_model": "/home/ma076549/cv_systems_project/models/ViSpec-llava-v1.6-vicuna-7b-hf",
+    "bench_dir": "/home/ma076549/cv_systems_project/bench_data",
+    "temperature": "0.0",
+    "python": "/home/ma076549/cv_systems_project/.venv/bin/python",
+    "slurm_job_id": "950803",
+    "cuda_visible_devices": "0",
+    "method": "vispec_speculative",
+    "depth": "3",
+    "top_k": "8",
+    "total_token": "30",
+    "num_q": "2",
+    "max_new_tokens": "1024",
+    "benchmarks": "textvqa gqa mmvet"
+  },
+  "runtime": {
+    "textvqa": {
+      "devices": [
+        {
+          "index": 0,
+          "name": "NVIDIA H100 PCIe",
+          "uuid": "cd5e5946-fc28-f3cf-978d-635f8e613aa4",
+          "total_memory_bytes": 85017624576
+        }
+      ],
+      "parameter_dtypes": [
+        "torch.float16"
+      ],
+      "allocation": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "SLURM_CPUS_PER_TASK": "8",
+        "SLURM_CPUS_ON_NODE": "8",
+        "SLURM_MEM_PER_NODE": "65536",
+        "SLURM_MEM_PER_CPU": null,
+        "SLURM_GPUS": null,
+        "SLURM_GPUS_PER_TASK": null,
+        "SLURM_GPUS_ON_NODE": "1"
+      },
+      "cpu_affinity": [
+        1,
+        3,
+        5,
+        7,
+        33,
+        35,
+        37,
+        39
+      ],
+      "base_model_revision": null
+    },
+    "gqa": {
+      "devices": [
+        {
+          "index": 0,
+          "name": "NVIDIA H100 PCIe",
+          "uuid": "cd5e5946-fc28-f3cf-978d-635f8e613aa4",
+          "total_memory_bytes": 85017624576
+        }
+      ],
+      "parameter_dtypes": [
+        "torch.float16"
+      ],
+      "allocation": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "SLURM_CPUS_PER_TASK": "8",
+        "SLURM_CPUS_ON_NODE": "8",
+        "SLURM_MEM_PER_NODE": "65536",
+        "SLURM_MEM_PER_CPU": null,
+        "SLURM_GPUS": null,
+        "SLURM_GPUS_PER_TASK": null,
+        "SLURM_GPUS_ON_NODE": "1"
+      },
+      "cpu_affinity": [
+        1,
+        3,
+        5,
+        7,
+        33,
+        35,
+        37,
+        39
+      ],
+      "base_model_revision": null
+    },
+    "mmvet": {
+      "devices": [
+        {
+          "index": 0,
+          "name": "NVIDIA H100 PCIe",
+          "uuid": "cd5e5946-fc28-f3cf-978d-635f8e613aa4",
+          "total_memory_bytes": 85017624576
+        }
+      ],
+      "parameter_dtypes": [
+        "torch.float16"
+      ],
+      "allocation": {
+        "CUDA_VISIBLE_DEVICES": "0",
+        "SLURM_CPUS_PER_TASK": "8",
+        "SLURM_CPUS_ON_NODE": "8",
+        "SLURM_MEM_PER_NODE": "65536",
+        "SLURM_MEM_PER_CPU": null,
+        "SLURM_GPUS": null,
+        "SLURM_GPUS_PER_TASK": null,
+        "SLURM_GPUS_ON_NODE": "1"
+      },
+      "cpu_affinity": [
+        1,
+        3,
+        5,
+        7,
+        33,
+        35,
+        37,
+        39
+      ],
+      "base_model_revision": null
+    }
+  },
+  "sources": [
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/textvqa_test/draft_llava/test-temperature-0.0.manifest.json",
+      "sha256": "955409af7481e9871c62f1c1b706258783dc79accb5015eb482c20a82a359ac2"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/textvqa_test/draft_llava/test-temperature-0.0.jsonl",
+      "sha256": "0f8dbe484d4cf9694b447eafc43f434cd75cb406f61255be624063adb4c8479a"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/textvqa_test/draft_llava/test-temperature-0.0.runtime.json",
+      "sha256": "e4e6ba972855cbb167b1f375e7331a8fc43e8545a423b58a5bc60ae701c55eed"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/gqa_test/draft_llava/test-temperature-0.0.manifest.json",
+      "sha256": "8329ed4faf2dc55ff1ccce98dbb78b19a170f1d49bc3c72bf2d7a3c730195ac2"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/gqa_test/draft_llava/test-temperature-0.0.jsonl",
+      "sha256": "128f0adc52d9db6125c99a13a42d9934e757af6fb28a446d497e87c514040663"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/gqa_test/draft_llava/test-temperature-0.0.runtime.json",
+      "sha256": "e4e6ba972855cbb167b1f375e7331a8fc43e8545a423b58a5bc60ae701c55eed"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/mmvet_test/draft_llava/test-temperature-0.0.manifest.json",
+      "sha256": "6d4fc0f5609ca817adbe73c1bbe2297f80bec8b48ecbabdf185f500377af6f18"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/mmvet_test/draft_llava/test-temperature-0.0.jsonl",
+      "sha256": "50ba7951c9a50103faf535bcdd54f1db4e7a9bcff2022d5a9bd2aa6c5b2bd294"
+    },
+    {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/experiment/01_baseline_draft/runs/20261017T211906Z_771911bd8665_ei1koG/results/mmvet_test/draft_llava/test-temperature-0.0.runtime.json",
+      "sha256": "e4e6ba972855cbb167b1f375e7331a8fc43e8545a423b58a5bc60ae701c55eed"
+    }
+  ],
+  "scoring_sources": {
+    "textvqa_annotations": {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/bench_data/textvqa/TextVQA_0.5.1_val.json",
+      "sha256": "4ceb5aadc1a41719d0a3e4dfdf06838bcfee1db569a9a65ee67d31c99893081d"
+    },
+    "gqa_annotations": {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/bench_data/gqa/testdev_balanced_questions.json",
+      "sha256": "14039069c0b3c797c7aa9bcd5f4c2aa4b5976e02c0b6773e1a584d942a03a318"
+    },
+    "textvqa_evaluator": {
+      "path": "/lustre/fs1/home/ma076549/cv_systems_project/tools/downloaded/m4c_evaluator.py",
+      "sha256": "8b49e1033e29d551c0bdd86d9149e2b54370e4cd17e52176ac9061b3521f0774",
+      "upstream": "https://github.com/haotian-liu/LLaVA/blob/main/llava/eval/m4c_evaluator.py"
+    }
+  },
+  "benchmarks": {
+    "textvqa": {
+      "completed_questions": 100,
+      "completed_turns": 100,
+      "expected_questions": 100,
+      "missing_question_ids": [],
+      "unexpected_question_ids": [],
+      "wall_time_s": {
+        "count": 100,
+        "mean": 3.364660405968316,
+        "median": 3.334727040026337,
+        "p95": 6.666932912589981,
+        "stdev": 1.8276393354899758
+      },
+      "ttft_s": {
+        "count": 100,
+        "mean": 0.2868618748150766,
+        "median": 0.2788837216794491,
+        "p95": 0.3875112100737169,
+        "stdev": 0.04765134602635838
+      },
+      "missing_latency_turns": 0,
+      "missing_ttft_turns": 0,
+      "decode_time_s": {
+        "count": 100,
+        "mean": 3.069095697402954,
+        "median": 3.048345923423767,
+        "p95": 6.352564239501953,
+        "stdev": 1.8225149494345874
+      },
+      "output_tokens": {
+        "count": 100,
+        "mean": 428.68,
+        "median": 419.5,
+        "p95": 1024.0,
+        "stdev": 266.2392741710192
+      },
+      "answer_tokens": {
+        "count": 100,
+        "mean": 427.79,
+        "median": 418.5,
+        "p95": 1024.0,
+        "stdev": 266.4877920906197
+      },
+      "throughput_tokens_per_second": 127.40661709562043,
+      "throughput_turns": 100,
+      "per_answer_tokens_per_second": {
+        "count": 100,
+        "mean": 118.26529753165593,
+        "median": 124.09940765747567,
+        "p95": 153.8208606568391,
+        "stdev": 25.125929941654295
+      },
+      "time_per_output_token_s": {
+        "count": 100,
+        "mean": 0.007560585263494994,
+        "median": 0.0073919031499062714,
+        "p95": 0.009498159997285302,
+        "stdev": 0.0010947967777745157
+      },
+      "accepted_draft_tokens_per_iteration": {
+        "count": 10702,
+        "mean": 3.005606428704915,
+        "median": 4.0,
+        "p95": 4.0,
+        "stdev": 1.217787967316394
+      },
+      "output_tokens_per_verification_iteration": {
+        "count": 10702,
+        "mean": 4.005606428704915,
+        "median": 5.0,
+        "p95": 5.0,
+        "stdev": 1.217787967316394
+      },
+      "stop_reasons": {
+        "eos": 89,
+        "token_limit": 11
+      },
+      "known_stop_turns": 100,
+      "truncation_rate": 0.11,
+      "post_eos_tokens": 0,
+      "post_eos_counted_turns": 100,
+      "token_counter_checked_turns": 100,
+      "token_counter_mismatch_turns": 0,
+      "gpu_memory_by_visible_device": {
+        "0": {
+          "peak_allocated_bytes": 23322264576,
+          "peak_reserved_bytes": 26711425024
+        }
+      },
+      "quality": {
+        "scored_questions": 100,
+        "eligible_questions": 100,
+        "score_percent": 0.0,
+        "status": "complete",
+        "methods": [
+          "VQA consensus (0\u20131)"
+        ]
+      }
+    },
+    "gqa": {
+      "completed_questions": 100,
+      "completed_turns": 100,
+      "expected_questions": 100,
+      "missing_question_ids": [],
+      "unexpected_question_ids": [],
+      "wall_time_s": {
+        "count": 100,
+        "mean": 0.6399968434870243,
+        "median": 0.5842814717907459,
+        "p95": 1.112431760178879,
+        "stdev": 0.2657687371910613
+      },
+      "ttft_s": {
+        "count": 100,
+        "mean": 0.2622219049045816,
+        "median": 0.2614960656501353,
+        "p95": 0.3134942411910743,
+        "stdev": 0.04890330742189198
+      },
+      "missing_latency_turns": 0,
+      "missing_ttft_turns": 0,
+      "decode_time_s": {
+        "count": 100,
+        "mean": 0.36940378665924073,
+        "median": 0.3348921537399292,
+        "p95": 0.7967692613601683,
+        "stdev": 0.2583698590377106
+      },
+      "output_tokens": {
+        "count": 100,
+        "mean": 48.85,
+        "median": 45.0,
+        "p95": 112.1,
+        "stdev": 35.560270362904
+      },
+      "answer_tokens": {
+        "count": 100,
+        "mean": 47.85,
+        "median": 44.0,
+        "p95": 111.1,
+        "stdev": 35.560270362904
+      },
+      "throughput_tokens_per_second": 76.32850145610198,
+      "throughput_turns": 100,
+      "per_answer_tokens_per_second": {
+        "count": 100,
+        "mean": 66.71102649546415,
+        "median": 75.68242291193856,
+        "p95": 104.19055753868354,
+        "stdev": 28.656620982672443
+      },
+      "time_per_output_token_s": {
+        "count": 100,
+        "mean": 0.008704236403254472,
+        "median": 0.00799171240749185,
+        "p95": 0.011815160983612507,
+        "stdev": 0.0017748286147425602
+      },
+      "accepted_draft_tokens_per_iteration": {
+        "count": 1266,
+        "mean": 2.858609794628752,
+        "median": 3.0,
+        "p95": 4.0,
+        "stdev": 1.2641893943134088
+      },
+      "output_tokens_per_verification_iteration": {
+        "count": 1266,
+        "mean": 3.858609794628752,
+        "median": 4.0,
+        "p95": 5.0,
+        "stdev": 1.2641893943134088
+      },
+      "stop_reasons": {
+        "eos": 100
+      },
+      "known_stop_turns": 100,
+      "truncation_rate": 0.0,
+      "post_eos_tokens": 0,
+      "post_eos_counted_turns": 100,
+      "token_counter_checked_turns": 100,
+      "token_counter_mismatch_turns": 0,
+      "gpu_memory_by_visible_device": {
+        "0": {
+          "peak_allocated_bytes": 23269978624,
+          "peak_reserved_bytes": 24580718592
+        }
+      },
+      "quality": {
+        "scored_questions": 100,
+        "eligible_questions": 100,
+        "score_percent": 0.0,
+        "status": "complete",
+        "methods": [
+          "exact match, strip/lowercase (0\u20131)"
+        ]
+      }
+    },
+    "mmvet": {
+      "completed_questions": 218,
+      "completed_turns": 218,
+      "expected_questions": 218,
+      "missing_question_ids": [],
+      "unexpected_question_ids": [],
+      "wall_time_s": {
+        "count": 218,
+        "mean": 1.6507091679900816,
+        "median": 1.250142138916999,
+        "p95": 3.9971376098925244,
+        "stdev": 1.2271914888471191
+      },
+      "ttft_s": {
+        "count": 218,
+        "mean": 0.27761857599925693,
+        "median": 0.274857962038368,
+        "p95": 0.4140484740957618,
+        "stdev": 0.08251796761883162
+      },
+      "missing_latency_turns": 0,
+      "missing_ttft_turns": 0,
+      "decode_time_s": {
+        "count": 218,
+        "mean": 1.3643384832854664,
+        "median": 0.9907176494598389,
+        "p95": 3.6920461535453786,
+        "stdev": 1.2088331255872182
+      },
+      "output_tokens": {
+        "count": 218,
+        "mean": 179.41284403669724,
+        "median": 126.0,
+        "p95": 489.15,
+        "stdev": 167.0766380075654
+      },
+      "answer_tokens": {
+        "count": 218,
+        "mean": 178.42660550458714,
+        "median": 125.0,
+        "p95": 488.15,
+        "stdev": 167.14655019713143
+      },
+      "throughput_tokens_per_second": 108.68834287456703,
+      "throughput_turns": 218,
+      "per_answer_tokens_per_second": {
+        "count": 218,
+        "mean": 96.96961613015958,
+        "median": 102.42893230742845,
+        "p95": 128.17503721290763,
+        "stdev": 25.26210608299947
+      },
+      "time_per_output_token_s": {
+        "count": 218,
+        "mean": 0.008026309810008118,
+        "median": 0.00784547610238923,
+        "p95": 0.010177676129387688,
+        "stdev": 0.001017251928936362
+      },
+      "accepted_draft_tokens_per_iteration": {
+        "count": 10216,
+        "mean": 2.8285043069694598,
+        "median": 3.0,
+        "p95": 4.0,
+        "stdev": 1.2496319397749
+      },
+      "output_tokens_per_verification_iteration": {
+        "count": 10216,
+        "mean": 3.8285043069694598,
+        "median": 4.0,
+        "p95": 5.0,
+        "stdev": 1.2496319397749
+      },
+      "stop_reasons": {
+        "eos": 215,
+        "token_limit": 3
+      },
+      "known_stop_turns": 218,
+      "truncation_rate": 0.013761467889908258,
+      "post_eos_tokens": 0,
+      "post_eos_counted_turns": 218,
+      "token_counter_checked_turns": 218,
+      "token_counter_mismatch_turns": 0,
+      "gpu_memory_by_visible_device": {
+        "0": {
+          "peak_allocated_bytes": 23391733248,
+          "peak_reserved_bytes": 33422311424
+        }
+      },
+      "quality": {
+        "scored_questions": 0,
+        "eligible_questions": 218,
+        "score_percent": null,
+        "status": "pending",
+        "methods": [
+          "pending: import official MM-Vet judge grades"
+        ]
+      }
+    }
+  },
+  "overall": {
+    "completed_questions": 418,
+    "completed_turns": 418,
+    "expected_questions": null,
+    "missing_question_ids": null,
+    "unexpected_question_ids": null,
+    "wall_time_s": {
+      "count": 418,
+      "mean": 1.8189481425056742,
+      "median": 1.1717250056099147,
+      "p95": 4.7702173352008685,
+      "stdev": 1.5857325017059507
+    },
+    "ttft_s": {
+      "count": 418,
+      "mean": 0.2761464773679517,
+      "median": 0.27420277101919055,
+      "p95": 0.41274553374387324,
+      "stdev": 0.06874168203744561
+    },
+    "missing_latency_turns": 0,
+    "missing_ttft_turns": 0,
+    "decode_time_s": {
+      "count": 418,
+      "mean": 1.53415248268529,
+      "median": 0.9041454792022705,
+      "p95": 4.415798020362852,
+      "stdev": 1.5717041727105665
+    },
+    "output_tokens": {
+      "count": 418,
+      "mean": 207.811004784689,
+      "median": 117.5,
+      "p95": 567.6999999999996,
+      "stdev": 223.2369673052603
+    },
+    "answer_tokens": {
+      "count": 418,
+      "mean": 206.8444976076555,
+      "median": 116.5,
+      "p95": 566.6999999999996,
+      "stdev": 223.3597548296576
+    },
+    "throughput_tokens_per_second": 114.24789961214671,
+    "throughput_turns": 418,
+    "per_answer_tokens_per_second": {
+      "count": 418,
+      "mean": 94.82537971073397,
+      "median": 101.62246345894098,
+      "p95": 131.83324995525464,
+      "stdev": 31.632998986213906
+    },
+    "time_per_output_token_s": {
+      "count": 418,
+      "mean": 0.008077075849896451,
+      "median": 0.007661391515080617,
+      "p95": 0.011270362257778166,
+      "stdev": 0.00131549892227423
+    },
+    "accepted_draft_tokens_per_iteration": {
+      "count": 22184,
+      "mean": 2.915659935088352,
+      "median": 3.0,
+      "p95": 4.0,
+      "stdev": 1.2382286154294952
+    },
+    "output_tokens_per_verification_iteration": {
+      "count": 22184,
+      "mean": 3.915659935088352,
+      "median": 4.0,
+      "p95": 5.0,
+      "stdev": 1.2382286154294952
+    },
+    "stop_reasons": {
+      "eos": 404,
+      "token_limit": 14
+    },
+    "known_stop_turns": 418,
+    "truncation_rate": 0.03349282296650718,
+    "post_eos_tokens": 0,
+    "post_eos_counted_turns": 418,
+    "token_counter_checked_turns": 418,
+    "token_counter_mismatch_turns": 0,
+    "gpu_memory_by_visible_device": {
+      "0": {
+        "peak_allocated_bytes": 23391733248,
+        "peak_reserved_bytes": 33422311424
+      }
+    }
+  },
+  "definitions": {
+    "wall_time_s": "generation call; excludes loading, prompt preparation and reporting",
+    "ttft_s": "generation entry to first authoritative target token ready; not streamed delivery",
+    "output_tokens": "returned token IDs, including special tokens and post-EOS tokens; not retokenized text",
+    "throughput": "sum(output_tokens) / sum(wall_time_s) on turns with both measurements",
+    "time_per_output_token_s": "(wall_time_s - ttft_s) / (output_tokens - 1), only for output_tokens > 1",
+    "percentile": "linear interpolation at (n - 1) * quantile",
+    "memory": "per-visible-device PyTorch allocator peaks during each call; includes resident model/KV cache; excludes non-PyTorch allocations",
+    "quality": "choice 0, turn 0 only; subset score, no averaging across benchmarks"
+  },
+  "warnings": [
+    "Generation limits differ between original and draft; inspect stop reasons before interpreting speedups.",
+    "Inherited TextVQA prompts request OCR explanations; strict answer scoring may penalize verbose responses.",
+    "Memory is measured after warmup; initial cache/model allocation peaks are excluded."
+  ]
+}
