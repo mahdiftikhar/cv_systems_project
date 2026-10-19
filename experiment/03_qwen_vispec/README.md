@@ -236,7 +236,7 @@ Every divergence in both styles is a bf16 near-tie: 150 of 150 in the long style
 
 ### Week 1 gate outcome
 
-The gate passes. The low long-style token agreement (0.22 on TextVQA and 0.28 on COCO) reflects bf16 tie-breaking under different kernel shapes, because the speculative path verifies draft trees in batched forward passes while autoregressive decoding runs one-token passes, and it does not indicate a decoding bug. Once two sequences diverge at a near-tie, the rest of the text differs, so a single tie can change a whole long paragraph.
+The gate passes. The low long-style token agreement (0.22 on TextVQA and 0.28 on COCO) is consistent with bf16 tie-breaking, and it is consistent with no decoding bug. The most likely mechanism, which was not measured, is the different kernel shapes of batched tree verification compared with one-token decoding. Once two sequences diverge at a near-tie, the rest of the text differs, so a single tie can change a whole long paragraph.
 
 A validated equivalent-output speedup remains **unestablished**, because the outputs differ. The 2.15x (TextVQA) and 2.13x (COCO) long-style latency ratios are observed ratios between two output sets of similar length (mean output tokens 283.31 vs 277.70 and 109.96 vs 109.89), not controlled speedups.
 

@@ -114,8 +114,9 @@ differ between methods.
 Short-style speed is secondary because prefill dominates its wall time. Long-style quality is
 secondary because strict scoring rejects paragraph answers. The Week 1 gate outcome: every greedy
 divergence is a bf16 near-tie (150 of 150 in `long`, 16 of 16 in `short`, none unexplained), so the
-low long-style token agreement reflects bf16 tie-breaking under different kernel shapes and not a
-decoding bug. Validated equivalent-output speedup is still unestablished, and repeat-run variability
+low long-style token agreement is consistent with bf16 tie-breaking and with no decoding bug. The most
+likely mechanism, which was not measured, is the different kernel shapes of batched tree verification
+compared with one-token decoding. Validated equivalent-output speedup is still unestablished, and repeat-run variability
 is **pending**. Full tables, memory, acceptance and the diagnosis are in the
 [03 README](03_qwen_vispec/README.md#results) and [02 README](02_qwen_autoregressive/README.md#results).
 
