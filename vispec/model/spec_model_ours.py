@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import time
+import warnings
 from typing import Optional
 
 import torch
@@ -39,11 +40,27 @@ class SpecModel(nn.Module):
         threshold,
         spec_layer_state_dict,
         num_q: int = 2,
+        slim_prefill: bool = False,
+        kv_capacity: int | None = None,
     ):
 
         super().__init__()
         self.base_model = base_model
         self.config = base_model.config
+        # Only the Qwen2.5-VL KV fork accepts last_hidden_only/logits_to_keep; every other
+        # architecture (the LLaVA forks included) keeps the original forward call.
+        if slim_prefill and not isinstance(
+            base_model, KVQwen2_5_VLForConditionalGeneration
+        ):
+            warnings.warn(
+                "slim_prefill is only supported for Qwen2_5_VLForConditionalGeneration; "
+                f"disabled for {type(base_model).__name__}"
+            )
+            slim_prefill = False
+        self.slim_prefill = bool(slim_prefill)
+        if kv_capacity is not None and int(kv_capacity) < 1:
+            raise ValueError(f"KV capacity must be positive, got {kv_capacity}")
+        self.kv_capacity = None if kv_capacity is None else int(kv_capacity)
 
         if hasattr(base_model, "language_model"):
             base_model = base_model.language_model
@@ -116,6 +133,8 @@ class SpecModel(nn.Module):
         top_k=8,
         threshold=1.0,
         num_q: int = 2,
+        slim_prefill: bool = False,
+        kv_capacity: int | None = None,
         **kwargs,
     ):
         # assert Type=="LLaMA" or "Mixtral"
@@ -173,6 +192,8 @@ class SpecModel(nn.Module):
             threshold,
             spec_layer_state_dict,
             num_q=num_q,
+            slim_prefill=slim_prefill,
+            kv_capacity=kv_capacity,
         )
 
         if total_token == -1:
@@ -210,6 +231,7 @@ class SpecModel(nn.Module):
         position_ids=None,
         inputs_embeds=None,
         output_real_hidden=False,
+        logits_to_keep: int = 0,
         **kwargs,
     ):
         if (
@@ -219,6 +241,15 @@ class SpecModel(nn.Module):
         ):
             input_ids = None
             kwargs = {}
+
+        # Slim prefill (Qwen fork only): skip the per-layer hidden-state tuple and, when the
+        # caller asks, project only the last logits_to_keep positions. hidden_states[-1]
+        # stays the final normed hidden state. Other models never see these kwargs.
+        if self.slim_prefill:
+            if not output_real_hidden:
+                kwargs["last_hidden_only"] = True
+            if logits_to_keep:
+                kwargs["logits_to_keep"] = logits_to_keep
 
         with torch.inference_mode():
             # Pass input through the base model
@@ -270,6 +301,20 @@ class SpecModel(nn.Module):
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
+        if self.kv_capacity is not None:
+            # Each verification step writes up to total_token tree tokens past the committed
+            # sequence, so the cache must hold prompt + output budget + one tree + margin.
+            prompt_len = (
+                input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1]
+            )
+            total_token = self.spec_layer.total_tokens + 1
+            if prompt_len + max_new_tokens + total_token + 10 > self.kv_capacity:
+                raise ValueError(
+                    f"KV capacity {self.kv_capacity} is too small: prompt_len={prompt_len} "
+                    f"+ max_new_tokens={max_new_tokens} + total_token={total_token} + 10 "
+                    f"= {prompt_len + max_new_tokens + total_token + 10} > "
+                    f"kv_capacity={self.kv_capacity}"
+                )
         max_length = max_length - self.spec_layer.total_tokens - 10
 
         if temperature > 1e-5:
@@ -298,13 +343,17 @@ class SpecModel(nn.Module):
                     past_key_values,
                     past_key_values_data,
                     current_length_data,
-                ) = initialize_past_key_values(self.base_model)
+                ) = initialize_past_key_values(
+                    self.base_model, max_length=self.kv_capacity
+                )
             except:
                 (
                     past_key_values,
                     past_key_values_data,
                     current_length_data,
-                ) = initialize_past_key_values(self.base_model.language_model)
+                ) = initialize_past_key_values(
+                    self.base_model.language_model, max_length=self.kv_capacity
+                )
             self.past_key_values = past_key_values
             self.past_key_values_data = past_key_values_data
             self.current_length_data = current_length_data

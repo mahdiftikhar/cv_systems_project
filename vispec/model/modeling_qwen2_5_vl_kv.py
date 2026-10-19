@@ -2030,6 +2030,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
+        logits_to_keep: int = 0,
+        last_hidden_only: bool = False,
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
         r"""
         Args:
@@ -2037,6 +2039,12 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
                 config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
                 (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+            logits_to_keep (`int`, *optional*, defaults to 0):
+                [MODIFIED] When positive, `lm_head` runs only on the last `logits_to_keep` positions. `0` keeps
+                logits for every position (the original behaviour).
+            last_hidden_only (`bool`, *optional*, defaults to `False`):
+                [MODIFIED] When set, the text model does not collect per-layer hidden states, and the output's
+                `hidden_states` is `(final_normed_hidden,)`, so `hidden_states[-1]` is unchanged.
 
         Returns:
 
@@ -2084,6 +2092,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
+        if logits_to_keep < 0:
+            raise ValueError(f"logits_to_keep must be >= 0, got {logits_to_keep}")
 
         if inputs_embeds is None:
             inputs_embeds = self.model.embed_tokens(input_ids)
@@ -2177,6 +2187,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 position_ids = position_ids.add(delta)
                 position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
 
+        # [MODIFIED] last_hidden_only skips the per-layer hidden-state tuple; the text model
+        # then returns a ModelOutput so the tuple form below can be rebuilt explicitly.
         outputs = self.model(
             input_ids=None,
             position_ids=position_ids,
@@ -2185,13 +2197,21 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
+            output_hidden_states=False if last_hidden_only else output_hidden_states,
+            return_dict=True if last_hidden_only else return_dict,
             cache_position=cache_position,
         )
 
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
+        # [MODIFIED] logits_to_keep > 0 projects only the last positions to the vocabulary.
+        if logits_to_keep > 0:
+            logits = self.lm_head(hidden_states[:, -logits_to_keep:, :])
+        else:
+            logits = self.lm_head(hidden_states)
+        if last_hidden_only:
+            # The text model applies the final norm before returning outputs[0], which is
+            # the same tensor output_hidden_states=True appends as its last entry.
+            all_hidden_states = (hidden_states,)
 
         loss = None
         if labels is not None:
@@ -2209,14 +2229,28 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             loss = loss_fct(shift_logits, shift_labels)
 
         if not return_dict:
-            output = (logits,) + outputs[1:]
+            if last_hidden_only:
+                # Same layout as the text model's tuple: present entries only, in order.
+                output = (logits,) + tuple(
+                    v
+                    for v in (
+                        outputs.past_key_values,
+                        all_hidden_states,
+                        outputs.attentions,
+                    )
+                    if v is not None
+                )
+            else:
+                output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
         return Qwen2_5_VLCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
+            hidden_states=(
+                all_hidden_states if last_hidden_only else outputs.hidden_states
+            ),
             attentions=outputs.attentions,
             rope_deltas=self.rope_deltas,
         )
