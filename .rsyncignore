@@ -27,3 +27,4 @@ __pycache__/
 /logs/
 /nohup.out
 /tools/m4c_evaluator.py
+/.smoke/
