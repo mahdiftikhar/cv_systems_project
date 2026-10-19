@@ -608,9 +608,16 @@ def main():
     configure(root)
     state_path = root / ".preparation/assets.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    with (root / ".preparation/prepare.lock").open("w") as lock:
+    # Check-only runs take a shared lock, so runners that start together (for example two
+    # jobs on NFS) can validate at the same time; full preparation keeps the exclusive lock.
+    # "a+" opens the file for reading and writing without truncating it: NFS emulates
+    # flock with POSIX locks, and a shared lock there needs a readable descriptor.
+    with (root / ".preparation/prepare.lock").open("a+") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(
+                lock,
+                (fcntl.LOCK_SH if args.check_only else fcntl.LOCK_EX) | fcntl.LOCK_NB,
+            )
         except BlockingIOError as error:
             raise RuntimeError(
                 "Another preparation process is using this repository"
