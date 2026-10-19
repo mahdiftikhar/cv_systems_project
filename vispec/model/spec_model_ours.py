@@ -12,7 +12,7 @@ from transformers import AutoConfig, AutoTokenizer
 
 from .cnets_ours import Model
 from .configs import EConfig
-from .kv_cache import initialize_past_key_values
+from .kv_cache import expected_kv_capacity, initialize_past_key_values
 from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 from .modeling_llava_kv import (
     CustomLlavaForConditionalGeneration as KVLlavaForConditionalGeneration,
@@ -330,8 +330,13 @@ class SpecModel(nn.Module):
         input_ids = input_ids.clone()
         self.spec_layer.reset_kv()
 
-        # Initialize the past key and value states
-        if hasattr(self, "past_key_values"):
+        # Initialize the past key and value states. Reuse the stored buffer only if it has
+        # the requested capacity (as autoregressive_generate checks); a buffer left from a
+        # different kv_capacity is reallocated.
+        if (
+            hasattr(self, "past_key_values")
+            and self.past_key_values_data[0].shape[3] == expected_kv_capacity(self)
+        ):
             past_key_values = self.past_key_values
             past_key_values_data = self.past_key_values_data
             current_length_data = self.current_length_data

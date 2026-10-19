@@ -8,17 +8,8 @@ import time
 
 import torch
 
-from .kv_cache import initialize_past_key_values
+from .kv_cache import expected_kv_capacity, initialize_past_key_values
 from .utils import reset_tree_mode
-
-
-def _expected_kv_capacity(model):
-    if model.kv_capacity is not None:
-        return model.kv_capacity
-    try:
-        return model.base_model.config.max_position_embeddings
-    except AttributeError:
-        return model.base_model.language_model.config.max_position_embeddings
 
 
 def _allocate_kv(model):
@@ -63,7 +54,7 @@ def autoregressive_generate(
             f"kv_capacity={model.kv_capacity}"
         )
 
-    expected = _expected_kv_capacity(model)
+    expected = expected_kv_capacity(model)
     if (
         hasattr(model, "past_key_values")
         and model.past_key_values_data[0].shape[3] == expected

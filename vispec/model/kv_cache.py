@@ -66,6 +66,22 @@ class KVCache:
         return torch.narrow(self.data, 2, 0, self.current_length)
 
 
+def expected_kv_capacity(model):
+    """Token slots a fresh preallocated KV buffer would have for this SpecModel.
+
+    ``model.kv_capacity`` when set, otherwise ``max_position_embeddings`` of the base
+    model's config, or of its ``language_model`` config for wrappers (LLaVA) whose
+    top-level config has no such field. This mirrors the capacity that
+    ``initialize_past_key_values`` gives the same model.
+    """
+    if model.kv_capacity is not None:
+        return model.kv_capacity
+    try:
+        return model.base_model.config.max_position_embeddings
+    except AttributeError:
+        return model.base_model.language_model.config.max_position_embeddings
+
+
 def initialize_past_key_values(model, max_length: int | None = None):
     """
     Initialize past key and value states for a given transformer model.
