@@ -8,6 +8,23 @@ from pathlib import Path
 from .report_metrics import BENCHMARKS, distribution, fmt
 from .scoring import evidence
 
+# Run settings that must match across every compared report. They are read from each
+# report's metadata (written by the runner); slim_prefill and kv_capacity are also read
+# from each benchmark's runtime file (written by the evaluator). Reports without a key
+# (the LLaVA runs record only max_new_tokens) compare equal on that key.
+GUARDED_SETTINGS = ("slim_prefill", "kv_capacity", "num_samples", "max_new_tokens")
+RUNTIME_GUARDED_SETTINGS = ("slim_prefill", "kv_capacity")
+
+
+def require_same(values, label):
+    """Refuse differing values; an absent value (None) counts as its own value."""
+    distinct = set(values)
+    if len(distinct) > 1:
+        raise ValueError(
+            f"Cannot compare different {label} values: "
+            + ", ".join(repr(value) for value in sorted(distinct, key=repr))
+        )
+
 
 def load_report(path):
     path = Path(path).resolve()
@@ -118,6 +135,11 @@ def compare(original_paths, draft_paths, output_dir):
             "Cannot compare different prompt_style values: "
             + ", ".join(repr(style) for style in sorted(styles, key=repr))
         )
+    for setting in GUARDED_SETTINGS:
+        require_same(
+            [report["summary"]["metadata"].get(setting) for report in all_reports],
+            f"{setting} (metadata)",
+        )
     result = {
         "original_reports": [str(report["path"]) for report in original],
         "draft_reports": [str(report["path"]) for report in draft],
@@ -127,6 +149,24 @@ def compare(original_paths, draft_paths, output_dir):
         ],
     }
     for benchmark in BENCHMARKS:
+        # Reports written before a benchmark was added have no entry for it; skip a
+        # benchmark that no compared report knows about.
+        if all(
+            report["summary"]["benchmarks"].get(benchmark) is None
+            for report in all_reports
+        ):
+            continue
+        # A missing runtime file is flagged below as missing hardware evidence, so the
+        # settings guard compares the reports that have one.
+        runtimes = [
+            report["summary"].get("runtime", {}).get(benchmark)
+            for report in all_reports
+        ]
+        for setting in RUNTIME_GUARDED_SETTINGS:
+            require_same(
+                [runtime.get(setting) for runtime in runtimes if runtime],
+                f"{benchmark} {setting} (runtime)",
+            )
         signatures = [runtime_signature(report, benchmark) for report in all_reports]
         known_signatures = [
             signature for signature in signatures if signature is not None
@@ -159,8 +199,10 @@ def compare(original_paths, draft_paths, output_dir):
             summary = report["summary"]
             if summary.get("evaluation_exit_code") != 0:
                 issues.append("At least one evaluation did not complete successfully")
-            bench = summary["benchmarks"][benchmark]
-            if (
+            bench = summary["benchmarks"].get(benchmark)
+            if bench is None:
+                issues.append("Benchmark absent from at least one report")
+            elif (
                 bench["missing_question_ids"] is None
                 or bench["missing_question_ids"]
                 or bench["unexpected_question_ids"]
@@ -288,10 +330,12 @@ def compare(original_paths, draft_paths, output_dir):
         )
         caps = [(row["measurement"].get("generation_limits") or {}).get("max_new_tokens")
                 for row in matched_rows]
+        require_same(
+            [cap for cap in caps if cap is not None],
+            f"{benchmark} max_new_tokens (generation limits)",
+        )
         if not caps or any(cap is None for cap in caps):
             issues.append("Missing output-token limit evidence")
-        elif len(set(caps)) != 1:
-            issues.append("Output-token limits differ across methods or runs")
         if greedy and (tokens["missing_pairs"] or not tokens["checked_pairs"]):
             issues.append("Missing generated token IDs for greedy correctness validation")
         if greedy and tokens["mismatches"]:
