@@ -461,10 +461,17 @@ def prepare_coco(root, state):
     cached = hf_hub_download(
         COCO_REPO, COCO_FILE, repo_type="dataset", revision=entry["revision"]
     )
-    temporary = target.with_name(target.name + ".part")
-    shutil.copyfile(cached, temporary)
-    temporary.replace(target)
-    entry["parquet_sha256"] = file_sha256(target)
+    recorded = entry.get("parquet_sha256")
+    if not (target.is_file() and recorded and file_sha256(target) == recorded):
+        temporary = target.with_name(target.name + ".part")
+        shutil.copyfile(cached, temporary)
+        temporary.replace(target)
+    digest = file_sha256(target)
+    if recorded and digest != recorded:
+        raise ValueError(
+            f"Karpathy parquet SHA-256 {digest} differs from recorded {recorded}"
+        )
+    entry["parquet_sha256"] = digest
     atomic_json(root / ".preparation/assets_qwen.json", state)
     for row in coco_subset_rows(root):
         download_http(row["url"], root / "bench_data/coco/val2014" / row["filename"], "image")
@@ -476,9 +483,13 @@ def validate_coco(root, entry):
     if not target.is_file():
         raise ValueError(f"Missing {target}")
     digest = file_sha256(target)
-    if entry.get("parquet_sha256") not in (None, digest):
-        raise ValueError("Karpathy parquet SHA-256 differs from the manifest")
-    entry["parquet_sha256"] = digest
+    if not entry.get("parquet_sha256"):
+        raise ValueError("Manifest has no coco.parquet_sha256")
+    if entry["parquet_sha256"] != digest:
+        raise ValueError(
+            f"Karpathy parquet SHA-256 {digest} differs from manifest "
+            f"{entry['parquet_sha256']}"
+        )
     rows = coco_subset_rows(root)
     for row in rows:
         validate_download(root / "bench_data/coco/val2014" / row["filename"], "image")
@@ -513,6 +524,26 @@ def run_qwen(root, check_only):
         if state_path.exists()
         else {"schema_version": 1, "suite": "qwen", "sources": SOURCES}
     )
+    if check_only:
+        if not state_path.exists():
+            raise ValueError(
+                f"Missing manifest {state_path}; run bash prepare.sh --suite qwen first"
+            )
+        missing = [
+            name
+            for name, value in (
+                ("ready", state.get("ready")),
+                ("models.base.revision", state.get("models", {}).get("base", {}).get("revision")),
+                ("models.draft.revision", state.get("models", {}).get("draft", {}).get("revision")),
+                ("coco.revision", state.get("coco", {}).get("revision")),
+                ("coco.parquet_sha256", state.get("coco", {}).get("parquet_sha256")),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"Manifest {state_path} lacks: {', '.join(missing)}; rerun preparation"
+            )
     state["ready"] = False
     if check_only:
         os.environ["HF_HUB_OFFLINE"] = "1"
