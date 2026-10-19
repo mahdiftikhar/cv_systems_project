@@ -65,6 +65,23 @@ For an ad-hoc check on the pinned GPU:
 SRUN_EXTRA="--time=00:05:00" bash experiment/gpu_check.sh nvidia-smi
 ```
 
+## Preparing Qwen assets
+
+The Qwen experiments need the Qwen2.5-VL-3B target and ViSpec draft checkpoints, the
+TextVQA inputs and scorer, and a 100-image COCO Karpathy-test subset. Run this inside a
+Slurm allocation with network access (a CPU node is enough):
+
+```bash
+PYTHON_BIN=/home/aeternum/anaconda3/envs/vipsec/bin/python bash prepare.sh --suite qwen
+PYTHON_BIN=/home/aeternum/anaconda3/envs/vipsec/bin/python bash prepare.sh --check-only --suite qwen
+```
+
+The first command is resumable and records the resolved model and parquet revisions and
+the parquet SHA-256 in `.preparation/assets_qwen.json`; it leaves the LLaVA manifest
+`.preparation/assets.json` alone. The second validates the shards, processor files,
+parquet hash and that all 100 COCO images decode, without downloading. Omitting
+`--suite` keeps the original LLaVA preparation.
+
 ## Clearing SLURM variables
 
 A shell started inside a Slurm job (such as VS Code job 391999) carries `SLURM_*`
