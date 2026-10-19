@@ -39,6 +39,24 @@ from .measurement import (
 
 METHODS = ("autoregressive", "vispec")
 WARMUPS = 3
+REPO_DIR = Path(__file__).resolve().parents[2]
+QWEN_ASSET_MANIFEST = REPO_DIR / ".preparation/assets_qwen.json"
+
+
+def prepared_base_revision(base_model_path):
+    """Pinned target revision from the Qwen asset manifest, if it describes this path.
+
+    A local checkpoint folder carries no Hugging Face commit hash, so the runtime file
+    falls back to the revision that preparation resolved and recorded.
+    """
+    try:
+        base = json.loads(QWEN_ASSET_MANIFEST.read_text())["models"]["base"]
+        prepared = (REPO_DIR / base["path"]).resolve()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if prepared != Path(base_model_path).resolve():
+        return None
+    return base.get("revision")
 
 
 def parse_args(argv=None):
@@ -182,7 +200,19 @@ def run(args):
         kv_capacity=model.kv_capacity,
         method=args.method,
         benchmark=args.benchmark,
+        generation_args=vars(args),
+        attn_implementation=getattr(
+            model.base_model.config, "_attn_implementation", None
+        ),
     )
+    if runtime.get("base_model_revision") is None:
+        revision = prepared_base_revision(args.base_model_path)
+        runtime["base_model_revision"] = revision
+        runtime["base_model_revision_source"] = (
+            str(QWEN_ASSET_MANIFEST) if revision is not None else None
+        )
+    else:
+        runtime["base_model_revision_source"] = "config._commit_hash"
     runtime_path.write_text(json.dumps(runtime, indent=2) + "\n")
 
     kv_bpt = kv_bytes_per_token(model.base_model.config, model.base_model.dtype)
