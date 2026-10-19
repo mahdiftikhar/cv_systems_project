@@ -7,14 +7,19 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=08:00:00
+# A preempted job is requeued (the cluster default is JobRequeue=0) and reruns this script
+# from the start, so every experiment gets a fresh run folder. Append keeps the log of
+# each attempt in the same logs/<name>-<id>.log file.
+#SBATCH --requeue
+#SBATCH --open-mode=append
 
 set -uo pipefail
 : "${SLURM_JOB_ID:?Run this script under sbatch or srun}"
 : "${REPO:?Submit through experiment/submit_ampere.sh}"
 : "${EXPERIMENTS:?Set EXPERIMENTS to colon-separated experiment directories}"
 trap 'status=$?; printf "batch_finished_utc=%s batch_exit_code=%s\n" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status"' EXIT
-printf 'batch_started_utc=%s slurm_job_id=%s node=%s experiments=%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SLURM_JOB_ID" "$(hostname)" "$EXPERIMENTS"
+printf 'batch_started_utc=%s slurm_job_id=%s slurm_restart_count=%s node=%s experiments=%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SLURM_JOB_ID" "${SLURM_RESTART_COUNT:-0}" "$(hostname)" "$EXPERIMENTS"
 
 cd "$REPO"
 source "$REPO/experiment/ampere_env.sh"

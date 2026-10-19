@@ -107,10 +107,22 @@ trap 'exit 143' TERM
 # ==========================================
 # step 06 -- Record launch settings, host, scheduler job, and working-tree warning.
 # ==========================================
+# experiment/submit_ampere.sh exports the exact sbatch command and SBATCH_EXTRA (empty when
+# no extra options were given); a direct run.sh or gpu_check.sh launch records "unset".
+if [[ -n "${SUBMIT_COMMAND:-}" ]]; then
+    submit_command="$SUBMIT_COMMAND"
+    sbatch_extra="${SBATCH_EXTRA:-}"
+else
+    submit_command="unset"
+    sbatch_extra="unset"
+fi
 {
     printf 'started_utc=%s\ncommit=%s\nhost=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$commit" "$(hostname)"
     printf 'base_model=%s\nspec_model=%s\nbench_dir=%s\ntemperature=%s\n' "$base_model" "$spec_dir" "$bench_dir" "$temperature"
     printf 'python=%s\nslurm_job_id=%s\ncuda_visible_devices=%s\n' "$(command -v "$python_bin")" "${SLURM_JOB_ID:-unset}" "${CUDA_VISIBLE_DEVICES:-unset}"
+    # A requeued attempt keeps the job ID and increments the restart count.
+    printf 'slurm_restart_count=%s\n' "${SLURM_RESTART_COUNT:-0}"
+    printf 'submit_command=%s\nsbatch_extra=%s\n' "$submit_command" "$sbatch_extra"
     printf 'method=vispec_speculative\ndepth=%s\ntop_k=%s\ntotal_token=%s\nnum_q=%s\n' "$depth" "$top_k" "$total_token" "$num_q"
     printf 'prompt_style=%s\nslim_prefill=true\nkv_capacity=%s\nnum_samples=%s\n' "$prompt_style" "$kv_capacity" "$num_samples"
     printf 'max_new_tokens=%s\n' "$max_new_tokens"
