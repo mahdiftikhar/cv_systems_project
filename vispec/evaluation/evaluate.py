@@ -59,18 +59,18 @@ def prepared_base_revision(base_model_path):
     return base.get("revision")
 
 
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Evaluate Qwen2.5-VL with autoregressive or ViSpec decoding."
-    )
+def add_model_arguments(parser):
+    """Method, benchmark, prompt style, checkpoints and data; shared with profile_generation."""
     parser.add_argument("--method", choices=METHODS, required=True)
     parser.add_argument("--benchmark", choices=BENCHMARK_NAMES, required=True)
     parser.add_argument("--prompt-style", choices=PROMPT_STYLES, required=True)
     parser.add_argument("--base-model-path", required=True)
     parser.add_argument("--spec-model-path", required=True)
     parser.add_argument("--data-dir", required=True)
-    parser.add_argument("--answer-file", required=True)
-    parser.add_argument("--model-id", required=True)
+
+
+def add_generation_arguments(parser):
+    """Sample count, decoding limits, draft tree and KV settings with the evaluator defaults."""
     parser.add_argument("--num-samples", type=int, default=100)
     parser.add_argument(
         "--max-new-token",
@@ -94,11 +94,25 @@ def parse_args(argv=None):
         action="store_true",
         help="Keep full prefill logits and per-layer hidden states (slimming is on by default).",
     )
-    args = parser.parse_args(argv)
+
+
+def check_arguments(parser, args):
     if args.method == "autoregressive" and args.temperature > 1e-5:
         parser.error("--method autoregressive is greedy only; use --temperature 0.0")
     if args.num_samples < 1:
         parser.error("--num-samples must be positive")
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Evaluate Qwen2.5-VL with autoregressive or ViSpec decoding."
+    )
+    add_model_arguments(parser)
+    parser.add_argument("--answer-file", required=True)
+    parser.add_argument("--model-id", required=True)
+    add_generation_arguments(parser)
+    args = parser.parse_args(argv)
+    check_arguments(parser, args)
     return args
 
 
@@ -131,6 +145,70 @@ def generate(model, args, model_inputs, on_first_token=None, generation_stats=No
         generation_stats=stats,
     )
     return output_ids, new_token, steps, [], stats["decode_time"]
+
+
+def load_model(args):
+    """Load the processor and the shared SpecModel; returns (processor, model, tokenizer)."""
+    processor = load_processor(args.base_model_path)
+
+    model = SpecModel.from_pretrained(
+        base_model_path=args.base_model_path,
+        spec_model_path=args.spec_model_path,
+        total_token=args.total_token,
+        depth=args.depth,
+        top_k=args.top_k,
+        num_q=args.num_q,
+        slim_prefill=not args.no_slim_prefill,
+        kv_capacity=args.kv_capacity,
+        torch_dtype="auto",
+        low_cpu_mem_usage=True,
+        device_map="auto",
+    )
+    model.eval()
+    # Decode with the processor's tokenizer (the one that built the prompt); generation
+    # stops on SpecModel's tokenizer EOS, so the two must agree.
+    tokenizer = processor.tokenizer
+    if tokenizer.eos_token_id != model.tokenizer.eos_token_id:
+        raise RuntimeError(
+            f"processor EOS {tokenizer.eos_token_id} != model EOS "
+            f"{model.tokenizer.eos_token_id}"
+        )
+    return processor, model, tokenizer
+
+
+def write_run_runtime(answer_file, model, args):
+    """Write ``<answer_file stem>.runtime.json``: devices, allocation and run settings."""
+    answer_file = Path(answer_file)
+    write_runtime(answer_file, model)
+    runtime_path = answer_file.with_suffix(".runtime.json")
+    runtime = json.loads(runtime_path.read_text())
+    runtime.update(
+        prompt_style=args.prompt_style,
+        slim_prefill=model.slim_prefill,
+        kv_capacity=model.kv_capacity,
+        method=args.method,
+        benchmark=args.benchmark,
+        generation_args=vars(args),
+        attn_implementation=getattr(
+            model.base_model.config, "_attn_implementation", None
+        ),
+    )
+    if runtime.get("base_model_revision") is None:
+        revision = prepared_base_revision(args.base_model_path)
+        runtime["base_model_revision"] = revision
+        runtime["base_model_revision_source"] = (
+            str(QWEN_ASSET_MANIFEST) if revision is not None else None
+        )
+    else:
+        runtime["base_model_revision_source"] = "config._commit_hash"
+    runtime_path.write_text(json.dumps(runtime, indent=2) + "\n")
+
+
+def warm_up(model, args, model_inputs):
+    """Untimed generations that absorb one-time CUDA, allocator and kernel-selection costs."""
+    for _ in range(WARMUPS):
+        torch.manual_seed(0)
+        generate(model, args, model_inputs)
 
 
 def reorg_answer_file(answer_file):
@@ -166,54 +244,8 @@ def run(args):
         ],
         args.benchmark,
     )
-    processor = load_processor(args.base_model_path)
-
-    model = SpecModel.from_pretrained(
-        base_model_path=args.base_model_path,
-        spec_model_path=args.spec_model_path,
-        total_token=args.total_token,
-        depth=args.depth,
-        top_k=args.top_k,
-        num_q=args.num_q,
-        slim_prefill=not args.no_slim_prefill,
-        kv_capacity=args.kv_capacity,
-        torch_dtype="auto",
-        low_cpu_mem_usage=True,
-        device_map="auto",
-    )
-    model.eval()
-    # Decode with the processor's tokenizer (the one that built the prompt); generation
-    # stops on SpecModel's tokenizer EOS, so the two must agree.
-    tokenizer = processor.tokenizer
-    if tokenizer.eos_token_id != model.tokenizer.eos_token_id:
-        raise RuntimeError(
-            f"processor EOS {tokenizer.eos_token_id} != model EOS "
-            f"{model.tokenizer.eos_token_id}"
-        )
-
-    write_runtime(answer_file, model)
-    runtime_path = answer_file.with_suffix(".runtime.json")
-    runtime = json.loads(runtime_path.read_text())
-    runtime.update(
-        prompt_style=args.prompt_style,
-        slim_prefill=model.slim_prefill,
-        kv_capacity=model.kv_capacity,
-        method=args.method,
-        benchmark=args.benchmark,
-        generation_args=vars(args),
-        attn_implementation=getattr(
-            model.base_model.config, "_attn_implementation", None
-        ),
-    )
-    if runtime.get("base_model_revision") is None:
-        revision = prepared_base_revision(args.base_model_path)
-        runtime["base_model_revision"] = revision
-        runtime["base_model_revision_source"] = (
-            str(QWEN_ASSET_MANIFEST) if revision is not None else None
-        )
-    else:
-        runtime["base_model_revision_source"] = "config._commit_hash"
-    runtime_path.write_text(json.dumps(runtime, indent=2) + "\n")
+    processor, model, tokenizer = load_model(args)
+    write_run_runtime(answer_file, model, args)
 
     kv_bpt = kv_bytes_per_token(model.base_model.config, model.base_model.dtype)
     device = str(model.base_model.device)
@@ -226,9 +258,7 @@ def run(args):
     warmup_inputs = build_inputs(
         processor, args.benchmark, samples[0], args.prompt_style, device=device
     )
-    for _ in range(WARMUPS):
-        torch.manual_seed(0)
-        generate(model, args, warmup_inputs)
+    warm_up(model, args, warmup_inputs)
     print("Warmup done")
 
     for sample in tqdm(samples):

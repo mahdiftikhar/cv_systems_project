@@ -87,6 +87,7 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [01: ViSpec baseline](01_baseline_draft/README.md)      | Measure speculative generation    | 418/418 completed. Output equivalence unresolved |
 | [02: Qwen autoregressive](02_qwen_autoregressive/README.md) | Qwen2.5-VL-3B reference decoding | Week 1 measured, `long` and `short`, 400/400 completed |
 | [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Week 1 measured, 400/400 completed. Output equivalence unresolved (all divergences are bf16 near-ties) |
+| [04: Qwen decode profile](04_qwen_decode_profile/README.md) | Where AR and ViSpec decode time goes (`torch.profiler`) | Measured (job 393060), `long`, 3 samples per benchmark. Decode is host-bound |
 
 Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
 Qwen2.5-VL-3B-Instruct on TextVQA and COCO Captions (100 samples each) in two prompt styles,
@@ -120,6 +121,36 @@ likely mechanism, which was not measured, is the different kernel shapes of batc
 compared with one-token decoding. Validated equivalent-output speedup is still unestablished, and repeat-run variability
 is **pending**. Full tables, memory, acceptance and the diagnosis are in the
 [03 README](03_qwen_vispec/README.md#results) and [02 README](02_qwen_autoregressive/README.md#results).
+
+### Qwen decode profile (04)
+
+Experiment 04 profiled 3 `long`-style samples per benchmark with `torch.profiler` on one
+`NVIDIA RTX A6000` (UUID `GPU-8d51152c-22f1-372d-aef5-063afee0d488`, driver 615.71.09, node `c1-8`,
+Xeon Silver 4116, 1 GPU, 4 CPUs, 22,528 MB, `preempt` partition): Slurm job 393060,
+[device report](04_qwen_decode_profile/runs/20261019T230855Z_65078a0dbe9b_long_J4OYTT/device.txt).
+A step is one decode forward pass for AR and one verification iteration for ViSpec. The GPU-busy
+fraction is CUDA kernel time divided by decode time. The profiled value is biased low by profiler
+overhead, so the table also gives an estimate that divides the same kernel time by the unprofiled
+decode time.
+
+| Method | Benchmark | GPU-busy, profiled / estimated unprofiled | Kernel launches per step | Launches per output token | Kernel ms per step | Unprofiled ms per output token | Top self-CPU op (profiled ms per step) |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| AR | TextVQA | 0.202 / 0.386 | 1,789 | 1,789 | 14.58 | 37.82 | `cudaLaunchKernel` 12.54 |
+| ViSpec | TextVQA | 0.296 / 0.501 | 2,270 | 719 | 24.95 | 15.83 | `cudaLaunchKernel` 14.35 |
+| AR | COCO Captions | 0.206 / 0.364 | 1,789 | 1,789 | 13.63 | 37.45 | `cudaLaunchKernel` 11.53 |
+| ViSpec | COCO Captions | 0.254 / 0.431 | 2,275 | 669 | 22.50 | 15.47 | `cudaLaunchKernel` 15.10 |
+
+The measurements are these. By the unprofiled estimate, the GPU is idle for at least half of
+each step (61 to 64% for AR, 50 to 57% for ViSpec). The host waits at synchronizations for under
+1 ms per step, and unprofiled step time works out to 21 to 23 µs per kernel launched. Attention
+over the KV cache is 3 to 12% of decode kernel time.
+
+From these we infer that decode is host-bound for both methods, and that ViSpec's gain follows
+from its 2.5 to 2.7 times fewer launches per output token. Visual KV eviction would shorten GPU
+work that is off the critical path, so it is unlikely to reduce decode latency in this harness.
+Its measurable effect should be on memory. The
+[04 README](04_qwen_decode_profile/README.md#results) has the full tables, the top ops and the
+limits.
 
 ### LLaVA run conditions (00 and 01)
 
