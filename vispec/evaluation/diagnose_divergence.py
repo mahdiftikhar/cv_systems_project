@@ -9,8 +9,12 @@ IDs before the first differing index) and runs one full forward pass of the stoc
 repository's KV-cache fork. It records the top-2 next-token logits and their margin at
 the last position, and repeats the pass in fp32 for up to ``--fp32-limit`` cases.
 
-A case is ``near_tie`` when the bf16 top-2 margin is at most 0.5 logits, otherwise
-``unexplained`` (a possible bug).
+A case is ``both_wrong`` when the bf16 argmax agrees with neither method and both the
+AR and the ViSpec token logits are more than 0.5 below the bf16 maximum. Otherwise it is
+``near_tie`` when the bf16 top-2 margin is at most 0.5 logits, else ``unexplained`` (a
+possible bug). The gate (ruling R20) passes only when no case is ``unexplained`` or
+``both_wrong``. Cases where one sequence ended (no token at the first differing index)
+are also listed separately with both runs' stop reasons.
 
 Usage:
 python -m vispec.evaluation.diagnose_divergence --comparison CMP/comparison.json \
@@ -25,6 +29,7 @@ import json
 import os
 import socket
 import statistics
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +41,11 @@ from .report_metrics import BENCHMARKS, metadata
 from .scoring import evidence
 
 NEAR_TIE_MARGIN = 0.5
+# R20: a case is both_wrong when bf16 picks neither token and both are this far below its max.
+BOTH_WRONG_GAP = 0.5
+CLASSES = ("near_tie", "unexplained", "both_wrong")
 DEVICE = "cuda:0"
+REPO_DIR = Path(__file__).resolve().parents[2]
 
 
 def parse_args(argv=None):
@@ -162,6 +171,8 @@ def attach_ids(cases, original_run, draft_run):
             vispec_token_id=vispec_token,
             original_input_ids_sha256=a.get("input_ids_sha256"),
             draft_input_ids_sha256=b.get("input_ids_sha256"),
+            original_stop_reason=a.get("stop_reason"),
+            draft_stop_reason=b.get("stop_reason"),
             original_results=str(original_path),
             draft_results=str(draft_path),
         )
@@ -293,6 +304,115 @@ def counts(values, keys):
     return {key: sum(value == key for value in values) for key in keys}
 
 
+def classify(case):
+    """R20 class of one case, from its bf16 pass."""
+    bf16 = case["bf16"]
+    top = bf16["top2"][0]["logit"]
+    ar, vispec = bf16["ar_token_logit"], bf16["vispec_token_logit"]
+    if (
+        bf16["agrees"] == "neither"
+        and ar is not None
+        and vispec is not None
+        and top - ar > BOTH_WRONG_GAP
+        and top - vispec > BOTH_WRONG_GAP
+    ):
+        return "both_wrong"
+    return "near_tie" if bf16["margin"] <= NEAR_TIE_MARGIN else "unexplained"
+
+
+def logit_gap(entry):
+    """|AR token logit - ViSpec token logit| in one pass; None if a sequence ended."""
+    if not entry:
+        return None
+    ar, vispec = entry.get("ar_token_logit"), entry.get("vispec_token_logit")
+    return None if ar is None or vispec is None else abs(ar - vispec)
+
+
+def group(rows):
+    return {
+        "cases": len(rows),
+        "classes": counts([r["class"] for r in rows], CLASSES),
+        "bf16_agrees": counts(
+            [r["bf16"]["agrees"] for r in rows], ("ar", "vispec", "neither")
+        ),
+        "fp32_agrees": counts(
+            [r["fp32_agrees"] for r in rows], ("ar", "vispec", "neither", "not_run")
+        ),
+        "bf16_margin": margin_stats([r["bf16"]["margin"] for r in rows]),
+        "fp32_margin": margin_stats([r.get("fp32", {}).get("margin") for r in rows]),
+        "bf16_ar_vispec_logit_gap": margin_stats([logit_gap(r["bf16"]) for r in rows]),
+        "fp32_ar_vispec_logit_gap": margin_stats(
+            [logit_gap(r.get("fp32")) for r in rows]
+        ),
+    }
+
+
+def ended_sequences(cases):
+    """Cases where one sequence has no token at the first differing index."""
+    ended = []
+    for case in cases:
+        if case["ar_token_id"] is not None and case["vispec_token_id"] is not None:
+            continue
+        ended.append(
+            {
+                "benchmark": case["benchmark"],
+                "question_id": case["question_id"],
+                "choice": case["choice"],
+                "turn": case["turn"],
+                "first_mismatch_index": case["first_mismatch_index"],
+                "ended": "ar" if case["ar_token_id"] is None else "vispec",
+                "original_stop_reason": case.get("original_stop_reason"),
+                "draft_stop_reason": case.get("draft_stop_reason"),
+                "class": case["class"],
+            }
+        )
+    return ended
+
+
+def summarize(cases, skipped=0, prompt_fingerprint_mismatches=0):
+    """Summary and R20 gate; every case must already carry ``class`` and ``fp32_agrees``."""
+    overall = group(cases)
+    ended = ended_sequences(cases)
+    unexplained = overall["classes"]["unexplained"]
+    both_wrong = overall["classes"]["both_wrong"]
+    stop_counts = {}
+    for row in ended:
+        reason = row["original_stop_reason" if row["ended"] == "ar" else "draft_stop_reason"]
+        key = f"{row['ended']} ended ({reason})"
+        stop_counts[key] = stop_counts.get(key, 0) + 1
+    return {
+        "overall": overall,
+        "per_benchmark": {
+            benchmark: group([c for c in cases if c["benchmark"] == benchmark])
+            for benchmark in sorted({c["benchmark"] for c in cases}, key=bench_key)
+        },
+        "skipped_other_run_mismatches": skipped,
+        "prompt_fingerprint_mismatches": prompt_fingerprint_mismatches,
+        "ended_sequences": ended,
+        "ended_sequence_counts": stop_counts,
+        "gate": {
+            "rule": "passes when unexplained + both_wrong == 0 (ruling R20)",
+            "unexplained": unexplained,
+            "both_wrong": both_wrong,
+            "counted_unexplained": unexplained + both_wrong,
+        },
+        "gate_passes": unexplained + both_wrong == 0,
+    }
+
+
+def git_commit():
+    try:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_DIR,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def environment(model_path):
     from transformers import AutoConfig
     import transformers
@@ -355,8 +475,10 @@ def write_markdown(path, result):
         f"`transformers.Qwen2_5_VLForConditionalGeneration` "
         f"(attention `{result['settings']['attn_implementation']}`, no KV cache, not the "
         "repository's KV fork) gives the next-token logits at the last position. The "
-        "margin is the top-1 minus top-2 logit in raw logit units. A case is `near_tie` "
-        f"when the bf16 margin is at most {NEAR_TIE_MARGIN}, otherwise `unexplained`. "
+        "margin is the top-1 minus top-2 logit in raw logit units. A case is `both_wrong` "
+        "when the bf16 argmax is neither method's token and both tokens' logits are more "
+        f"than {BOTH_WRONG_GAP} below the bf16 maximum; otherwise it is `near_tie` when the "
+        f"bf16 margin is at most {NEAR_TIE_MARGIN}, else `unexplained`. "
         "`bf16 agrees` / `fp32 agrees` say whether that pass's argmax equals the AR token, "
         "the ViSpec token, or neither. The fp32 pass (TF32 disabled) runs for at most "
         f"{result['settings']['fp32_limit']} cases in sorted order; other cases show "
@@ -364,19 +486,25 @@ def write_markdown(path, result):
         "",
         f"Hardware: {result['environment']['gpu']['name']} on `{result['environment']['hostname']}`, "
         f"Slurm job `{result['environment']['slurm_job_id']}`, torch "
-        f"{result['environment']['torch']}, transformers {result['environment']['transformers']}.",
+        f"{result['environment']['torch']}, transformers {result['environment']['transformers']}. "
+        f"Code commit `{result['git_commit']}`.",
+        "",
+        f"**Gate (R20): {'passes' if summary['gate_passes'] else 'FAILS'}** with "
+        f"{summary['gate']['unexplained']} unexplained and {summary['gate']['both_wrong']} "
+        "both_wrong cases (both count as unexplained).",
         "",
         "## Counts",
         "",
-        "| Benchmark | Cases | near_tie | unexplained | fp32 agrees ar | fp32 agrees vispec | fp32 agrees neither | fp32 not run |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Benchmark | Cases | near_tie | unexplained | both_wrong | fp32 agrees ar | fp32 agrees vispec | fp32 agrees neither | fp32 not run |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
-    for benchmark, row in [*summary["per_benchmark"].items(), ("all", summary["overall"])]:
+    rows = [*summary["per_benchmark"].items(), ("all", summary["overall"])]
+    for benchmark, row in rows:
         fp32 = row["fp32_agrees"]
         lines.append(
             f"| {benchmark} | {row['cases']} | {row['classes']['near_tie']} | "
-            f"{row['classes']['unexplained']} | {fp32['ar']} | {fp32['vispec']} | "
-            f"{fp32['neither']} | {fp32['not_run']} |"
+            f"{row['classes']['unexplained']} | {row['classes']['both_wrong']} | "
+            f"{fp32['ar']} | {fp32['vispec']} | {fp32['neither']} | {fp32['not_run']} |"
         )
     lines += [
         "",
@@ -391,6 +519,36 @@ def write_markdown(path, result):
             f"| {label} | {stats['count']} | {fmt(stats['min'])} | "
             f"{fmt(stats['median'])} | {fmt(stats['max'])} |"
         )
+    lines += [
+        "",
+        "## AR vs ViSpec token logit gap (logits)",
+        "",
+        "`|AR token logit - ViSpec token logit|` in each pass; ended sequences are left out.",
+        "",
+        "| Benchmark | Pass | Cases | Min | Median | Max |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
+    ]
+    for benchmark, row in rows:
+        for label in ("bf16", "fp32"):
+            stats = row[f"{label}_ar_vispec_logit_gap"]
+            lines.append(
+                f"| {benchmark} | {label} | {stats['count']} | {fmt(stats['min'])} | "
+                f"{fmt(stats['median'])} | {fmt(stats['max'])} |"
+            )
+    lines += ["", "## Ended sequences", ""]
+    if summary["ended_sequences"]:
+        lines += [
+            "| Benchmark | Question | Choice/turn | First diff | Ended | AR stop reason | ViSpec stop reason | Class |",
+            "| --- | --- | --- | ---: | --- | --- | --- | --- |",
+        ]
+        for row in summary["ended_sequences"]:
+            lines.append(
+                f"| {row['benchmark']} | {row['question_id']} | {row['choice']}/{row['turn']} | "
+                f"{row['first_mismatch_index']} | {row['ended']} | {row['original_stop_reason']} | "
+                f"{row['draft_stop_reason']} | {row['class']} |"
+            )
+    else:
+        lines.append("None: every case has a token from both methods at the first differing index.")
     lines += [
         "",
         "## Cases",
@@ -482,31 +640,17 @@ def main(argv=None):
         del model
 
     for case in cases:
-        case["class"] = (
-            "near_tie" if case["bf16"]["margin"] <= NEAR_TIE_MARGIN else "unexplained"
-        )
+        case["class"] = classify(case)
         case["fp32_agrees"] = case["fp32"]["agrees"] if "fp32" in case else "not_run"
         case["prefix_length"] = len(case.pop("prefix_ids"))
 
-    def group(rows):
-        return {
-            "cases": len(rows),
-            "classes": counts([r["class"] for r in rows], ("near_tie", "unexplained")),
-            "bf16_agrees": counts(
-                [r["bf16"]["agrees"] for r in rows], ("ar", "vispec", "neither")
-            ),
-            "fp32_agrees": counts(
-                [r["fp32_agrees"] for r in rows], ("ar", "vispec", "neither", "not_run")
-            ),
-            "bf16_margin": margin_stats([r["bf16"]["margin"] for r in rows]),
-            "fp32_margin": margin_stats([r.get("fp32", {}).get("margin") for r in rows]),
-        }
-
-    overall = group(cases)
+    summary = summarize(cases, skipped, len(mismatched))
+    overall = summary["overall"]
     result = {
         "schema_version": 1,
         "started_utc": started,
         "finished_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "git_commit": git_commit(),
         "command": [
             sys.executable,
             "-m",
@@ -528,6 +672,7 @@ def main(argv=None):
             "attn_implementation": attn,
             "passes": ["bfloat16", "float32 (TF32 disabled)"],
             "near_tie_max_margin": NEAR_TIE_MARGIN,
+            "both_wrong_min_gap": BOTH_WRONG_GAP,
             "fp32_limit": args.fp32_limit,
             "case_order": "benchmark order, then question ID, choice, turn, run indices",
         },
@@ -535,20 +680,18 @@ def main(argv=None):
         "definitions": {
             "first_mismatch_index": "zero-based output position of the first differing token (from comparison.json)",
             "margin": "top-1 minus top-2 next-token logit at the last position, raw logit units",
-            "class": f"near_tie if bf16 margin <= {NEAR_TIE_MARGIN}, otherwise unexplained",
+            "class": (
+                f"both_wrong if the bf16 argmax is neither token and both token logits are "
+                f"more than {BOTH_WRONG_GAP} below the bf16 max; otherwise near_tie if bf16 "
+                f"margin <= {NEAR_TIE_MARGIN}, else unexplained"
+            ),
+            "ar_vispec_logit_gap": "|AR token logit - ViSpec token logit| in that pass; None when a sequence ended",
+            "gate_passes": "true when unexplained + both_wrong == 0 (ruling R20)",
             "agrees": "whether that pass's argmax equals the AR token, the ViSpec token, or neither",
             "argmax": "torch.argmax, the first maximal index (decoder tie-break); top-2 is the best remaining token",
             "tokens_tied_at_max": "number of vocabulary entries whose logit equals the argmax logit",
         },
-        "summary": {
-            "overall": overall,
-            "per_benchmark": {
-                benchmark: group([c for c in cases if c["benchmark"] == benchmark])
-                for benchmark in sorted({c["benchmark"] for c in cases}, key=bench_key)
-            },
-            "skipped_other_run_mismatches": skipped,
-            "prompt_fingerprint_mismatches": len(mismatched),
-        },
+        "summary": summary,
         "cases": cases,
     }
     (args.output_dir / "diagnosis.json").write_text(
@@ -557,7 +700,7 @@ def main(argv=None):
     write_markdown(args.output_dir / "diagnosis.md", result)
     print(
         f"Diagnosis: {args.output_dir / 'diagnosis.md'}; classes {overall['classes']}; "
-        f"fp32 agrees {overall['fp32_agrees']}"
+        f"fp32 agrees {overall['fp32_agrees']}; gate passes {summary['gate_passes']}"
     )
     if mismatched:
         print(
