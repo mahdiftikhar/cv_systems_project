@@ -40,9 +40,15 @@
   `llava-hf/llava-v1.6-vicuna-7b-hf` (smallest LLaVA-1.6 listed here). Keep Qwen,
   larger models, training, and inference changes outside this experiment unless
   the user explicitly changes its scope. Document inherited evaluation limitations.
-- The baseline suite is TextVQA (priority, run first), GQA, and MM-Vet. Keep future
-  comparisons on this same suite unless the user changes it; do not restore all
-  eight upstream benchmarks by default.
+- The LLaVA baseline suite (experiments 00 and 01) is TextVQA (priority, run first),
+  GQA, and MM-Vet. Keep future LLaVA comparisons on this same suite unless the user
+  changes it; do not restore all eight upstream benchmarks by default.
+- The Qwen experiments (02 and later) use `Qwen/Qwen2.5-VL-3B-Instruct` and
+  `JLKang/ViSpec-Qwen2.5-VL-3B-Instruct` on TextVQA and COCO Captions in both the
+  `long` and `short` prompt styles, with Re:Verse page windows added later. They run
+  on this cluster's pinned A6000 nodes through `experiment/submit_ampere.sh`. Keep
+  their results separate from the LLaVA rows, and keep the 00 and 01 rules above
+  as written for those experiments.
 - Keep generated runs out of Git by default and preserve their evidence on project
   storage. The user selected the exact snapshots for jobs 950793 and 950803 for
   versioning so teammates can inspect all answers, reports, and launch evidence.

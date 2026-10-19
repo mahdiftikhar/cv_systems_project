@@ -85,6 +85,13 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | ------------------------------------------------------- | --------------------------------- | ------------------------------------------------ |
 | [00: Standard baseline](00_baseline_original/README.md) | Measure autoregressive generation | 418/418 completed                                |
 | [01: ViSpec baseline](01_baseline_draft/README.md)      | Measure speculative generation    | 418/418 completed. Output equivalence unresolved |
+| [02: Qwen autoregressive](02_qwen_autoregressive/README.md) | Qwen2.5-VL-3B reference decoding | Pending |
+| [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Pending |
+
+Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
+Qwen2.5-VL-3B-Instruct on TextVQA and COCO Captions (100 samples each) in two prompt styles,
+`long` and `short`, on the Ampere cluster's pinned A6000 nodes. No Qwen run has been
+measured, so their results are pending and are not comparable with the LLaVA numbers.
 
 The latest pair used temperature **0.0 (greedy)**, FP16, and a maximum of
 **1,024 output token IDs, including EOS**. Both launch trees were clean at
@@ -122,6 +129,15 @@ raw token IDs, reports, logs and launch evidence. Other generated runs remain
 ignored by default. Preserve these snapshots as evidence and use new run folders
 for reruns.
 See the [metrics guide](METRICS.md) for scoring and comparison commands.
+
+The Qwen experiments are submitted with the Ampere helper, one prompt style per job:
+
+```bash
+PROMPT_STYLE=long CLUSTER_PARTITION=preempt bash experiment/submit_ampere.sh \
+  experiment/02_qwen_autoregressive experiment/03_qwen_vispec
+```
+
+See the [Ampere setup guide](AMPERE_SETUP.md) for the GPU pin and partitions.
 
 ## Adding experiments
 

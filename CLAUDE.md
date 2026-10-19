@@ -3,7 +3,8 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 This repository compares standard autoregressive decoding (experiment 00) with ViSpec speculative
-decoding (experiment 01) on LLaVA-1.6 Vicuna 7B over TextVQA, GQA and MM-Vet. It builds on the
+decoding (experiment 01) on LLaVA-1.6 Vicuna 7B over TextVQA, GQA and MM-Vet. Experiments 02 and 03
+repeat the pair on Qwen2.5-VL-3B-Instruct over TextVQA and COCO Captions. It builds on the
 upstream ViSpec code in `vispec/` and adds an evidence-capturing experiment harness in `experiment/`.
 `AGENTS.md` holds the binding workflow rules: experiment layout, launch evidence, device capture, no
 test files, cluster-only compute, and which run snapshots are versioned. Follow it alongside this file.
@@ -116,6 +117,41 @@ Each benchmark has its own scorer:
 `compare_metrics.py` refuses to compare reports unless model, temperature, precision, GPU identity,
 allocation and prompt fingerprints all match.
 
+## Qwen experiments (02+)
+
+Experiments 02 (autoregressive) and 03 (ViSpec) run Qwen2.5-VL-3B-Instruct with
+`JLKang/ViSpec-Qwen2.5-VL-3B-Instruct` on TextVQA and COCO Captions in `long` and `short` prompt
+styles. Re:Verse page windows come later. They do not use the per-benchmark `gen_*_answer_*`
+scripts. One unified evaluator handles both methods:
+
+```bash
+python -m vispec.evaluation.evaluate --method {autoregressive,vispec} --benchmark {textvqa,coco_caption} \
+  --prompt-style {long,short} --base-model-path models/Qwen2.5-VL-3B-Instruct \
+  --spec-model-path models/ViSpec-Qwen2.5-VL-3B-Instruct --data-dir bench_data \
+  --answer-file <new path> --model-id test
+```
+
+`vispec/evaluation/benchmarks.py` holds the sample loaders (100 TextVQA questions with the same
+seed-42 shuffle as experiment 00, 100 COCO Karpathy-test images), the prompt instructions per style
+and the image pixel limits. The evaluator refuses to overwrite an existing answer file.
+
+Submit with the Ampere path, not Newton: `PROMPT_STYLE=long|short bash experiment/submit_ampere.sh
+experiment/02_qwen_autoregressive experiment/03_qwen_vispec` (see `experiment/AMPERE_SETUP.md`). It
+pins the 48 GB `NVIDIA RTX A6000` and runs each `run.sh` in one allocation. Week 1 uses
+`CLUSTER_PARTITION=preempt`, where a requeued job reruns the runner into a fresh run folder.
+
+Qwen hazards:
+
+- Special tokens: token counts include EOS and other special tokens. Check the saved raw IDs and the
+  EOS handling before comparing text between methods.
+- The draft's RoPE table holds 8,192 positions. Prompts longer than that index past it, which
+  matters for Re:Verse page windows (about 6 pages each).
+- The KV cache is preallocated at 16,384 tokens (not the model's 128k default), and prefill slimming
+  is on in every arm. Draft-side image compression leaves `num_q` queries, so pruning gains are
+  mostly on the target side.
+- `kv_live_bytes` is a whole-model figure repeated per device entry. CIDEr-D IDF is computed over the
+  100-image subset, so scores are subset measurements.
+
 ## Gotchas
 
 - Evaluator flags such as `--use-ours`, `--use-medusa` and `--image-fc` use argparse `type=bool`.
@@ -125,5 +161,6 @@ allocation and prompt fingerprints all match.
   suite.
 - `.gitignore` ignores `experiment/*/runs/*`, except the two snapshots for jobs 950793 and 950803.
   Treat those as immutable evidence and write reruns and re-reports to new directories.
-- Only TextVQA, GQA and MM-Vet with LLaVA are in scope. The Qwen, Mixtral, Medusa, training
+- Experiments 00 and 01 cover only TextVQA, GQA and MM-Vet with LLaVA. The Qwen path is in scope
+  through experiments 02 and 03 (see the Qwen section above). The Mixtral, Medusa, training
   (`vispec/train`) and data-generation (`vispec/ge_data`) paths are inherited and unexercised.

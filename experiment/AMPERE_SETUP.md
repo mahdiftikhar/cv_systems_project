@@ -34,17 +34,16 @@ The 48 GB nodes per `sinfo` are c1-8, c2-1, c2-2, c4-2 and c4-3. This cluster ig
 | --- | --- | --- |
 | c1-8 | job 339897_2 | NVIDIA RTX A6000, 49140 MiB |
 | c2-1 | job 339897_1 | NVIDIA RTX A6000, 49140 MiB |
-| c2-2 | none found (same 48 GB feature set) | unverified |
-| c2-2 | live probe on 2026-10-19, job 392590 (preempt partition) | NVIDIA RTX A6000, 49140 MiB, driver 615.71.09 |
+| c2-2 | live probe on 2026-10-18 (local time; 2026-10-19 UTC), job 392590 (preempt partition) | NVIDIA RTX A6000, 49140 MiB, driver 615.71.09 |
 | c4-2 | job 339897_3 | NVIDIA RTX A6000, 49140 MiB |
 | c4-3 | job 353849 | NVIDIA RTX A6000, 49140 MiB |
 
 The live `srun` mismatch test from the Task 1 plan (job 392574) also stayed queued and was cancelled; the exit-3 path was verified with a stub `nvidia-smi` instead.
 
 No node was found with a different 48 GB model, so `CLUSTER_EXCLUDE` was not extended. The
-runtime check in `run_sequence.sbatch` guards the unverified c2-2 and any drift: a job that
-lands on a different GPU model fails with status 3 and can be resubmitted. Re-run the probe
-when the queue is quieter and record the driver version here.
+runtime check in `run_sequence.sbatch` still guards against drift: a job that lands on a
+different GPU model fails with status 3 and can be resubmitted. All five 48 GB nodes are now
+verified, c2-2 by the live probe above. Dates in this guide are local time unless marked UTC.
 
 ## Submitting
 
