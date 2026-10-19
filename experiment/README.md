@@ -85,13 +85,39 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | ------------------------------------------------------- | --------------------------------- | ------------------------------------------------ |
 | [00: Standard baseline](00_baseline_original/README.md) | Measure autoregressive generation | 418/418 completed                                |
 | [01: ViSpec baseline](01_baseline_draft/README.md)      | Measure speculative generation    | 418/418 completed. Output equivalence unresolved |
-| [02: Qwen autoregressive](02_qwen_autoregressive/README.md) | Qwen2.5-VL-3B reference decoding | Pending |
-| [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Pending |
+| [02: Qwen autoregressive](02_qwen_autoregressive/README.md) | Qwen2.5-VL-3B reference decoding | Week 1 measured, `long` and `short`, 400/400 completed |
+| [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Week 1 measured, 400/400 completed. Output equivalence unresolved (all divergences are bf16 near-ties) |
 
 Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
 Qwen2.5-VL-3B-Instruct on TextVQA and COCO Captions (100 samples each) in two prompt styles,
-`long` and `short`, on the Ampere cluster's pinned A6000 nodes. No Qwen run has been
-measured, so their results are pending and are not comparable with the LLaVA numbers.
+`long` and `short`, on the Ampere cluster's pinned A6000 nodes. Their numbers are not
+comparable with the LLaVA numbers, so they are listed in their own table below.
+
+### Qwen Week 1 results (02 and 03)
+
+One run per method per style on one `NVIDIA RTX A6000` (UUID `GPU-a2e40ccd-5141-9e51-2b3f-0e9d71fabf73`,
+driver 615.71.09, node `c2-2`, 1 GPU, 4 CPUs, 22,528 MB, `preempt` partition): Slurm job 392660 for
+`long` and 392661 for `short`, commit `a06dd479abba`. Device reports:
+[long](03_qwen_vispec/runs/20261019T054357Z_a06dd479abba_long_kDp191/device.txt) and
+[short](03_qwen_vispec/runs/20261019T063023Z_a06dd479abba_short_ogIM31/device.txt). Times are mean
+generation latency in seconds per question (lower is better), and the ratio is 02 divided by 03. Each
+row has 100 samples per method. These are observed ratios, not validated speedups, because the outputs
+differ between methods.
+
+| Style | Benchmark | 02 latency (s) | 03 latency (s) | Observed ratio | Token agreement | 02 / 03 quality |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| long (speed measurement) | TextVQA | 11.538 | 5.366 | 2.150 | 22/100 | 0.0 / 0.0 % VQA (secondary) |
+| long (speed measurement) | COCO Captions | 4.318 | 2.030 | 2.127 | 28/100 | 1.87e-05 / 1.90e-05 CIDEr-D x100 (secondary) |
+| short (quality measurement) | TextVQA | 1.108 | 1.159 | 0.956 | 96/100 | 71.0 / 70.0 % VQA |
+| short (quality measurement) | COCO Captions | 0.754 | 0.516 | 1.461 | 88/100 | 121.40 / 119.68 CIDEr-D x100 |
+
+Short-style speed is secondary because prefill dominates its wall time. Long-style quality is
+secondary because strict scoring rejects paragraph answers. The Week 1 gate outcome: every greedy
+divergence is a bf16 near-tie (150 of 150 in `long`, 16 of 16 in `short`, none unexplained), so the
+low long-style token agreement reflects bf16 tie-breaking under different kernel shapes and not a
+decoding bug. Validated equivalent-output speedup is still unestablished, and repeat-run variability
+is **pending**. Full tables, memory, acceptance and the diagnosis are in the
+[03 README](03_qwen_vispec/README.md#results) and [02 README](02_qwen_autoregressive/README.md#results).
 
 The latest pair used temperature **0.0 (greedy)**, FP16, and a maximum of
 **1,024 output token IDs, including EOS**. Both launch trees were clean at

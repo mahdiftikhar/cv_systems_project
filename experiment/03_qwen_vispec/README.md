@@ -11,7 +11,7 @@ numbers must not be mixed with the LLaVA rows. See the
 [design spec](../../docs/superpowers/specs/2026-10-18-qwen-dynamic-visual-sparsity-design.md)
 for the goals.
 
-Status: **pending**. No run has been launched, so this README reports no results.
+Status: **measured for Week 1**. One run per prompt style (jobs 392660 and 392661) completed with exit code 0. Greedy outputs differ from 02 in places, and every difference is a bf16 near-tie (see the diagnosis below). Validated equivalent-output speedup is not established.
 
 ## Changes from the baseline
 
@@ -133,15 +133,118 @@ These smoke figures are not results of this experiment.
 
 ## Results
 
-All results are **pending**. Each row will be filled from a verified run, with hardware linked
-to that run's device report. Different hardware or settings get separate rows.
+All figures come from one run per method per prompt style, 100 samples per benchmark, greedy decoding, bf16, batch size 1, at most 1,024 new tokens, depth 3, top-k 8, total-token 30, `num_q` 2, slim prefill on, 16,384-token KV capacity. Per-benchmark results are listed before anything else, and no cross-benchmark aggregate is computed. The 02 numbers for the same runs are in the [02 README](../02_qwen_autoregressive/README.md#results).
 
-| Prompt style | Benchmark | Samples | Mean latency (s) | Mean TTFT (s) | Quality | Hardware / device report |
-| --- | --- | ---: | --- | --- | --- | --- |
-| long | TextVQA | pending | pending | pending | pending | pending |
-| long | COCO Captions | pending | pending | pending | pending | pending |
-| short | TextVQA | pending | pending | pending | pending | pending |
-| short | COCO Captions | pending | pending | pending | pending | pending |
+### Hardware
+
+Each 02 and 03 pair ran inside one Slurm job on the same physical card, so the pair shares hardware. The diagnosis is a separate check on different cards and is not a timed result.
+
+| Style | Job / partition | GPU | UUID | Driver | Allocation | Device report |
+| --- | --- | --- | --- | --- | --- | --- |
+| long (02 and 03 runs) | 392660 / `preempt`, node `c2-2`, 00:42:57 | NVIDIA RTX A6000 (47.5 GiB visible) | `GPU-a2e40ccd-5141-9e51-2b3f-0e9d71fabf73` | 615.71.09 | 1 GPU, 4 CPUs (affinity 9, 12, 29, 32), 22,528 MB, 3 h limit | [03 device.txt](runs/20261019T054357Z_a06dd479abba_long_kDp191/device.txt) |
+| short (02 and 03 runs) | 392661 / `preempt`, node `c2-2`, 00:08:38 | NVIDIA RTX A6000 (47.5 GiB visible) | `GPU-a2e40ccd-5141-9e51-2b3f-0e9d71fabf73` | 615.71.09 | 1 GPU, 4 CPUs (affinity 9, 12, 29, 32), 22,528 MB, 3 h limit | [03 device.txt](runs/20261019T063023Z_a06dd479abba_short_ogIM31/device.txt) |
+| long diagnosis | 392676 / `preempt`, node `c1-8` | NVIDIA RTX A6000 | `GPU-eb032c66-7f3f-d1b6-96cf-c9db5600d457` | 615.71.09 | one GPU | [diagnosis device report](runs/20261019T054357Z_a06dd479abba_long_kDp191/diagnosis/20261019T060057Z_device.txt) |
+| short diagnosis | 392714 / `preempt`, node `c1-8` | NVIDIA RTX A6000 | `8d51152c-22f1-372d-aef5-063afee0d488` (from `diagnosis.json`) | pending (no device report saved) | one GPU | [diagnosis.json](runs/20261019T063023Z_a06dd479abba_short_ogIM31/diagnosis/20261019T085127Z/diagnosis.json) |
+
+The links point at generated run folders, which are ignored by Git and preserved on project storage, so they resolve only in a checkout that has those folders. Device reports are launch snapshots and do not measure runtime peaks.
+
+### Reading these results
+
+The `long` style is the speed and acceptance measurement. Its strict quality scores are secondary and near zero, because CIDEr-D's length penalty and TextVQA's exact consensus reject paragraph answers for both methods. The `short` style is the quality measurement. Its speed is secondary, because answers average 5 tokens (TextVQA) and 15 tokens (COCO) and prefill dominates the wall time.
+
+Units: latency is wall time per question in seconds for prefill plus decoding, excluding model loading, prompt preparation and scoring. TTFT is the wait before the first answer token. TPOT is `(latency - TTFT) / (output tokens - 1)` in milliseconds, averaged per question. Throughput is the sum of output tokens divided by the sum of latencies. Output tokens include EOS. Accepted draft tokens per iteration is the mean over all verification iterations of the draft tokens the target accepted, so output tokens per iteration is that value plus one. The latency ratio divides the 02 mean latency by the 03 mean latency, so a value above 1 means 03 was faster. The ratio is an observed ratio only. The comparison marks `controlled_latency_speedup` as unavailable because greedy output equivalence is not validated. Memory is `torch.cuda.max_memory_allocated` per question in GiB (mean and max over 100 questions) and live KV is the whole-model figure in MiB. For ViSpec the phase boundary is the first target token, so the draft prefill counts toward the decode-phase peak, which explains why the 03 decode peak is about 0.07 GiB above 02's. Phase peaks and live KV come from the saved per-question measurements in `results/*/test.jsonl`.
+
+### Style `long` (speed measurement), 03 ViSpec
+
+| Benchmark | Samples | Mean / median / p95 latency (s) | Mean TTFT (s) | Mean TPOT (ms) | Throughput (tokens/s) | Mean output tokens | Truncated |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| TextVQA | 100 | 5.366 / 4.236 / 12.557 | 0.952 | 17.1 | 51.75 | 277.70 | 3/100 (0.03) |
+| COCO Captions | 100 | 2.030 / 1.921 / 3.319 | 0.229 | 16.6 | 54.12 | 109.89 | 0/100 (0.00) |
+
+| Benchmark | Prefill peak mean / max (GiB) | Decode peak mean / max (GiB) | Live KV mean / max (MiB) | Accepted draft tokens per iteration (iterations) | Quality | Scored |
+| --- | --- | --- | --- | --- | ---: | ---: |
+| TextVQA | 10.69 / 12.08 | 8.48 / 8.49 | 47.1 / 81.9 | 2.141 (8841) | 0.0% VQA accuracy | 100/100 |
+| COCO Captions | 8.71 / 9.08 | 8.45 / 8.45 | 18.1 / 24.1 | 2.284 (3346) | 1.90e-05 CIDEr-D x100 | 100/100 |
+
+### Style `short` (quality measurement), 03 ViSpec
+
+| Benchmark | Samples | Mean / median / p95 latency (s) | Mean TTFT (s) | Mean TPOT (ms) | Throughput (tokens/s) | Mean output tokens | Truncated |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| TextVQA | 100 | 1.159 / 1.119 / 1.588 | 0.976 | 69.3 | 4.52 | 5.24 | 0/100 (0.00) |
+| COCO Captions | 100 | 0.516 / 0.509 / 0.660 | 0.226 | 20.9 | 29.17 | 15.05 | 0/100 (0.00) |
+
+| Benchmark | Prefill peak mean / max (GiB) | Decode peak mean / max (GiB) | Live KV mean / max (MiB) | Accepted draft tokens per iteration (iterations) | Quality | Scored |
+| --- | --- | --- | --- | --- | ---: | ---: |
+| TextVQA | 10.69 / 12.08 | 8.47 / 8.49 | 36.7 / 46.7 | 0.690 (310) | 70.0% VQA accuracy | 100/100 |
+| COCO Captions | 8.71 / 9.08 | 8.44 / 8.45 | 14.8 / 21.1 | 1.746 (548) | 119.68 CIDEr-D x100 | 100/100 |
+
+### Comparison with 02
+
+Comparison reports: [long](runs/20261019T054357Z_a06dd479abba_long_kDp191/comparisons/20261019T055847Z/comparison.md) and [short](runs/20261019T063023Z_a06dd479abba_short_ogIM31/comparisons/20261019T063643Z/comparison.md). Same hardware, settings and commit (`a06dd479abba`) for both methods in each style.
+
+**Long style (speed measurement)**
+
+| Benchmark | Samples | Latency 02 (s) | Latency 03 (s) | Latency ratio 02/03 | TTFT ratio 02/03 | Exact token agreement | Decoded-text agreement |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| TextVQA | 100 | 11.538 | 5.366 | 2.150 | 0.997 | 22/100 (0.22) | 0.22 |
+| COCO Captions | 100 | 4.318 | 2.030 | 2.127 | 0.965 | 28/100 (0.28) | 0.28 |
+
+Quality in the long style is secondary.
+
+| Benchmark | Scored | 02 quality | 03 quality | Difference (03 minus 02) |
+| --- | ---: | ---: | ---: | ---: |
+| TextVQA VQA accuracy (%) | 100/100 | 0.0 | 0.0 | +0.0 pp |
+| COCO CIDEr-D x100 | 100/100 | 1.87e-05 | 1.90e-05 | +3.17e-07 |
+
+**Short style (quality measurement)**
+
+| Benchmark | Samples | Latency 02 (s) | Latency 03 (s) | Latency ratio 02/03 | TTFT ratio 02/03 | Exact token agreement | Decoded-text agreement |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| TextVQA | 100 | 1.108 | 1.159 | 0.956 | 0.979 | 96/100 (0.96) | 0.96 |
+| COCO Captions | 100 | 0.754 | 0.516 | 1.461 | 0.998 | 88/100 (0.88) | 0.88 |
+
+| Benchmark | Scored | 02 quality | 03 quality | Difference (03 minus 02) |
+| --- | ---: | ---: | ---: | ---: |
+| TextVQA VQA accuracy (%) | 100/100 | 71.0 | 70.0 | -1.0 pp |
+| COCO CIDEr-D x100 | 100/100 | 121.40 | 119.68 | -1.72 |
+
+Short-style speed is secondary. Mean TTFT is 0.956 s (02) and 0.976 s (03) for TextVQA out of 1.108 s and 1.159 s mean latency, so prefill is most of the wall time and the 03 TextVQA ratio of 0.956 shows no gain with 0.690 accepted draft tokens per iteration. COCO Captions, with longer answers, shows a 1.461 ratio.
+
+### Agreement and divergence diagnosis
+
+Greedy decoding at temperature 0 did not give identical sequences. Token agreement equals decoded-text agreement in every row, so every differing sequence also decodes to different text. In the long style, 78 of 100 TextVQA and 72 of 100 COCO sequences diverge, with the first mismatch between output index 1 and 983. In the short style, 4 TextVQA and 12 COCO sequences diverge, with the first mismatch at index 1 to 45.
+
+[`diagnose_divergence`](../../vispec/evaluation/diagnose_divergence.py) rebuilds each prompt (checked against the saved input fingerprints, 0 mismatches in both styles), appends the shared output prefix and runs one full forward pass of the stock model in bf16 and then fp32 (TF32 off) to read the logits at the first differing position. A case is `near_tie` if the bf16 top-2 margin is at most 0.5 logits, otherwise `unexplained`. Both diagnoses ran on `c1-8` cards that differ from the timed runs' card, so they are checks and not timed results.
+
+**Long style**
+
+| Benchmark | Mismatched turns | near_tie | unexplained | fp32 agrees with 02 | fp32 agrees with 03 | fp32 agrees with neither | bf16 margin min / median / max | fp32 margin min / median / max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| TextVQA | 78 | 78 | 0 | 50 | 28 | 0 | 0.0000 / 0.0000 / 0.3750 | 0.0049 / 0.0717 / 0.3692 |
+| COCO Captions | 72 | 72 | 0 | 35 | 33 | 4 | 0.0000 / 0.1250 / 0.2500 | 0.0047 / 0.0683 / 0.2631 |
+| Both | 150 | 150 | 0 | 85 | 61 | 4 | 0.0000 / 0.1250 / 0.3750 | 0.0047 / 0.0683 / 0.3692 |
+
+**Short style**
+
+| Benchmark | Mismatched turns | near_tie | unexplained | fp32 agrees with 02 | fp32 agrees with 03 | fp32 agrees with neither | bf16 margin min / median / max | fp32 margin min / median / max |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| TextVQA | 4 | 4 | 0 | 3 | 1 | 0 | 0.0000 / 0.0000 / 0.1250 | 0.0593 / 0.1456 / 0.2375 |
+| COCO Captions | 12 | 12 | 0 | 3 | 9 | 0 | 0.0000 / 0.1250 / 0.1250 | 0.0035 / 0.0616 / 0.2493 |
+| Both | 16 | 16 | 0 | 6 | 10 | 0 | 0.0000 / 0.0625 / 0.1250 | 0.0035 / 0.0670 / 0.2493 |
+
+Every divergence in both styles is a bf16 near-tie: 150 of 150 in the long style and 16 of 16 in the short style, with none unexplained. The bf16 margin is at most 0.375 logits, and many are exact ties (margin 0.0000), where `argmax` takes the first index and the winner depends on rounding. The fp32 pass often prefers the other method's token (61 of 150 long, 10 of 16 short for 03's token), and in 4 long COCO cases it prefers neither. The fp32 margins are also small (at most 0.369).
+
+### Week 1 gate outcome
+
+The gate passes. The low long-style token agreement (0.22 on TextVQA and 0.28 on COCO) reflects bf16 tie-breaking under different kernel shapes, because the speculative path verifies draft trees in batched forward passes while autoregressive decoding runs one-token passes, and it does not indicate a decoding bug. Once two sequences diverge at a near-tie, the rest of the text differs, so a single tie can change a whole long paragraph.
+
+A validated equivalent-output speedup remains **unestablished**, because the outputs differ. The 2.15x (TextVQA) and 2.13x (COCO) long-style latency ratios are observed ratios between two output sets of similar length (mean output tokens 283.31 vs 277.70 and 109.96 vs 109.89), not controlled speedups.
+
+### Open items
+
+- Repeat-run variability: **pending**. There is one run per method per style.
+- Energy and non-PyTorch GPU memory: **pending** (not measured).
+- Controlled latency speedup: **pending**, until a configuration with equivalent outputs exists.
 
 ## Limitations
 

@@ -28,7 +28,8 @@ The 48 GB nodes per `sinfo` are c1-8, c2-1, c2-2, c4-2 and c4-3. This cluster ig
 30 minute budget. Probes pinned to one node by excluding the others (jobs 392562 to 392566,
 `--time=00:05:00`) were still pending when cancelled. The pin therefore rests on earlier
 `nvidia-smi` output in logs of previous jobs (Dark_Genome results, matched to nodes with
-`sacct`):
+`sacct`). Node c2-2 was later verified live: the Week 1 jobs 392660 and 392661 ran there on an
+`NVIDIA RTX A6000` and their `device.txt` files confirm it.
 
 | Node | Evidence | GPU |
 | --- | --- | --- |

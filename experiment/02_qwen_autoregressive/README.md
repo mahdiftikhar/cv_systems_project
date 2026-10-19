@@ -11,7 +11,7 @@ numbers must not be mixed with the LLaVA rows. See the
 [design spec](../../docs/superpowers/specs/2026-10-18-qwen-dynamic-visual-sparsity-design.md)
 for the goals.
 
-Status: **pending**. No run has been launched, so this README reports no results.
+Status: **measured for Week 1**. One run per prompt style (jobs 392660 and 392661) completed with exit code 0. Results are below, and the comparison with 03 is in the [03 README](../03_qwen_vispec/README.md#results).
 
 ## Changes from the baseline
 
@@ -129,15 +129,52 @@ These smoke figures are not results of this experiment.
 
 ## Results
 
-All results are **pending**. Each row will be filled from a verified run, with hardware linked
-to that run's device report. Different hardware or settings get separate rows.
+All figures come from one run per method per prompt style (Slurm jobs 392660 for `long` and 392661 for `short`), 100 samples per benchmark, greedy decoding, bf16, batch size 1, at most 1,024 new tokens, slim prefill on, 16,384-token KV capacity. Per-benchmark results are listed before anything else, and no cross-benchmark aggregate is computed. Quality scores are subset measurements.
 
-| Prompt style | Benchmark | Samples | Mean latency (s) | Mean TTFT (s) | Quality | Hardware / device report |
-| --- | --- | ---: | --- | --- | --- | --- |
-| long | TextVQA | pending | pending | pending | pending | pending |
-| long | COCO Captions | pending | pending | pending | pending | pending |
-| short | TextVQA | pending | pending | pending | pending | pending |
-| short | COCO Captions | pending | pending | pending | pending | pending |
+### Hardware
+
+| Style | Job / partition | GPU | UUID | Driver | Allocation | Device report |
+| --- | --- | --- | --- | --- | --- | --- |
+| long | 392660 / `preempt`, node `c2-2`, 00:42:57 for the 02 and 03 pair | NVIDIA RTX A6000 (47.5 GiB visible) | `GPU-a2e40ccd-5141-9e51-2b3f-0e9d71fabf73` | 615.71.09 | 1 GPU, 4 CPUs (affinity 9, 12, 29, 32), 22,528 MB, 3 h limit | [02 device.txt](runs/20261019T051448Z_a06dd479abba_long_tWbqsW/device.txt) |
+| short | 392661 / `preempt`, node `c2-2`, 00:08:38 for the 02 and 03 pair | NVIDIA RTX A6000 (47.5 GiB visible) | `GPU-a2e40ccd-5141-9e51-2b3f-0e9d71fabf73` | 615.71.09 | 1 GPU, 4 CPUs (affinity 9, 12, 29, 32), 22,528 MB, 3 h limit | [02 device.txt](runs/20261019T062551Z_a06dd479abba_short_Jjml6V/device.txt) |
+
+Both jobs ran on the same physical card and host (Intel Xeon Silver 4114, 40 logical CPUs on the host, 4 allocated). The paired 03 run in each job used the same card and allocation. The links point at generated run folders, which are ignored by Git and preserved on project storage, so they resolve only in a checkout that has those folders. Device reports are launch snapshots and do not measure runtime peaks.
+
+### Reading these results
+
+The `long` style is the speed measurement, because answers run to hundreds of tokens and decoding dominates. Its quality scores are secondary: TextVQA consensus accuracy requires an exact short answer and CIDEr-D's length penalty punishes paragraphs, so both are near zero for any method. The `short` style is the quality measurement. Its speed is secondary, because answers are only a few tokens and prefill dominates the wall time, especially for TextVQA. The head-to-head comparison, token agreement and divergence diagnosis are in the [03 README](../03_qwen_vispec/README.md#results).
+
+Units: latency is wall time per question in seconds for prefill plus decoding, excluding model loading, prompt preparation and scoring. TTFT is the wait before the first answer token. TPOT is `(latency - TTFT) / (output tokens - 1)` in milliseconds, averaged per question for answers with more than one token. Throughput is the sum of output tokens divided by the sum of latencies. Output tokens include EOS. Truncated counts answers that hit the 1,024-token cap. Memory is `torch.cuda.max_memory_allocated` per question in GiB (mean and max over the 100 questions), and live KV is the whole-model figure in MiB. Phase peaks and live KV are read from the saved per-question measurements in `results/*/test.jsonl`, not from `summary.json`. Quality is VQA consensus accuracy in percent for TextVQA and CIDEr-D multiplied by 100 for COCO (IDF over the 100-image subset).
+
+### Style `long` (speed measurement)
+
+| Benchmark | Samples | Mean / median / p95 latency (s) | Mean TTFT (s) | Mean TPOT (ms) | Throughput (tokens/s) | Mean output tokens | Truncated |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| TextVQA | 100 | 11.538 / 8.461 / 31.777 | 0.949 | 37.5 | 24.55 | 283.31 | 4/100 (0.04) |
+| COCO Captions | 100 | 4.318 / 3.989 / 7.766 | 0.221 | 37.6 | 25.47 | 109.96 | 0/100 (0.00) |
+
+| Benchmark | Prefill peak mean / max (GiB) | Decode peak mean / max (GiB) | Live KV mean / max (MiB) | Quality | Scored |
+| --- | --- | --- | --- | ---: | ---: |
+| TextVQA | 10.69 / 12.08 | 8.41 / 8.42 | 47.3 / 81.9 | 0.0% VQA accuracy | 100/100 |
+| COCO Captions | 8.71 / 9.08 | 8.38 / 8.38 | 18.1 / 24.1 | 1.87e-05 CIDEr-D x100 | 100/100 |
+
+### Style `short` (quality measurement)
+
+| Benchmark | Samples | Mean / median / p95 latency (s) | Mean TTFT (s) | Mean TPOT (ms) | Throughput (tokens/s) | Mean output tokens | Truncated |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| TextVQA | 100 | 1.108 / 1.037 / 1.552 | 0.956 | 38.2 | 4.54 | 5.03 | 0/100 (0.00) |
+| COCO Captions | 100 | 0.754 / 0.732 / 0.978 | 0.226 | 38.4 | 19.59 | 14.76 | 0/100 (0.00) |
+
+| Benchmark | Prefill peak mean / max (GiB) | Decode peak mean / max (GiB) | Live KV mean / max (MiB) | Quality | Scored |
+| --- | --- | --- | --- | ---: | ---: |
+| TextVQA | 10.69 / 12.08 | 8.41 / 8.41 | 36.7 / 46.6 | 71.0% VQA accuracy | 100/100 |
+| COCO Captions | 8.71 / 9.08 | 8.38 / 8.38 | 14.8 / 21.0 | 121.40 CIDEr-D x100 | 100/100 |
+
+### Open items
+
+- Repeat-run variability: **pending**. There is one run per method per style.
+- Energy and non-PyTorch GPU memory: **pending** (not measured).
+- Validated equivalent-output speedup: **pending**. See the 03 README for the agreement and diagnosis results.
 
 ## Limitations
 
