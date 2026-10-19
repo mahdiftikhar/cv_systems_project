@@ -112,6 +112,12 @@ def compare(original_paths, draft_paths, output_dir):
         values = {report["summary"]["metadata"].get(setting) for report in all_reports}
         if len(values) > 1:
             raise ValueError(f"Cannot compare different {setting} settings")
+    styles = {report["summary"]["metadata"].get("prompt_style") for report in all_reports}
+    if len(styles) > 1:
+        raise ValueError(
+            "Cannot compare different prompt_style values: "
+            + ", ".join(repr(style) for style in sorted(styles, key=repr))
+        )
     result = {
         "original_reports": [str(report["path"]) for report in original],
         "draft_reports": [str(report["path"]) for report in draft],

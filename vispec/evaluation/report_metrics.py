@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .scoring import Scorer, evidence
 
-BENCHMARKS = ("textvqa", "gqa", "mmvet")
+BENCHMARKS = ("textvqa", "gqa", "mmvet", "coco_caption")
 
 
 def percentile(values, fraction):
@@ -237,6 +237,7 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
     benches = {}
     runtimes = {}
     predictions = {}
+    coco_scores = {}
     for benchmark in BENCHMARKS:
         files = list((run_dir / "results").glob(f"{benchmark}_test/*/*.jsonl"))
         manifests = list(
@@ -257,9 +258,30 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
                 runtimes[benchmark] = json.loads(runtime_path.read_text())
                 sources.append(evidence(runtime_path))
         first_answers = {}
+        corpus = None
+        if benchmark == "coco_caption":
+            first = [r for r in rows if r["choice"] == 0 and r["turn"] == 0]
+            corpus = scorer.score_corpus(
+                benchmark,
+                {r["question_id"]: r["answer"] for r in first},
+                {r["question_id"]: r["reference_answers"] for r in first},
+            )
+            coco_scores[benchmark] = {
+                k: corpus[k] for k in ("score", "scored", "method", "pending_reason")
+            }
         for row in rows:
             row["score"] = None
-            if row["choice"] == 0 and row["turn"] == 0:
+            if corpus is not None:
+                if row["choice"] == 0 and row["turn"] == 0:
+                    row["score"] = corpus["per_sample"].get(row["question_id"])
+                    row["score_method"] = (
+                        corpus["method"]
+                        if row["score"] is not None
+                        else corpus["pending_reason"]
+                    )
+                    row["score_protocol"] = scorer.protocol(benchmark, row["question_id"])
+                    first_answers[row["question_id"]] = row["answer"]
+            elif row["choice"] == 0 and row["turn"] == 0:
                 row["score"], row["score_method"] = scorer.score(
                     benchmark,
                     row["question_id"],
@@ -295,6 +317,16 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
         )
         + "\n"
     )
+    (output_dir / "coco_caption_predictions.json").write_text(
+        json.dumps(
+            [
+                {"image_id": key, "caption": value}
+                for key, value in predictions["coco_caption"].items()
+            ],
+            indent=2,
+        )
+        + "\n"
+    )
     exit_path = run_dir / "exit-code.txt"
     if evaluation_exit_code is None and exit_path.exists():
         evaluation_exit_code = int(exit_path.read_text().strip())
@@ -310,6 +342,7 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
         "sources": sources,
         "scoring_sources": scorer.sources,
         "benchmarks": benches,
+        "coco_caption_cider": coco_scores.get("coco_caption"),
         "overall": overall,
         "definitions": {
             "wall_time_s": "generation call; excludes loading, prompt preparation and reporting",
@@ -320,6 +353,7 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
             "percentile": "linear interpolation at (n - 1) * quantile",
             "memory": "per-visible-device PyTorch allocator peaks during each call; includes resident model/KV cache; excludes non-PyTorch allocations",
             "quality": "choice 0, turn 0 only; subset score, no averaging across benchmarks",
+            "coco_caption_quality": "CIDEr-D x100 (pycocoevalcap 1.2, PTB tokenizer, IDF from the evaluated subset's references); needs Java",
         },
         "warnings": [
             "Generation limits differ between original and draft; inspect stop reasons before interpreting speedups.",
@@ -365,6 +399,16 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
         lines.append(
             f"- **{benchmark}:** {bench['quality']['status']}; "
             + "; ".join(bench["quality"]["methods"])
+        )
+    cider = coco_scores.get("coco_caption")
+    if cider:
+        lines.append(
+            "- **coco_caption CIDEr-D (x100):** "
+            + (
+                f"{100 * cider['score']:.2f} on {cider['scored']} scored captions ({cider['method']})"
+                if cider["score"] is not None
+                else f"Pending, {cider['pending_reason']}"
+            )
         )
     lines += [
         "",
