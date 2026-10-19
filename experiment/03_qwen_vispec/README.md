@@ -148,7 +148,7 @@ to that run's device report. Different hardware or settings get separate rows.
 - Scores cover 100-sample subsets, and each configuration has one run, so repeat variability
   is unknown.
 - Model and dataset revisions are pinned by preparation; the recorded values are in
-  `prepared-assets.json` in each run.
+  `.preparation/assets_qwen.json`, which each run copies as `prepared-assets.json`.
 - `device.txt` is a launch snapshot. It does not measure peak memory, energy or utilization
   during evaluation, and energy and non-PyTorch GPU memory are not measured.
 - The draft model has a fixed 8,192-position RoPE table, so prompts must stay below that

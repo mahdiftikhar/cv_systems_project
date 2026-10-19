@@ -63,8 +63,8 @@ git diff HEAD --binary > "$run_dir/tracked-changes.patch"
 cp "$experiment_dir/run.sh" "$run_dir/runner.sh"
 cp "$repo_dir/experiment/capture_device.sh" "$run_dir/capture_device.sh"
 cp "$repo_dir/experiment/check_cuda.sh" "$run_dir/check_cuda.sh"
-if [[ -f "$repo_dir/.preparation/assets.json" ]]; then
-    cp "$repo_dir/.preparation/assets.json" "$run_dir/prepared-assets.json"
+if [[ -f "$repo_dir/.preparation/assets_qwen.json" ]]; then
+    cp "$repo_dir/.preparation/assets_qwen.json" "$run_dir/prepared-assets.json"
 fi
 
 # ==========================================
