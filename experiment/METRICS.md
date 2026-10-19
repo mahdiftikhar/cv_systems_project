@@ -318,8 +318,9 @@ python -m vispec.evaluation.compare_metrics \
 ```
 
 The tool requires matching model, temperature, precision, GPU identity, allocation
-and prompt-token fingerprints. Different draft-tree settings are separate
-experiments rather than repeats. Ratios use matching question/choice/turn IDs,
+and prompt-token fingerprints. It also refuses reports whose prompt style or run
+settings differ, as described in the [Qwen section](#qwen-experiments-02-and-03).
+Different draft-tree settings are separate experiments rather than repeats. Ratios use matching question/choice/turn IDs,
 and repeated runs receive equal weight. Quality changes require complete matching
 score coverage and the same scoring protocols and judge settings.
 
@@ -345,3 +346,70 @@ and does not validate a sampling distribution.
 Record verified per-benchmark results in the experiment guides and register,
 with hardware and artifact links. Inspect output counts and quality and repeat
 runs before drawing broader conclusions.
+
+## Qwen experiments (02 and 03)
+
+Experiments 02 and 03 use the unified evaluator `vispec.evaluation.evaluate` and
+add the measurements below. The definitions above still apply. These fields are
+saved per question in `results/*/test.jsonl`, and `report_metrics` does not yet
+aggregate the phase peaks or live KV into `summary.json`.
+
+### CIDEr-D
+
+COCO caption quality is CIDEr-D multiplied by 100, computed with `pycocoevalcap`
+1.2 and its PTB tokenizer, which needs Java. The inverse document frequency comes
+from the references of the evaluated 100-image subset, not the full corpus. The
+score is therefore a subset measurement and is not comparable to published
+full-corpus CIDEr. Without Java the score stays pending.
+
+### Prefill and decode phase peaks
+
+The evaluator splits the allocator peak at the first output token. The
+prefill-phase peak (`prefill_peak_allocated_bytes`) runs from the start of the
+generation call to that token, and the counters are then reset. The decode-phase
+peak (`decode_peak_allocated_bytes`) covers the rest of the call, and
+`peak_allocated_bytes` stays the larger of the two. For ViSpec the first output
+token comes from the target prefill, before the draft prefill and the first
+draft tree, so those count toward the decode-phase peak.
+
+### Live KV (`kv_tokens`, `kv_live_bytes`)
+
+`kv_tokens` is the target KV cache length when generation ends. It equals input
+plus output tokens minus one for the autoregressive arm, because the last
+generated token is never fed back, and input plus output tokens for ViSpec.
+`kv_live_bytes` is `kv_tokens` times the bytes one token occupies across all
+decoder layers (layers × 2 × KV heads × head dimension × dtype bytes). It is
+arithmetic, not an allocator measurement. It is a whole-model figure, so each
+device entry repeats it and it must not be summed across GPUs. The preallocated
+buffer holds 16,384 tokens whatever `kv_tokens` is, so live KV does not change
+the measured peaks.
+
+### Decode time
+
+The autoregressive `decode_time` runs from the first output token to the end of
+the decoding loop. ViSpec's `decode_time` starts after `initialize_tree` returns,
+while TTFT ends at the first target token inside it. The draft prefill and the
+first draft tree are therefore in neither TTFT nor `decode_time`; in Week 1 that
+window averaged about 12 ms per question. Use latency and TTFT to compare the
+arms.
+
+### Comparison refusals
+
+`compare_metrics` raises `ValueError`, naming the differing values, when the
+compared reports differ in any of these:
+
+- `prompt_style` in the run metadata.
+- `slim_prefill`, `kv_capacity`, `num_samples` or `max_new_tokens` in the run
+  metadata.
+- `slim_prefill` or `kv_capacity` in a benchmark's runtime file, among reports
+  that have one. A missing runtime file is a warning instead.
+- The per-turn `max_new_tokens` generation limit, among turns that record one.
+
+An absent value counts as its own value, so a report that records a setting
+cannot be paired with one that does not. LLaVA reports record only
+`max_new_tokens`, so LLaVA pairs still compare. The hardware check also covers
+`base_model_revision`. From commit `25bf388` on, the evaluator falls back to the
+revision pinned in `.preparation/assets_qwen.json` when the checkpoint is a local
+folder, while the Week 1 runtime files hold `null`. A new run therefore cannot be
+paired with a Week 1 run, which the GPU and allocation checks would usually
+prevent anyway.

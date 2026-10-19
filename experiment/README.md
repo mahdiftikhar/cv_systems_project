@@ -13,7 +13,7 @@ content or reducing correctness.
 **MM-Vet** tests broader open-ended visual understanding. We use 100, 100 and 218
 questions, respectively. These results describe those subsets.
 
-## Latest results
+## Latest LLaVA results (00 and 01)
 
 [Plots and how to read them](plots/README.md) · [Full metric tables by benchmark](COMPARISON.md).
 
@@ -30,7 +30,7 @@ in **seconds per question**. Lower is better.
 | GQA       |                  100 |      1.380 s |    0.640 s |            2.16× |
 | MM-Vet    |                  218 |      4.109 s |    1.651 s |            2.49× |
 
-### Overall results
+### Overall LLaVA results
 
 | Method       | Mean generation time | Mean time to first token |
 | ------------ | -------------------: | -----------------------: |
@@ -102,7 +102,8 @@ driver 615.71.09, node `c2-2`, 1 GPU, 4 CPUs, 22,528 MB, `preempt` partition): S
 [short](03_qwen_vispec/runs/20261019T063023Z_a06dd479abba_short_ogIM31/device.txt). Times are mean
 generation latency in seconds per question (lower is better), and the ratio is 02 divided by 03. Each
 row has 100 samples per method. These are observed ratios, not validated speedups, because the outputs
-differ between methods.
+differ between methods. The Qwen run links point to run folders that Git ignores; they are preserved
+on project storage and resolve only in a checkout that has them.
 
 | Style | Benchmark | 02 latency (s) | 03 latency (s) | Observed ratio | Token agreement | 02 / 03 quality |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
@@ -120,7 +121,9 @@ compared with one-token decoding. Validated equivalent-output speedup is still u
 is **pending**. Full tables, memory, acceptance and the diagnosis are in the
 [03 README](03_qwen_vispec/README.md#results) and [02 README](02_qwen_autoregressive/README.md#results).
 
-The latest pair used temperature **0.0 (greedy)**, FP16, and a maximum of
+### LLaVA run conditions (00 and 01)
+
+The latest LLaVA pair (00 and 01) used temperature **0.0 (greedy)**, FP16, and a maximum of
 **1,024 output token IDs, including EOS**. Both launch trees were clean at
 commit `771911bd8665846e9ab8cb698cb22c2929d296b5`.
 
@@ -157,12 +160,17 @@ ignored by default. Preserve these snapshots as evidence and use new run folders
 for reruns.
 See the [metrics guide](METRICS.md) for scoring and comparison commands.
 
-The Qwen experiments are submitted with the Ampere helper, one prompt style per job:
+The Qwen experiments are submitted with the Ampere helper, one prompt style per job with 02
+and 03 in the same allocation. This is the Week 1 command for the `long` style; use
+`PROMPT_STYLE=short` for the other job:
 
 ```bash
-PROMPT_STYLE=long CLUSTER_PARTITION=preempt bash experiment/submit_ampere.sh \
-  experiment/02_qwen_autoregressive experiment/03_qwen_vispec
+PROMPT_STYLE=long CLUSTER_PARTITION=preempt SBATCH_EXTRA="--cpus-per-task=4 --mem=22G --time=03:00:00" \
+  bash experiment/submit_ampere.sh experiment/02_qwen_autoregressive experiment/03_qwen_vispec
 ```
+
+Other resources or a separate job per experiment give a different allocation, which
+`compare_metrics` refuses to pair (see the 02 and 03 READMEs).
 
 See the [Ampere setup guide](AMPERE_SETUP.md) for the GPU pin and partitions.
 

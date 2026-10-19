@@ -43,6 +43,11 @@ model's 128,000-token default.
 Image size limits are `min_pixels = 256*28*28` and `max_pixels = 1280*28*28` for both
 benchmarks and both styles. These are the measured subsets, not full-benchmark scores.
 
+The COCO subset comes from the Karpathy-test parquet that preparation pins
+(`yerevann/coco-karpathy`). Spec hazard 7 asked whether it matches the subset that the inherited
+`HuggingFaceM4/COCO` loader in `gen_*_answer_coco_caption.py` would select. That was never
+checked. No recorded result depends on it, because no run used the inherited loader.
+
 | Style | TextVQA instruction | COCO instruction |
 | --- | --- | --- |
 | `long` | OCR extraction with a detailed explanation | Detailed description of the image |
@@ -65,27 +70,50 @@ benchmark. Slim prefill is on and the KV capacity is 16,384 tokens.
 ## Cluster prerequisites
 
 1. Follow the [Ampere setup guide](../AMPERE_SETUP.md). Jobs run on the pinned 48 GB
-   `NVIDIA RTX A6000` nodes and fail with status 3 on any other GPU model.
+   `NVIDIA RTX A6000` nodes and fail with status 3 on any other GPU model. That GPU-name check
+   lives only in `run_sequence.sbatch`, so a direct `run.sh` or `gpu_check.sh` launch skips it.
+   Results of record must be submitted through `submit_ampere.sh`.
 2. Prepare assets once with `bash prepare.sh --suite qwen` inside a Slurm allocation. The runner
    repeats the offline check (`--check-only --suite qwen`) after the device capture and stops
    before any model loads if an asset is missing.
 3. Commit code before launching, so the run records a clean commit.
 
 Week 1 runs use `CLUSTER_PARTITION=preempt`, which reaches the same pinned A6000 nodes. The
-`gpu` partition queue was 4 to 7 days. A preempted job is requeued and reruns the runner from
-the start. Each invocation creates a fresh run folder and never reuses answer paths, so the
-partial folder from the preempted attempt stays on disk as evidence.
+`gpu` partition queue was 4 to 7 days. The cluster default is `JobRequeue=0`, so
+`run_sequence.sbatch` requests `--requeue`; without it a preempted job is cancelled. A requeued
+job reruns `run_sequence.sbatch` from the start, so 02 and 03 each get a fresh run folder and
+no answer path is reused. The partial folders from the preempted attempt stay on disk as
+evidence. Their reports may be missing, because the preempt partition has `GraceTime=0` and
+Slurm sends SIGKILL 30 seconds (`KillWait`) after SIGTERM.
+
+Run folders from the same attempt share `slurm_job_id` and `slurm_restart_count` in
+`metadata.txt`, and the job log `logs/ampere-sequence-<job>.log` keeps every attempt because it
+is opened in append mode. The Week 1 jobs were submitted before `--requeue` was added. Neither
+was preempted: each job log has one start line.
 
 ## Run command
 
-From the repository root on a login or VS Code shell, submit one style per job:
+Week 1 submitted one job per prompt style, and each job ran 02 and then 03 in one allocation.
+To reproduce it, run these commands from the repository root on a login or VS Code shell:
 
 ```bash
-PROMPT_STYLE=long  CLUSTER_PARTITION=preempt bash experiment/submit_ampere.sh experiment/02_qwen_autoregressive
-PROMPT_STYLE=short CLUSTER_PARTITION=preempt bash experiment/submit_ampere.sh experiment/02_qwen_autoregressive
+PROMPT_STYLE=long CLUSTER_PARTITION=preempt SBATCH_EXTRA="--cpus-per-task=4 --mem=22G --time=03:00:00" \
+  bash experiment/submit_ampere.sh experiment/02_qwen_autoregressive experiment/03_qwen_vispec
+PROMPT_STYLE=short CLUSTER_PARTITION=preempt SBATCH_EXTRA="--cpus-per-task=4 --mem=22G --time=03:00:00" \
+  bash experiment/submit_ampere.sh experiment/02_qwen_autoregressive experiment/03_qwen_vispec
 ```
 
+The pair must run in the same job. Running 02 alone, or with the default resources of
+`run_sequence.sbatch` (8 CPUs, 64G, 8 hours), gives a different allocation and possibly a
+different card. `compare_metrics` compares the GPU UUID, the allocated CPU count and memory, and
+the CPU affinity, and it refuses to pair runs whose values differ.
+
+Runs submitted through the helper record the exact `sbatch` command (`submit_command=`) and
+`SBATCH_EXTRA` (`sbatch_extra=`, empty when none was given) in `metadata.txt`. Both read `unset`
+for a launch that did not use the helper.
+
 Inside an existing one-GPU allocation, run `PROMPT_STYLE=long bash experiment/02_qwen_autoregressive/run.sh`.
+Such a run skips the GPU-name check (see the prerequisites).
 The runner prints each exact evaluator command before running it, so `output.log` records
 every generation argument. TextVQA runs first, then COCO Captions, and the run stops on the
 first failure.
@@ -126,6 +154,13 @@ prefill-phase peak, which is set before the language-model head, most likely by 
 encoder. `kv_live_bytes` is a whole-model figure repeated in each device entry, so do not
 sum it across GPUs. The KV cache capacity is 16,384 tokens, not the model's 128k default.
 These smoke figures are not results of this experiment.
+
+`kv_tokens` is the target KV cache length when generation ends. In this arm it equals input
+tokens plus output tokens minus one, because the last generated token is never fed back
+through the model. In the ViSpec arm (03) it equals input plus output tokens, so live-KV
+figures differ by one token's worth between the arms for the same output. Both relations hold
+for every Week 1 record. `kv_live_bytes` is `kv_tokens` times the bytes one token occupies across
+all layers. It is arithmetic, not an allocator measurement.
 
 ## Results
 
@@ -188,4 +223,11 @@ Units: latency is wall time per question in seconds for prefill plus decoding, e
   length. These benchmarks are far below it.
 - CIDEr-D is a subset measurement (see above), and the long prompt style is expected to
   score poorly on strict TextVQA matching.
-- This arm uses no draft tree, so draft settings do not apply. `compare_metrics` requires `method=autoregressive` here and a matching `prompt_style` in the paired 03 run.
+- Decoding is likely host-bound. AR decoding takes about 38 ms per token (mean TPOT in the
+  results above), while reading the weights once per token would take about 8 to 9 ms: the
+  6.17 GB of bf16 language-model weights at the A6000's 768 GB/s peak bandwidth is 8.0 ms. The
+  host is a Xeon Silver 4114 with 4 allocated cores. This is inferred from these numbers and was
+  not profiled. A profiling pass is planned before Week 3.
+- The COCO subset was not checked against the inherited `HuggingFaceM4/COCO` loader's subset
+  (see the data section).
+- This arm uses no draft tree, so draft settings do not apply. `compare_metrics` requires `method=autoregressive` here and matching `prompt_style`, `slim_prefill`, `kv_capacity`, `num_samples` and `max_new_tokens` in the paired 03 run.
