@@ -165,7 +165,14 @@ def write_manifest(answer_file, data, benchmark):
     questions = [
         {
             "question_id": str(
-                row[{"textvqa": "qid", "gqa": "question_id", "mmvet": "id"}[benchmark]]
+                row[
+                    {
+                        "textvqa": "qid",
+                        "gqa": "question_id",
+                        "mmvet": "id",
+                        "coco_caption": "question_id",
+                    }[benchmark]
+                ]
             ),
             "reference_answers": references(row),
         }
