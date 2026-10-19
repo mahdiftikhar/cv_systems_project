@@ -35,6 +35,7 @@ The 48 GB nodes per `sinfo` are c1-8, c2-1, c2-2, c4-2 and c4-3. This cluster ig
 | c1-8 | job 339897_2 | NVIDIA RTX A6000, 49140 MiB |
 | c2-1 | job 339897_1 | NVIDIA RTX A6000, 49140 MiB |
 | c2-2 | none found (same 48 GB feature set) | unverified |
+| c2-2 | live probe on 2026-10-19, job 392590 (preempt partition) | NVIDIA RTX A6000, 49140 MiB, driver 615.71.09 |
 | c4-2 | job 339897_3 | NVIDIA RTX A6000, 49140 MiB |
 | c4-3 | job 353849 | NVIDIA RTX A6000, 49140 MiB |
 

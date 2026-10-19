@@ -7,6 +7,6 @@ here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/ampere_env.sh"
 clear_inherited_slurm
 # shellcheck disable=SC2086
-exec srun --partition="$CLUSTER_PARTITION" --gres="$CLUSTER_GPU_GRES" \
+exec srun --ntasks=1 --partition="$CLUSTER_PARTITION" --gres="$CLUSTER_GPU_GRES" \
     --exclude="$CLUSTER_EXCLUDE" --cpus-per-task=4 --mem=32G --time=01:00:00 \
     ${SRUN_EXTRA:-} "$@"
