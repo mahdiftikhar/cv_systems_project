@@ -71,3 +71,28 @@ A shell started inside a Slurm job (such as VS Code job 391999) carries `SLURM_*
 variables that override `srun`/`sbatch` resource requests. After
 `source experiment/ampere_env.sh`, run `clear_inherited_slurm`, or equivalently
 `for v in $(compgen -v SLURM_); do unset "$v"; done`.
+
+## Environment
+
+CIDEr scoring uses `pycocoevalcap`, whose PTB tokenizer runs a Java program. The vipsec env
+needs both the Python package and a `java` binary. These commands were run once in the vipsec
+env (Python 3.11.17):
+
+```bash
+~/.local/bin/uv pip install --python "$PYTHON_BIN" pycocoevalcap==1.2
+conda install -n vipsec -y openjdk=17
+```
+
+The conda command uses the default channels, which resolve to `pkgs/main` and install
+OpenJDK 17.0.14. It was dry-run first, and its plan only added packages, with no updates or
+downgrades to existing ones. The `uv` command installs `pycocoevalcap` 1.2 and
+`pycocotools` 2.0.11 (its dependency) into the env.
+
+`java` is not on `PATH` unless the env's `bin` directory is on it, and the jobs do not
+activate the env. Prepend the env's bin directory when running CIDEr code:
+
+```bash
+PATH="$(dirname "$PYTHON_BIN"):$PATH" PYTHONNOUSERSITE=1 "$PYTHON_BIN" your_script.py
+```
+
+Check the install with `"$(dirname "$PYTHON_BIN")/java" -version`, which should report 17.x.
