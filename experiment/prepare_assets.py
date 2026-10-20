@@ -24,6 +24,15 @@ MODELS = {
         "ViSpec-llava-v1.6-vicuna-7b-hf",
     ),
 }
+QWEN_MODELS = {
+    "base": ("Qwen/Qwen2.5-VL-3B-Instruct", "Qwen2.5-VL-3B-Instruct"),
+    "draft": (
+        "JLKang/ViSpec-Qwen2.5-VL-3B-Instruct",
+        "ViSpec-Qwen2.5-VL-3B-Instruct",
+    ),
+}
+COCO_REPO = "yerevann/coco-karpathy"
+COCO_FILE = "data/test-00000-of-00001.parquet"
 SOURCES = {
     "textvqa_json": "https://dl.fbaipublicfiles.com/textvqa/data/TextVQA_0.5.1_val.json",
     "textvqa_images": "https://dl.fbaipublicfiles.com/textvqa/images/train_val_images.zip",
@@ -70,6 +79,11 @@ def validate_download(path, kind):
                 raise ValueError(f"Empty ZIP archive: {path}")
     elif kind == "json":
         json.loads(path.read_text())
+    elif kind == "image":
+        from PIL import Image
+
+        with Image.open(path) as image:
+            image.load()
     elif kind == "python":
         tree = ast.parse(path.read_text())
         if not any(
@@ -380,6 +394,187 @@ def prepare_data(root):
     return validate_benchmarks(root)
 
 
+def prepare_textvqa(root):
+    """Download the TextVQA subset inputs and scorer shared by both suites."""
+    bench = root / "bench_data"
+    download_http(
+        SOURCES["textvqa_json"], bench / "textvqa/TextVQA_0.5.1_val.json", "json"
+    )
+    archive = root / "downloads/textvqa-images.zip"
+    download_http(SOURCES["textvqa_images"], archive, "zip")
+    extract_images(archive, bench / "textvqa/train_images")
+    download_http(
+        SOURCES["textvqa_evaluator"],
+        root / "tools/downloaded/m4c_evaluator.py",
+        "python",
+    )
+
+
+def validate_textvqa(root):
+    bench = root / "bench_data/textvqa"
+    text = json.loads((bench / "TextVQA_0.5.1_val.json").read_text())
+    if (
+        text.get("dataset_type"),
+        text.get("dataset_name"),
+        text.get("dataset_version"),
+    ) != ("val", "textvqa", "0.5.1"):
+        raise ValueError("Unexpected TextVQA split/version")
+    rows = text["data"]
+    if len(rows) < 100:
+        raise ValueError("TextVQA needs at least 100 rows")
+    for row in rows:
+        if (
+            not (bench / "train_images" / (row["image_id"] + ".jpg")).is_file()
+            or len(row["answers"]) != 10
+        ):
+            raise ValueError(
+                f"Missing image or references for TextVQA {row['question_id']}"
+            )
+    validate_download(root / "tools/downloaded/m4c_evaluator.py", "python")
+    return len(rows)
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def coco_subset_rows(root):
+    sys.path.insert(0, str(root))
+    from vispec.evaluation.benchmarks import coco_subset
+
+    return coco_subset(root / "bench_data/coco/karpathy_test.parquet")
+
+
+def prepare_coco(root, state):
+    from huggingface_hub import HfApi, hf_hub_download
+
+    entry = state.setdefault("coco", {"repo_id": COCO_REPO, "file": COCO_FILE})
+    if "revision" not in entry:
+        entry["revision"] = HfApi().dataset_info(COCO_REPO).sha
+        atomic_json(root / ".preparation/assets_qwen.json", state)
+    target = root / "bench_data/coco/karpathy_test.parquet"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    cached = hf_hub_download(
+        COCO_REPO, COCO_FILE, repo_type="dataset", revision=entry["revision"]
+    )
+    recorded = entry.get("parquet_sha256")
+    if not (target.is_file() and recorded and file_sha256(target) == recorded):
+        temporary = target.with_name(target.name + ".part")
+        shutil.copyfile(cached, temporary)
+        temporary.replace(target)
+    digest = file_sha256(target)
+    if recorded and digest != recorded:
+        raise ValueError(
+            f"Karpathy parquet SHA-256 {digest} differs from recorded {recorded}"
+        )
+    entry["parquet_sha256"] = digest
+    atomic_json(root / ".preparation/assets_qwen.json", state)
+    for row in coco_subset_rows(root):
+        download_http(row["url"], root / "bench_data/coco/val2014" / row["filename"], "image")
+    return validate_coco(root, entry)
+
+
+def validate_coco(root, entry):
+    target = root / "bench_data/coco/karpathy_test.parquet"
+    if not target.is_file():
+        raise ValueError(f"Missing {target}")
+    digest = file_sha256(target)
+    if not entry.get("parquet_sha256"):
+        raise ValueError("Manifest has no coco.parquet_sha256")
+    if entry["parquet_sha256"] != digest:
+        raise ValueError(
+            f"Karpathy parquet SHA-256 {digest} differs from manifest "
+            f"{entry['parquet_sha256']}"
+        )
+    rows = coco_subset_rows(root)
+    for row in rows:
+        validate_download(root / "bench_data/coco/val2014" / row["filename"], "image")
+    return len(rows)
+
+
+def prepare_qwen_models(root, state):
+    from huggingface_hub import HfApi, snapshot_download
+
+    for key, (repo_id, directory) in QWEN_MODELS.items():
+        entry = state.setdefault("models", {}).setdefault(key, {"repo_id": repo_id})
+        if "revision" not in entry:
+            entry["revision"] = HfApi().model_info(repo_id).sha
+            atomic_json(root / ".preparation/assets_qwen.json", state)
+        path = root / "models" / directory
+        snapshot_download(repo_id, revision=entry["revision"], local_dir=str(path))
+        validate_model(path, require_processor=key == "base")
+        entry["path"] = str(path.relative_to(root))
+        atomic_json(root / ".preparation/assets_qwen.json", state)
+        print(f"{key} model ready: {path} @ {entry['revision']}", flush=True)
+
+
+def validate_qwen_models(root):
+    for key, (_, directory) in QWEN_MODELS.items():
+        validate_model(root / "models" / directory, require_processor=key == "base")
+
+
+def run_qwen(root, check_only):
+    state_path = root / ".preparation/assets_qwen.json"
+    state = (
+        json.loads(state_path.read_text())
+        if state_path.exists()
+        else {"schema_version": 1, "suite": "qwen", "sources": SOURCES}
+    )
+    if check_only:
+        if not state_path.exists():
+            raise ValueError(
+                f"Missing manifest {state_path}; run bash prepare.sh --suite qwen first"
+            )
+        missing = [
+            name
+            for name, value in (
+                ("ready", state.get("ready")),
+                ("models.base.revision", state.get("models", {}).get("base", {}).get("revision")),
+                ("models.draft.revision", state.get("models", {}).get("draft", {}).get("revision")),
+                ("coco.revision", state.get("coco", {}).get("revision")),
+                ("coco.parquet_sha256", state.get("coco", {}).get("parquet_sha256")),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"Manifest {state_path} lacks: {', '.join(missing)}; rerun preparation"
+            )
+    state["ready"] = False
+    if check_only:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+    else:
+        for key in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
+            os.environ.pop(key, None)
+        for module in ("huggingface_hub", "datasets"):
+            try:
+                importlib.import_module(module)
+            except ModuleNotFoundError as error:
+                raise RuntimeError(f"Missing preparation dependency {module}") from error
+        atomic_json(state_path, state)
+        prepare_textvqa(root)
+        prepare_qwen_models(root, state)
+        prepare_coco(root, state)
+    validate_qwen_models(root)
+    textvqa_rows = validate_textvqa(root)
+    coco_entry = state.setdefault("coco", {"repo_id": COCO_REPO, "file": COCO_FILE})
+    coco_images = validate_coco(root, coco_entry)
+    state.update(
+        ready=True,
+        counts={"textvqa_input_rows": textvqa_rows, "coco_subset_images": coco_images},
+        finished_utc=datetime.now(UTC).isoformat(),
+        textvqa_evaluator_sha256=file_sha256(root / "tools/downloaded/m4c_evaluator.py"),
+    )
+    if not check_only:
+        atomic_json(state_path, state)
+    print("Qwen preparation complete. All assets are under:", root, flush=True)
+
+
 def cache_mmvet(check_only=False):
     from datasets import DownloadConfig, load_dataset
 
@@ -407,18 +602,29 @@ def main():
         action="store_true",
         help="Validate existing assets without downloads or installations",
     )
+    parser.add_argument("--suite", choices=("llava", "qwen"), default="llava")
     args = parser.parse_args()
     root = args.repo_dir.resolve()
     configure(root)
     state_path = root / ".preparation/assets.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
-    with (root / ".preparation/prepare.lock").open("w") as lock:
+    # Check-only runs take a shared lock, so runners that start together (for example two
+    # jobs on NFS) can validate at the same time; full preparation keeps the exclusive lock.
+    # "a+" opens the file for reading and writing without truncating it: NFS emulates
+    # flock with POSIX locks, and a shared lock there needs a readable descriptor.
+    with (root / ".preparation/prepare.lock").open("a+") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(
+                lock,
+                (fcntl.LOCK_SH if args.check_only else fcntl.LOCK_EX) | fcntl.LOCK_NB,
+            )
         except BlockingIOError as error:
             raise RuntimeError(
                 "Another preparation process is using this repository"
             ) from error
+        if args.suite == "qwen":
+            run_qwen(root, args.check_only)
+            return
         state = (
             json.loads(state_path.read_text())
             if state_path.exists()

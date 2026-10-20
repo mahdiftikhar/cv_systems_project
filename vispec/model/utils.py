@@ -274,6 +274,10 @@ def initialize_tree(
     on_first_token=None,
     **kwargs,
 ):
+    # Prefill only reads orig[:, -1], so a slim-prefill model projects just the last
+    # position to the vocabulary. Tree verification (tree_decoding) keeps full logits.
+    if getattr(model, "slim_prefill", False):
+        kwargs["logits_to_keep"] = 1
     outputs, orig, hidden_states = model(
         input_ids,
         past_key_values=past_key_values,

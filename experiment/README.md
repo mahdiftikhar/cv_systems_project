@@ -13,7 +13,7 @@ content or reducing correctness.
 **MM-Vet** tests broader open-ended visual understanding. We use 100, 100 and 218
 questions, respectively. These results describe those subsets.
 
-## Latest results
+## Latest LLaVA results (00 and 01)
 
 [Plots and how to read them](plots/README.md) · [Full metric tables by benchmark](COMPARISON.md).
 
@@ -30,7 +30,7 @@ in **seconds per question**. Lower is better.
 | GQA       |                  100 |      1.380 s |    0.640 s |            2.16× |
 | MM-Vet    |                  218 |      4.109 s |    1.651 s |            2.49× |
 
-### Overall results
+### Overall LLaVA results
 
 | Method       | Mean generation time | Mean time to first token |
 | ------------ | -------------------: | -----------------------: |
@@ -85,8 +85,76 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | ------------------------------------------------------- | --------------------------------- | ------------------------------------------------ |
 | [00: Standard baseline](00_baseline_original/README.md) | Measure autoregressive generation | 418/418 completed                                |
 | [01: ViSpec baseline](01_baseline_draft/README.md)      | Measure speculative generation    | 418/418 completed. Output equivalence unresolved |
+| [02: Qwen autoregressive](02_qwen_autoregressive/README.md) | Qwen2.5-VL-3B reference decoding | Week 1 measured, `long` and `short`, 400/400 completed |
+| [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Week 1 measured, 400/400 completed. Output equivalence unresolved (all divergences are bf16 near-ties) |
+| [04: Qwen decode profile](04_qwen_decode_profile/README.md) | Where AR and ViSpec decode time goes (`torch.profiler`) | Measured (job 393060), `long`, 3 samples per benchmark. Decode is host-bound |
 
-The latest pair used temperature **0.0 (greedy)**, FP16, and a maximum of
+Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
+Qwen2.5-VL-3B-Instruct on TextVQA and COCO Captions (100 samples each) in two prompt styles,
+`long` and `short`, on the Ampere cluster's pinned A6000 nodes. Their numbers are not
+comparable with the LLaVA numbers, so they are listed in their own table below.
+
+### Qwen Week 1 results (02 and 03)
+
+One run per method per style on one `NVIDIA RTX A6000` (UUID `GPU-a2e40ccd-5141-9e51-2b3f-0e9d71fabf73`,
+driver 615.71.09, node `c2-2`, 1 GPU, 4 CPUs, 22,528 MB, `preempt` partition): Slurm job 392660 for
+`long` and 392661 for `short`, commit `a06dd479abba`. Device reports:
+[long](03_qwen_vispec/runs/20261019T054357Z_a06dd479abba_long_kDp191/device.txt) and
+[short](03_qwen_vispec/runs/20261019T063023Z_a06dd479abba_short_ogIM31/device.txt). Times are mean
+generation latency in seconds per question (lower is better), and the ratio is 02 divided by 03. Each
+row has 100 samples per method. These are observed ratios, not validated speedups, because the outputs
+differ between methods. The Qwen run links point to run folders that Git ignores; they are preserved
+on project storage and resolve only in a checkout that has them.
+
+| Style | Benchmark | 02 latency (s) | 03 latency (s) | Observed ratio | Token agreement | 02 / 03 quality |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| long (speed measurement) | TextVQA | 11.538 | 5.366 | 2.150 | 22/100 | 0.0 / 0.0 % VQA (secondary) |
+| long (speed measurement) | COCO Captions | 4.318 | 2.030 | 2.127 | 28/100 | 1.87e-05 / 1.90e-05 CIDEr-D x100 (secondary) |
+| short (quality measurement) | TextVQA | 1.108 | 1.159 | 0.956 | 96/100 | 71.0 / 70.0 % VQA |
+| short (quality measurement) | COCO Captions | 0.754 | 0.516 | 1.461 | 88/100 | 121.40 / 119.68 CIDEr-D x100 |
+
+Short-style speed is secondary because prefill dominates its wall time. Long-style quality is
+secondary because strict scoring rejects paragraph answers. The Week 1 gate outcome: every greedy
+divergence is a bf16 near-tie (150 of 150 in `long`, 16 of 16 in `short`, none unexplained), so the
+low long-style token agreement is consistent with bf16 tie-breaking and with no decoding bug. The most
+likely mechanism, which was not measured, is the different kernel shapes of batched tree verification
+compared with one-token decoding. Validated equivalent-output speedup is still unestablished, and repeat-run variability
+is **pending**. Full tables, memory, acceptance and the diagnosis are in the
+[03 README](03_qwen_vispec/README.md#results) and [02 README](02_qwen_autoregressive/README.md#results).
+
+### Qwen decode profile (04)
+
+Experiment 04 profiled 3 `long`-style samples per benchmark with `torch.profiler` on one
+`NVIDIA RTX A6000` (UUID `GPU-8d51152c-22f1-372d-aef5-063afee0d488`, driver 615.71.09, node `c1-8`,
+Xeon Silver 4116, 1 GPU, 4 CPUs, 22,528 MB, `preempt` partition): Slurm job 393060,
+[device report](04_qwen_decode_profile/runs/20261019T230855Z_65078a0dbe9b_long_J4OYTT/device.txt).
+A step is one decode forward pass for AR and one verification iteration for ViSpec. The GPU-busy
+fraction is CUDA kernel time divided by decode time. The profiled value is biased low by profiler
+overhead, so the table also gives an estimate that divides the same kernel time by the unprofiled
+decode time.
+
+| Method | Benchmark | GPU-busy, profiled / estimated unprofiled | Kernel launches per step | Launches per output token | Kernel ms per step | Unprofiled ms per output token | Top self-CPU op (profiled ms per step) |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| AR | TextVQA | 0.202 / 0.386 | 1,789 | 1,789 | 14.58 | 37.82 | `cudaLaunchKernel` 12.54 |
+| ViSpec | TextVQA | 0.296 / 0.501 | 2,270 | 719 | 24.95 | 15.83 | `cudaLaunchKernel` 14.35 |
+| AR | COCO Captions | 0.206 / 0.364 | 1,789 | 1,789 | 13.63 | 37.45 | `cudaLaunchKernel` 11.53 |
+| ViSpec | COCO Captions | 0.254 / 0.431 | 2,275 | 669 | 22.50 | 15.47 | `cudaLaunchKernel` 15.10 |
+
+The measurements are these. By the unprofiled estimate, the GPU is idle for at least half of
+each step (61 to 64% for AR, 50 to 57% for ViSpec). The host waits at synchronizations for under
+1 ms per step, and unprofiled step time works out to 21 to 23 µs per kernel launched. Attention
+over the KV cache is 3 to 12% of decode kernel time.
+
+From these we infer that decode is host-bound for both methods, and that ViSpec's gain follows
+from its 2.5 to 2.7 times fewer launches per output token. Visual KV eviction would shorten GPU
+work that is off the critical path, so it is unlikely to reduce decode latency in this harness.
+Its measurable effect should be on memory. The
+[04 README](04_qwen_decode_profile/README.md#results) has the full tables, the top ops and the
+limits.
+
+### LLaVA run conditions (00 and 01)
+
+The latest LLaVA pair (00 and 01) used temperature **0.0 (greedy)**, FP16, and a maximum of
 **1,024 output token IDs, including EOS**. Both launch trees were clean at
 commit `771911bd8665846e9ab8cb698cb22c2929d296b5`.
 
@@ -122,6 +190,20 @@ raw token IDs, reports, logs and launch evidence. Other generated runs remain
 ignored by default. Preserve these snapshots as evidence and use new run folders
 for reruns.
 See the [metrics guide](METRICS.md) for scoring and comparison commands.
+
+The Qwen experiments are submitted with the Ampere helper, one prompt style per job with 02
+and 03 in the same allocation. This is the Week 1 command for the `long` style; use
+`PROMPT_STYLE=short` for the other job:
+
+```bash
+PROMPT_STYLE=long CLUSTER_PARTITION=preempt SBATCH_EXTRA="--cpus-per-task=4 --mem=22G --time=03:00:00" \
+  bash experiment/submit_ampere.sh experiment/02_qwen_autoregressive experiment/03_qwen_vispec
+```
+
+Other resources or a separate job per experiment give a different allocation, which
+`compare_metrics` refuses to pair (see the 02 and 03 READMEs).
+
+See the [Ampere setup guide](AMPERE_SETUP.md) for the GPU pin and partitions.
 
 ## Adding experiments
 

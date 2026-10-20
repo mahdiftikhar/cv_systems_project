@@ -66,7 +66,23 @@ class KVCache:
         return torch.narrow(self.data, 2, 0, self.current_length)
 
 
-def initialize_past_key_values(model):
+def expected_kv_capacity(model):
+    """Token slots a fresh preallocated KV buffer would have for this SpecModel.
+
+    ``model.kv_capacity`` when set, otherwise ``max_position_embeddings`` of the base
+    model's config, or of its ``language_model`` config for wrappers (LLaVA) whose
+    top-level config has no such field. This mirrors the capacity that
+    ``initialize_past_key_values`` gives the same model.
+    """
+    if model.kv_capacity is not None:
+        return model.kv_capacity
+    try:
+        return model.base_model.config.max_position_embeddings
+    except AttributeError:
+        return model.base_model.language_model.config.max_position_embeddings
+
+
+def initialize_past_key_values(model, max_length: int | None = None):
     """
     Initialize past key and value states for a given transformer model.
 
@@ -75,6 +91,8 @@ def initialize_past_key_values(model):
 
     Args:
         model (nn.Module): The transformer model for which past key-value states need to be initialized.
+        max_length (int, optional): Number of token slots to preallocate per layer. ``None`` keeps
+            ``config.max_position_embeddings`` (the original behaviour).
 
     Returns:
         tuple:
@@ -84,6 +102,12 @@ def initialize_past_key_values(model):
     """
     # Extracting configuration from the model
     config = model.config
+    if max_length is None:
+        capacity = config.max_position_embeddings
+    else:
+        capacity = int(max_length)
+        if capacity < 1:
+            raise ValueError(f"KV capacity must be positive, got {max_length}")
     # Initializing the batch size to 1, this can be modified if different batch sizes are required
     batch_size = 1
     # Initializing a tensor to store past keys and values for all layers
@@ -106,7 +130,7 @@ def initialize_past_key_values(model):
                 startnum * 2,
                 batch_size,
                 config.num_key_value_heads,
-                config.max_position_embeddings,
+                capacity,
                 config.hidden_size // config.num_attention_heads,
                 device=startdevice,
                 dtype=model.dtype,
@@ -119,7 +143,7 @@ def initialize_past_key_values(model):
         startnum * 2,
         batch_size,
         config.num_key_value_heads,
-        config.max_position_embeddings,
+        capacity,
         config.hidden_size // config.num_attention_heads,
         device=startdevice,
         dtype=model.dtype,
