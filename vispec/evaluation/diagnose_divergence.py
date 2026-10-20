@@ -107,6 +107,25 @@ def report_run_dir(report_path):
     return Path(summary["run_dir"]).resolve()
 
 
+def refuse_unreproducible_eviction(*runs):
+    """Refuse runs with target-side KV eviction: the stock full-KV model cannot reproduce it.
+
+    A null or absent kv_retention means no eviction. Draft-only sparsity leaves the target
+    model unchanged, so those runs stay diagnosable.
+    """
+    for run in runs:
+        for path in sorted((run / "results").glob("*_test/*/*.runtime.json")):
+            args = json.loads(path.read_text()).get("generation_args") or {}
+            retention = args.get("kv_retention")
+            if retention is not None and retention < 1.0:
+                raise ValueError(
+                    f"Cannot diagnose {run}: kv_retention={retention} evicts target KV "
+                    "entries, and the stock full-KV reference model cannot reproduce "
+                    "eviction, so any divergence it shows would be mislabeled. No "
+                    "diagnosis was run."
+                )
+
+
 def collect_cases(comparison, original_run, draft_run):
     """Mismatches whose report indices point at the two given run folders."""
     original_runs = [report_run_dir(p) for p in comparison["original_reports"]]
@@ -582,10 +601,19 @@ def main(argv=None):
     draft_run = args.draft_run.resolve()
     comparison = json.loads(args.comparison.read_text())
     original_meta, draft_meta = metadata(original_run), metadata(draft_run)
-    if original_meta.get("method") != "autoregressive":
-        raise ValueError(f"{original_run} is not an autoregressive run")
-    if draft_meta.get("method") != "vispec_speculative":
-        raise ValueError(f"{draft_run} is not a ViSpec run")
+    refuse_unreproducible_eviction(original_run, draft_run)
+    if comparison.get("mode", "method") == "sparsity":
+        # Reference and candidate share one method (AR or ViSpec).
+        methods = {original_meta.get("method"), draft_meta.get("method")}
+        if len(methods) != 1 or not methods <= {"autoregressive", "vispec_speculative"}:
+            raise ValueError(
+                f"Sparsity-mode runs must share one method, got {sorted(methods, key=repr)}"
+            )
+    else:
+        if original_meta.get("method") != "autoregressive":
+            raise ValueError(f"{original_run} is not an autoregressive run")
+        if draft_meta.get("method") != "vispec_speculative":
+            raise ValueError(f"{draft_run} is not a ViSpec run")
     prompt_style = original_meta.get("prompt_style")
     if not prompt_style or prompt_style != draft_meta.get("prompt_style"):
         raise ValueError(

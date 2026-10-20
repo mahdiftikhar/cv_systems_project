@@ -362,6 +362,42 @@ Record verified per-benchmark results in the experiment guides and register,
 with hardware and artifact links. Inspect output counts and quality and repeat
 runs before drawing broader conclusions.
 
+### Sparsity mode
+
+`--mode sparsity` compares a sparsity arm (`--draft`, the candidate) with the same
+decoding method at 100% retention (`--original`, the reference). The default,
+`--mode method`, is the autoregressive vs ViSpec comparison above. The settings
+below are read from each benchmark's `runtime.json` `generation_args`. An absent key
+and an explicit null mean the same thing, "not set", and that value differs from any
+explicit value.
+
+- **Method mode:** `kv_layout`, `kv_retention`, `kv_policy`, `draft_retention` and
+  `draft_policy` must match across every compared report. Week 1 reports have none of
+  these keys, so they still compare. A 1.0 arm does not pair with a no-flag report here.
+- **Sparsity mode:** both groups must have the same `method` (autoregressive or
+  `vispec_speculative`). `kv_layout`, the draft-tree settings, `prompt_style` and all
+  the other guarded settings must match. The four sparsity settings may differ only
+  between the groups, never within one.
+- **Reference rule:** the reference must have `kv_retention` and `draft_retention` each
+  equal to 1.0 or null (null counts as 1.0, since 1.0 arms are token-identical to the
+  no-flag run). The reference may carry an explicit policy, so a 0.5 arm can be
+  compared for latency with the same-policy 1.0 arm. The no-flag reference anchors the
+  token-identity check.
+- **Output:** `comparison.json` gains a `mode` field and a `sparsity` block with each
+  side's settings per benchmark. Other keys are unchanged. In sparsity mode the
+  `original` columns are the reference and the `draft` columns the candidate.
+
+### Diagnosing divergences
+
+`diagnose_divergence` teacher-forces the stock full-KV Hugging Face model, which
+cannot reproduce target-side KV eviction. It refuses any comparison in which either
+run has a non-null `kv_retention` below 1.0, in both modes, before it loads a model,
+and it labels no divergence. Draft-only arms (`draft_retention` below 1.0 with
+`kv_retention` null or 1.0) stay diagnosable because the target model is unchanged.
+For a sparsity-mode comparison, `--original-run` is the reference and `--draft-run`
+the candidate, and both must share one method; the "ar" and "vispec" labels in the
+output then mean reference and candidate.
+
 ## Qwen experiments (02 and 03)
 
 Experiments 02 and 03 use the unified evaluator `vispec.evaluation.evaluate` and
