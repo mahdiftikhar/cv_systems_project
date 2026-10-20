@@ -200,7 +200,7 @@ run's kernel time by the phase-1 decode time.
 
 | Method | Benchmark | Steps (3 samples) | GPU-busy, profiled | GPU-busy, estimated unprofiled | Kernel launches per step | Kernel launches per output token | CUDA kernel time per step (ms) | Host time in torch ops per step (ms, profiled) | Host sync wait per step (ms, profiled) | Host outside torch per step (ms, profiled) |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| AR | TextVQA | 669 | 0.202 | 0.386 | 1,789 | 1,789 | 14.58 | 50.69 | 0.72 | 21.48 |
+| AR | TextVQA | 669 | 0.202 | 0.385 | 1,789 | 1,789 | 14.58 | 50.69 | 0.72 | 21.48 |
 | ViSpec | TextVQA | 220 | 0.296 | 0.501 | 2,270 | 719 | 24.95 | 59.92 | 0.94 | 24.46 |
 | AR | COCO Captions | 295 | 0.206 | 0.364 | 1,789 | 1,789 | 13.63 | 46.94 | 0.75 | 19.35 |
 | ViSpec | COCO Captions | 92 | 0.254 | 0.431 | 2,275 | 669 | 22.50 | 62.49 | 0.91 | 25.98 |
@@ -229,7 +229,7 @@ step. The top 15 of each, and the top 15 kernels by name, are in the summaries.
 
 | Rank | AR TextVQA, self-CPU | AR COCO, self-CPU | AR TextVQA, CUDA | AR COCO, CUDA |
 | ---: | --- | --- | --- | --- |
-| 1 | `cudaLaunchKernel` 12.54 | `cudaLaunchKernel` 11.53 | `aten::mm` 8.88 | `aten::mm` 9.00 |
+| 1 | `cudaLaunchKernel` 12.54 | `cudaLaunchKernel` 11.53 | `aten::mm` 8.88 | `aten::mm` 8.99 |
 | 2 | `aten::mm` 3.78 | `aten::mm` 3.55 | `aten::copy_` 1.45 | `aten::addmm` 1.16 |
 | 3 | `aten::mul` 3.40 | `aten::mul` 3.21 | `aten::addmm` 1.17 | `aten::copy_` 0.99 |
 | 4 | `aten::addmm` 2.93 | `aten::addmm` 2.73 | `aten::_flash_attention_forward` 1.01 | `aten::mul` 0.63 |
@@ -238,7 +238,7 @@ step. The top 15 of each, and the top 15 kernels by name, are in the summaries.
 | Rank | ViSpec TextVQA, self-CPU | ViSpec COCO, self-CPU | ViSpec TextVQA, CUDA | ViSpec COCO, CUDA |
 | ---: | --- | --- | --- | --- |
 | 1 | `cudaLaunchKernel` 14.35 | `cudaLaunchKernel` 15.10 | `aten::mm` 14.62 | `aten::mm` 14.65 |
-| 2 | `aten::mm` 4.36 | `aten::mm` 4.60 | `aten::_efficient_attention_forward` 2.97 | `aten::addmm` 1.61 |
+| 2 | `aten::mm` 4.36 | `aten::mm` 4.60 | `aten::_efficient_attention_forward` 2.97 | `aten::addmm` 1.60 |
 | 3 | `aten::mul` 3.58 | `aten::mul` 3.76 | `aten::copy_` 1.84 | `aten::copy_` 1.32 |
 | 4 | `aten::addmm` 3.43 | `aten::addmm` 3.57 | `aten::addmm` 1.62 | `aten::_efficient_attention_forward` 1.11 |
 | 5 | `aten::copy_` 3.01 | `aten::copy_` 3.16 | `aten::mul` 0.93 | `aten::mul` 0.91 |
@@ -250,17 +250,17 @@ instruments that call, so this share overstates its unprofiled cost.
 
 The measurements above are direct. The explanations in this section are inferences from them.
 
-**Decode is host-bound.** In an unprofiled AR step the GPU runs kernels for at most about 36 to
+**Decode is probably host-bound (inference).** In an unprofiled AR step the GPU runs kernels for at most about 36 to
 39% of the time, and in a ViSpec iteration for 43 to 50%. The host waits on the GPU at
 synchronization points for only 0.7 to 0.9 ms per step, about 1% of the profiled decode time, so
 the GPU finishes each step's work soon after the host issues the last kernel. Dividing unprofiled
-step time by kernels per step gives 20.9 to 23.0 µs of host time per kernel, nearly the same for
+step time by kernels per step gives 20.9 to 23.0 µs of step time per kernel launched, nearly the same for
 both methods and both benchmarks. The AR step issues exactly 1,789 kernels for TextVQA prompts
 (1,084 to 1,346 tokens) and COCO prompts (398 tokens), so the host cost per step does not depend on
 context length at these sizes. The GPU side is also above the weight-read floor. An AR step's
 13.6 to 14.6 ms of kernels is 1.7 to 1.8 times the roughly 8 ms needed to read the weights once,
-and the batch-1 GEMMs (`aten::mm`) account for about 9 ms of it. A faster GPU would not remove the
-host's cost of issuing the step, which is close to the full 38 ms.
+and the batch-1 GEMMs (`aten::mm`) account for about 9 ms of it. If the loop is host-bound, a faster GPU would not remove
+the host's cost of issuing the step, which would then be close to the full 38 ms.
 
 **The per-step `.item()` synchronization is not the bottleneck.** It costs well under 1 ms of
 waiting per step. The time goes into issuing about 9,300 op calls and 1,789 kernels per step from
@@ -274,11 +274,15 @@ kernels per committed token rather than from less GPU work.
 **Extra host cost lengthens the step.** The post-profiler run repeats the same GPU work and
 gives the same outputs, but with CUPTI initialized in the process. It lengthens the decode step by
 8.4 (COCO) and 11.9 ms (TextVQA) for AR, and by 10.9 and 9.8 ms for ViSpec, which is 4.3 to 6.7 µs
-per kernel launched. A GPU-bound loop would have absorbed that extra host time in idle GPU time.
+per kernel launched. A GPU-bound loop would have absorbed that extra host time in host sync wait, leaving the step time unchanged.
 
 **What this means for visual sparsity.** Attention over the KV cache is a small part of the
-decode-range GPU work. It is 1.01 ms per AR step for TextVQA and 0.43 ms for COCO (7% and 3% of
-kernel time), and 2.97 and 1.11 ms per ViSpec iteration. That GPU work is off the critical path,
+decode-range GPU work. The attention kernel takes 1.01 ms per AR step for TextVQA and 0.43 ms for COCO (7% and 3% of
+kernel time), and 2.97 and 1.11 ms per ViSpec iteration. The attention kernel alone understates the work
+that grows with context, because the `repeat_kv` copies grow with it too: AR `aten::copy_` rises from 0.99 ms
+per step for COCO to 1.45 ms for TextVQA. Adding that 0.46 ms to the attention kernel gives about 1.47 ms, which is
+closer to 10% than 7% of the AR TextVQA kernel time. Attributing the `aten::copy_` growth to `repeat_kv` is an
+inference from the op table. That GPU work is off the critical path, if decode is host-bound as inferred above,
 and evicting visual KV entries does not reduce the number of kernels. Target-side eviction is
 therefore unlikely to shorten decode latency measurably in this eager harness. Its measurable
 effect should be on memory. Latency would move with fewer kernel launches or cheaper launches,
@@ -288,7 +292,7 @@ for example CUDA graphs or fused kernels. Neither was tested here.
 
 The prefill range looks different. For TextVQA, kernels occupy 77% (AR) and 79% (ViSpec) of it,
 and the host spends 68 to 72% of it waiting at synchronizations. About 8,600 synchronizations
-happen per TextVQA prefill. For COCO's smaller prompts, the busy fraction is 0.58 and 0.57. This
+happen per TextVQA prefill. For COCO's smaller prompts, the busy fraction is 0.58 and 0.56. This
 suggests that the GPU, not the host, limits TextVQA prefill. Only the decode range has op tables,
 so this profile does not attribute prefill time to ops. Target-side eviction happens after prefill
 and cannot change TTFT.
