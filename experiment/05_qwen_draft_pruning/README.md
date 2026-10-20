@@ -57,6 +57,8 @@ Each arm creates `runs/<UTC>_<commit12>_<style>_r<retention>_<policy>_XXXXXX/` w
 set plus `kv_layout`, the four sparsity settings and `arm=<spec>` in `metadata.txt`. Shared code is in
 [`../qwen_arm_runner.sh`](../qwen_arm_runner.sh).
 
+A failed arm is recorded and the remaining arms still run, but a failed benchmark stops that arm's remaining benchmarks; the runner exits 1 if any arm failed, and `run_sequence.sbatch` still continues to the next experiment.
+
 ## How to run
 
 Run the references first, then the arms, in one job so the allocation matches:

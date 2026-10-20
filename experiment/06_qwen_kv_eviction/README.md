@@ -56,6 +56,8 @@ method suffix appears only when the spec gives one. `metadata.txt` records `meth
 (`vispec_speculative` or `autoregressive`), `kv_layout`, the four sparsity settings and `arm=<spec>`.
 Shared code is in [`../qwen_arm_runner.sh`](../qwen_arm_runner.sh).
 
+A failed arm is recorded and the remaining arms still run, but a failed benchmark stops that arm's remaining benchmarks; the runner exits 1 if any arm failed, and `run_sequence.sbatch` still continues to the next experiment.
+
 ## How to run
 
 References first, then arms, in one job so the allocation matches:

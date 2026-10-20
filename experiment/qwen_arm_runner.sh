@@ -4,6 +4,9 @@
 # arms (space-separated <retention>:<policy>[:<method>]), prompt_style, and has done
 # `set -euo pipefail` and `cd "$repo_dir"`.
 # Each arm gets its own run folder with the full launch evidence and its own EXIT report.
+# Failure: a failed arm records a failure and the remaining arms still run; a failed benchmark stops that
+# arm's remaining benchmarks; the runner exits 1 if any arm failed; run_sequence.sbatch then continues
+# to the next experiment.
 
 qwen_arm_usage() {
     echo "Usage: PROMPT_STYLE={long|short} ${1}_ARMS=\"<retention>:<policy>${2} ...\" [BENCH_DIR=/absolute/path] [PYTHON_BIN=python] $3" >&2
@@ -182,7 +185,8 @@ qwen_run_arm() {
     bash "$run_dir/check_cuda.sh" "$python_bin"
     export PYTHONUNBUFFERED=1
 
-    # Stop on the first failure so partial runs cannot appear successful.
+    # A failed benchmark stops this arm's remaining benchmarks (set -e in this subshell); qwen_run_arms
+    # still runs the other arms.
     local benchmark
     for benchmark in "${benchmarks[@]}"; do
         local cmd=("$python_bin" -m vispec.evaluation.evaluate
