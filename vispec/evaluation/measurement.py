@@ -17,6 +17,12 @@ EVICTION_FIELDS = (
     "kv_evicted_tokens",
     "kv_score_window",
 )
+# Draft-side visual pruning fields (image tokens summed over the prompt's images), added to a
+# record only when draft pruning ran.
+DRAFT_PRUNING_FIELDS = (
+    "draft_image_tokens",
+    "draft_kept_image_tokens",
+)
 
 
 def kv_bytes_per_token(config, dtype) -> int:
@@ -95,6 +101,7 @@ class GenerationMeasurement(FirstTokenTimer):
         stop,
         kv_tokens: int | None = None,
         kv_eviction: dict | None = None,
+        draft_pruning: dict | None = None,
     ):
         """Read counters after elapsed() so reporting overhead is excluded.
 
@@ -105,7 +112,10 @@ class GenerationMeasurement(FirstTokenTimer):
         ``kv_eviction`` (target KV eviction runs only) adds the top-level fields
         ``kv_prompt_tokens``, ``kv_kept_prompt_tokens``, ``kv_evicted_tokens`` and
         ``kv_score_window`` (prompt tokens after the last image token; the attention policy
-        scores over them). Without it the record is unchanged.
+        scores over them). ``draft_pruning`` (draft pruning runs only) then adds
+        ``draft_image_tokens`` and ``draft_kept_image_tokens``, the image tokens the draft's
+        image adaptor had and saw, summed over the prompt's images. Without either the
+        record is unchanged.
         """
         ids = output_ids.tolist()
         eos = tokenizer.eos_token_id
@@ -171,6 +181,9 @@ class GenerationMeasurement(FirstTokenTimer):
         if kv_eviction is not None:
             for field in EVICTION_FIELDS:
                 record[field] = int(kv_eviction[field])
+        if draft_pruning is not None:
+            for field in DRAFT_PRUNING_FIELDS:
+                record[field] = int(draft_pruning[field])
         return record
 
 

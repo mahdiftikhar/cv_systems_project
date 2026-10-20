@@ -24,7 +24,7 @@ from tqdm import tqdm
 from ..model.autoregressive import autoregressive_generate
 from ..model.kv_cache import KV_LAYOUTS
 from ..model.sparsity import POLICIES, RETENTIONS, SparsityConfig
-from ..model.spec_model_ours import SpecModel, check_kv_sparsity
+from ..model.spec_model_ours import SpecModel, check_draft_sparsity, check_kv_sparsity
 from .benchmarks import (
     BENCHMARK_NAMES,
     PROMPT_STYLES,
@@ -125,6 +125,26 @@ def add_generation_arguments(parser):
         "stride) or 'attention' (top prefill attention from the prompt tokens after the "
         "last image token). Default spatial once eviction is on. Needs --kv-layout compact.",
     )
+    # Draft-side visual pruning, after --kv-policy so the earlier keys keep their order.
+    # Leaving out both flags runs the draft unpruned (no draft_sparsity). Giving either one
+    # turns pruning on, with the other at its default (retention 1.0, policy spatial).
+    parser.add_argument(
+        "--draft-retention",
+        type=float,
+        choices=RETENTIONS,
+        default=None,
+        help="Fraction of each image's tokens the draft's image adaptor sees before it "
+        "compresses them to --num-q queries (default 1.0 once pruning is on). "
+        "--method vispec only; any layout, and combines with --kv-retention.",
+    )
+    parser.add_argument(
+        "--draft-policy",
+        choices=POLICIES,
+        default=None,
+        help="Which image tokens the draft's image adaptor sees: 'spatial' (uniform raster "
+        "stride) or 'attention' (top attention from the adaptor's own learned queries). "
+        "Default spatial once pruning is on. --method vispec only.",
+    )
 
 
 def kv_sparsity_config(args):
@@ -142,15 +162,40 @@ def kv_sparsity_config(args):
     return config
 
 
+def draft_sparsity_config(args):
+    """The ``SparsityConfig`` for draft-side visual pruning, or None when neither flag is given.
+
+    Raises ValueError when either flag is given with ``--method autoregressive`` (also at
+    1.0), which has no draft.
+    """
+    if args.draft_retention is None and args.draft_policy is None:
+        return None
+    if args.method != "vispec":
+        raise ValueError(
+            f"--draft-retention/--draft-policy prune the ViSpec draft; --method {args.method} "
+            "has no draft"
+        )
+    config = SparsityConfig(
+        retention=1.0 if args.draft_retention is None else args.draft_retention,
+        policy="spatial" if args.draft_policy is None else args.draft_policy,
+    )
+    check_draft_sparsity(config)
+    return config
+
+
 def check_arguments(parser, args):
     if args.method == "autoregressive" and args.temperature > 1e-5:
         parser.error("--method autoregressive is greedy only; use --temperature 0.0")
     if args.num_samples < 1:
         parser.error("--num-samples must be positive")
-    # Fails before any model loads; generation_args then records the effective settings.
+    # Both sparsity settings fail before any model loads, and they combine (target eviction
+    # plus draft pruning). generation_args then records the effective settings.
     config = kv_sparsity_config(args)
     if config is not None:
         args.kv_retention, args.kv_policy = config.retention, config.policy
+    draft = draft_sparsity_config(args)
+    if draft is not None:
+        args.draft_retention, args.draft_policy = draft.retention, draft.policy
 
 
 def parse_args(argv=None):
@@ -176,6 +221,7 @@ def answer_text(output_ids, tokenizer):
 def generate(model, args, model_inputs, on_first_token=None, generation_stats=None):
     """Run one generation; returns (ids [1, L], new_token, idx, acceptance, decode_time)."""
     kv_sparsity = kv_sparsity_config(args)
+    draft_sparsity = draft_sparsity_config(args)
     if args.method == "vispec":
         return model.specgenerate(
             **model_inputs,
@@ -187,6 +233,7 @@ def generate(model, args, model_inputs, on_first_token=None, generation_stats=No
             generation_stats=generation_stats,
             return_decode_time=True,
             kv_sparsity=kv_sparsity,
+            draft_sparsity=draft_sparsity,
         )
     stats = {} if generation_stats is None else generation_stats
     output_ids, new_token, steps = autoregressive_generate(
@@ -343,6 +390,7 @@ def run(args):
             generation_stats,
             kv_tokens=kv_tokens,
             kv_eviction=generation_stats.get("kv_eviction"),
+            draft_pruning=generation_stats.get("draft_pruning"),
         )
         choice = {
             "index": 0,

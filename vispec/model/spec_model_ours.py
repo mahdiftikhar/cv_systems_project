@@ -71,6 +71,40 @@ def check_kv_sparsity(kv_sparsity, kv_layout):
         )
 
 
+def check_draft_sparsity(draft_sparsity):
+    """Raise ValueError unless ``draft_sparsity`` is None or a SparsityConfig.
+
+    Draft-side pruning needs no particular KV layout and composes with ``kv_sparsity``.
+    """
+    if draft_sparsity is not None and not isinstance(draft_sparsity, SparsityConfig):
+        raise ValueError(
+            f"draft_sparsity must be a SparsityConfig or None, got {draft_sparsity!r}"
+        )
+
+
+@contextlib.contextmanager
+def draft_pruning(spec_layer, config):
+    """Prune the draft's image-adaptor input with ``config`` inside the block.
+
+    Sets ``spec_layer.draft_sparsity`` to ``config`` and ``spec_layer.draft_image_counts`` to
+    a fresh count dict, and sets both back to None on exit, also after an error. Yields the
+    dict: ``draft_image_tokens`` and ``draft_kept_image_tokens``, summed over the images that
+    the draft's image branch (its prefill forward) adapted in the block. ``None`` yields None
+    and changes nothing.
+    """
+    if config is None:
+        yield None
+        return
+    counts = {"draft_image_tokens": 0, "draft_kept_image_tokens": 0}
+    spec_layer.draft_sparsity = config
+    spec_layer.draft_image_counts = counts
+    try:
+        yield counts
+    finally:
+        spec_layer.draft_sparsity = None
+        spec_layer.draft_image_counts = None
+
+
 class TargetKVEviction:
     """Target-side visual KV eviction for one generation (compact layout, Qwen2.5-VL).
 
@@ -417,6 +451,7 @@ class SpecModel(nn.Module):
         on_first_token=None,
         generation_stats=None,
         kv_sparsity=None,
+        draft_sparsity=None,
         **kwargs,
     ):
         """ViSpec generation.
@@ -424,12 +459,19 @@ class SpecModel(nn.Module):
         ``kv_sparsity`` (a ``SparsityConfig``, compact layout only) evicts image positions
         from the target KV cache once, after ``initialize_tree``: the first token and the
         first draft tree come from the full prefill. ``None`` evicts nothing.
+
+        ``draft_sparsity`` (a ``SparsityConfig``, any layout) reduces each image's embeddings
+        to the kept tokens before the draft's image adaptor compresses them to ``num_q``
+        rows. Only the draft's prefill forward (in ``initialize_tree``) takes the image
+        branch; later draft calls reuse the draft's own KV. The target is unchanged.
+        ``None`` prunes nothing.
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
                 "You must specify exactly one of input_ids or inputs_embeds"
             )
         check_kv_sparsity(kv_sparsity, self.kv_layout)
+        check_draft_sparsity(draft_sparsity)
 
         if is_llama3:
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
@@ -662,7 +704,12 @@ class SpecModel(nn.Module):
 
         # Score capture (attention policy) is on for this block only. initialize_tree makes
         # exactly one target call, the prefill; the draft has its own attention modules.
-        with eviction.prefill_capture() if eviction is not None else contextlib.nullcontext():
+        # Draft pruning is on for the same block: it holds the draft's prefill forward, the
+        # only draft call that takes the image branch.
+        capture = (
+            eviction.prefill_capture() if eviction is not None else contextlib.nullcontext()
+        )
+        with capture, draft_pruning(self.spec_layer, draft_sparsity) as draft_counts:
             (
                 draft_tokens,
                 retrieve_indices,
@@ -682,6 +729,8 @@ class SpecModel(nn.Module):
                 on_first_token=on_first_token,
                 **kwargs,
             )
+        if draft_counts is not None and generation_stats is not None:
+            generation_stats["draft_pruning"] = dict(draft_counts)
         new_token = 0
 
         if return_acceptance_len:
