@@ -169,9 +169,11 @@ Qwen hazards:
   EOS handling before comparing text between methods.
 - The draft's RoPE table holds 8,192 positions. Prompts longer than that index past it, which
   matters for Re:Verse page windows (about 6 pages each).
-- The KV cache is preallocated at 16,384 tokens (not the model's 128k default), and prefill slimming
-  is on in every arm. Draft-side image compression leaves `num_q` queries, so pruning gains are
-  mostly on the target side.
+- The KV cache is preallocated at 16,384 tokens (not the model's 128k default) in experiments 02/03
+  (`fixed` layout). Experiments 05+ use `compact`: a per-sample buffer of kept prompt +
+  max_new_tokens + total_token + 11 slots, so eviction changes `kv_tokens` and the measured peaks.
+  Prefill slimming is on in every arm. Draft-side image compression leaves `num_q` queries, so
+  pruning gains are mostly on the target side.
 - `kv_live_bytes` is a whole-model figure repeated per device entry. CIDEr-D IDF is computed over the
   100-image subset, so scores are subset measurements.
 

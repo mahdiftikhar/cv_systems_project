@@ -304,8 +304,8 @@ A validated equivalent-output speedup remains **unestablished**, because the out
 - Decoding is likely host-bound. The paired AR arm takes about 38 ms per token (mean TPOT in
   the 02 README), while reading the weights once per token would take about 8 to 9 ms: the
   6.17 GB of bf16 language-model weights at the A6000's 768 GB/s peak bandwidth is 8.0 ms. The
-  host is a Xeon Silver 4114 with 4 allocated cores. This is inferred from these numbers and was
-  not profiled. A profiling pass is planned before Week 3.
+  host is a Xeon Silver 4114 with 4 allocated cores. This was inferred from these numbers;
+  experiment 04 then profiled decoding (see `experiment/04_qwen_decode_profile/README.md`).
 - The COCO subset was not checked against the inherited `HuggingFaceM4/COCO` loader's subset
   (see the data section).
 - ViSpec output equivalence with 02 is checked from saved token IDs and is not assumed. `compare_metrics` requires `method=vispec_speculative` here and `method=autoregressive` in 02, with matching `prompt_style`, `slim_prefill`, `kv_capacity`, `num_samples` and `max_new_tokens`.

@@ -383,6 +383,12 @@ explicit value.
   no-flag run). The reference may carry an explicit policy, so a 0.5 arm can be
   compared for latency with the same-policy 1.0 arm. The no-flag reference anchors the
   token-identity check.
+- **Same Slurm job:** every report in both groups must have a non-empty `slurm_job_id`
+  in its `metadata.txt` (the placeholder `unset` counts as missing), all equal, and equal
+  `slurm_restart_count` values (absent counts as 0). Otherwise `compare_metrics` raises
+  `ValueError`. Latency and memory ratios between arms are only controlled within one
+  allocation: the runtime signature (GPU, affinity, revision) can match across jobs.
+  Method mode does not apply this check, because the LLaVA 00/01 pair spans two jobs.
 - **Output:** `comparison.json` gains a `mode` field and a `sparsity` block with each
   side's settings per benchmark. Other keys are unchanged. In sparsity mode the
   `original` columns are the reference and the `draft` columns the candidate.
@@ -402,8 +408,11 @@ output then mean reference and candidate.
 
 Experiments 02 and 03 use the unified evaluator `vispec.evaluation.evaluate` and
 add the measurements below. The definitions above still apply. These fields are
-saved per question in `results/*/test.jsonl`, and `report_metrics` does not yet
-aggregate the phase peaks or live KV into `summary.json`.
+saved per question in `results/*/test.jsonl`. `report_metrics` aggregates the phase peaks
+(GiB, largest over devices per question), `kv_tokens` and live KV (MiB) into a per-benchmark
+`memory` block of `summary.json` (distribution plus `max`, over the questions that carry the
+field; `count` shows how many). The KV statements below
+are scoped to the `fixed` layout (experiments 02 and 03) unless they say `compact`.
 
 ### CIDEr-D
 
@@ -425,15 +434,54 @@ draft tree, so those count toward the decode-phase peak.
 
 ### Live KV (`kv_tokens`, `kv_live_bytes`)
 
-`kv_tokens` is the target KV cache length when generation ends. It equals input
-plus output tokens minus one for the autoregressive arm, because the last
-generated token is never fed back, and input plus output tokens for ViSpec.
+`kv_tokens` is the target KV cache length when generation ends. In the `fixed` layout
+it equals input plus output tokens minus one for the autoregressive arm, because the
+last generated token is never fed back, and input plus output tokens for ViSpec.
 `kv_live_bytes` is `kv_tokens` times the bytes one token occupies across all
-decoder layers (layers × 2 × KV heads × head dimension × dtype bytes). It is
+decoder layers (layers x 2 x KV heads x head dimension x dtype bytes). It is
 arithmetic, not an allocator measurement. It is a whole-model figure, so each
-device entry repeats it and it must not be summed across GPUs. The preallocated
-buffer holds 16,384 tokens whatever `kv_tokens` is, so live KV does not change
-the measured peaks.
+device entry repeats it and it must not be summed across GPUs. In the `fixed` layout
+the preallocated buffer holds 16,384 tokens whatever `kv_tokens` is, so live KV does
+not change the measured peaks.
+
+### Compact KV layout (experiments 05 and 06)
+
+`--kv-layout compact` sizes the target KV buffer per sample, so live KV can change the
+measured peaks. Per sample (`T` = `total_token`; the tree adds `T` slots plus one):
+
+- Prefill buffer: prompt tokens + 10 slots for the autoregressive arm, prompt tokens +
+  `T` + 1 + 10 for ViSpec.
+- After prefill the cache is compacted into a new buffer of capacity kept prompt tokens
+  + `max_new_tokens` + `T` + 1 + 10 slots (`kv_cache.compact_for_decode`). The kept prompt
+  is every prompt token minus the evicted image tokens, so a 1.0 arm keeps the whole
+  prompt. The same slack applies to both arms, so AR and ViSpec buffers match.
+- The `fixed` rule that live KV cannot move the peaks no longer holds.
+
+`kv_tokens` under the compact layout is the physical cache length at the end: kept
+prompt tokens + output tokens (minus 1 for the autoregressive arm), not input + output.
+Eviction lowers it by `kv_evicted_tokens`, so `kv_tokens` = (input + output [- 1]) -
+`kv_evicted_tokens`. For example, long TextVQA ViSpec at 0.5 spatial: 1062.9 - 489.2 +
+325.93 = 899.61 (mean input, mean evicted, mean output; see the 06 README).
+
+The decode-phase peak includes the compaction transient, when the prefill-sized
+buffer and the new buffer exist together. Steady-state decoding holds only the new
+buffer. The transient is most visible for the autoregressive arm, whose decode peak is
+then set by compaction and not by decoding. `decode_time` also includes compaction and
+selection of the kept positions in these arms.
+
+Per-question fields written by the eviction and draft-pruning arms (all counts of
+tokens, no units beyond tokens; absent in other runs):
+
+- `kv_prompt_tokens`: prompt tokens in the target KV cache before eviction (the input
+  length, text and image).
+- `kv_kept_prompt_tokens`: prompt tokens still in the cache after eviction.
+- `kv_evicted_tokens`: `kv_prompt_tokens` - `kv_kept_prompt_tokens`.
+- `kv_score_window`: prompt tokens after the last image token. The attention policy
+  scores image tokens by the attention these tokens pay them; 0 without image tokens.
+- `draft_image_tokens`: image tokens the draft's image adaptor received, summed over
+  the prompt's images, before draft-side pruning.
+- `draft_kept_image_tokens`: image tokens the adaptor saw after pruning, summed the
+  same way. Equal to `draft_image_tokens` at retention 1.0.
 
 ### Decode time
 
@@ -442,7 +490,8 @@ the decoding loop. ViSpec's `decode_time` starts after `initialize_tree` returns
 while TTFT ends at the first target token inside it. The draft prefill and the
 first draft tree are therefore in neither TTFT nor `decode_time`; in Week 1 that
 window averaged about 12 ms per question. Use latency and TTFT to compare the
-arms.
+arms. In the compact layout `decode_time` also contains compaction and selection
+(see above).
 
 ### Comparison refusals
 

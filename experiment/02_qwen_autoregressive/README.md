@@ -226,8 +226,8 @@ Units: latency is wall time per question in seconds for prefill plus decoding, e
 - Decoding is likely host-bound. AR decoding takes about 38 ms per token (mean TPOT in the
   results above), while reading the weights once per token would take about 8 to 9 ms: the
   6.17 GB of bf16 language-model weights at the A6000's 768 GB/s peak bandwidth is 8.0 ms. The
-  host is a Xeon Silver 4114 with 4 allocated cores. This is inferred from these numbers and was
-  not profiled. A profiling pass is planned before Week 3.
+  host is a Xeon Silver 4114 with 4 allocated cores. This was inferred from these numbers;
+  experiment 04 then profiled decoding (see `experiment/04_qwen_decode_profile/README.md`).
 - The COCO subset was not checked against the inherited `HuggingFaceM4/COCO` loader's subset
   (see the data section).
 - This arm uses no draft tree, so draft settings do not apply. `compare_metrics` requires `method=autoregressive` here and matching `prompt_style`, `slim_prefill`, `kv_capacity`, `num_samples` and `max_new_tokens` in the paired 03 run.
