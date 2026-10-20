@@ -5,7 +5,7 @@ import json
 import statistics
 from pathlib import Path
 
-from .report_metrics import BENCHMARKS, distribution, fmt
+from .report_metrics import BENCHMARKS, distribution, fmt, memory_summary
 from .scoring import evidence
 
 # Run settings that must match across every compared report. They are read from each
@@ -311,6 +311,24 @@ def compare(original_paths, draft_paths, output_dir):
                 else None
             )
 
+        def memory_mean(group_maps, field):
+            # Per-run mean of the field over matched turns, then the mean across runs.
+            run_means = []
+            for rows in group_maps:
+                block = memory_summary([rows[key] for key in common])
+                if field in block:
+                    run_means.append(block[field]["mean"])
+            return statistics.mean(run_means) if run_means else None
+
+        memory_ratio = {}
+        for name, field in (
+            ("decode_peak_allocated", "decode_peak_allocated_gib"),
+            ("kv_live", "kv_live_mib"),
+        ):
+            a = memory_mean(maps[: len(original)], field)
+            b = memory_mean(maps[len(original) :], field)
+            memory_ratio[name] = b / a if a and b is not None else None
+
         agreement = []
         for original_map in maps[: len(original)]:
             for draft_map in maps[len(original) :]:
@@ -374,6 +392,7 @@ def compare(original_paths, draft_paths, output_dir):
             if not issues
             else None,
             "ttft_ratio_original_over_draft": ratio("run_mean_ttft_s"),
+            "memory_ratio_draft_over_original": memory_ratio,
             "answer_agreement_rate": statistics.mean(agreement) if agreement else None,
             "token_agreement": tokens,
             "greedy_correctness_validated": (
@@ -408,6 +427,16 @@ def compare(original_paths, draft_paths, output_dir):
             f"| {benchmark} | {row['matched_turns_per_run']} | {fmt(row['original']['run_mean_latency_s']['mean'])} | "
             f"{fmt(row['draft']['run_mean_latency_s']['mean'])} | {fmt(row['latency_ratio_original_over_draft'])} | "
             f"{fmt(row['controlled_latency_speedup'])} | {fmt(row['answer_agreement_rate'])} | {fmt(row['quality_delta_percentage_points'])} |"
+        )
+    lines += [
+        "",
+        "| Benchmark | Decode peak ratio (draft/original) | Live KV ratio (draft/original) |",
+        "| --- | ---: | ---: |",
+    ]
+    for benchmark, row in result["benchmarks"].items():
+        ratios = row["memory_ratio_draft_over_original"]
+        lines.append(
+            f"| {benchmark} | {fmt(ratios['decode_peak_allocated'])} | {fmt(ratios['kv_live'])} |"
         )
     lines += [
         "",

@@ -136,6 +136,21 @@ Peak allocated memory is the highest live PyTorch GPU allocation after warmup, i
 resident model and generation state. It is reported separately for each visible GPU in
 GiB. We measure it to assess the GPU capacity required by each decoding method.
 
+### Phase memory and live KV (`memory` block)
+
+Each benchmark in `summary.json` has a `memory` block with four fields: `prefill_peak_allocated_gib`
+(GiB, bytes / 2**30), `decode_peak_allocated_gib` (GiB), `kv_live_mib` (MiB, bytes / 2**20) and
+`kv_tokens` (tokens). Each field is a distribution over turns (`count`, `mean`, `median`, `p95`,
+`stdev`) plus `max`. The prefill and decode peaks come from the per-device `gpu_memory` entries and
+take the largest value across visible devices for a turn. `kv_live_bytes` and `kv_tokens` are
+whole-model figures repeated on every device entry, so each is counted once per turn. Turns without
+a field (LLaVA runs, older records, or a null phase peak) are excluded and `count` shows how many
+remain. A field with no turns is omitted, so a LLaVA report has an empty `memory` block.
+`gpu_memory_by_visible_device` is unchanged. `comparison.json` adds, per benchmark,
+`memory_ratio_draft_over_original` with `decode_peak_allocated` and `kv_live` entries. Each is the
+draft mean divided by the original mean (per-run means over matched turns, averaged across runs),
+or null when a side has no data.
+
 ### Peak reserved GPU memory
 
 Peak reserved memory is the highest amount held by the PyTorch allocator after warmup,
