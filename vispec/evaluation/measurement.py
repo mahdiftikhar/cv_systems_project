@@ -10,6 +10,14 @@ import torch
 
 from .timing import FirstTokenTimer
 
+# Target KV eviction fields, added to a record only when eviction ran.
+EVICTION_FIELDS = (
+    "kv_prompt_tokens",
+    "kv_kept_prompt_tokens",
+    "kv_evicted_tokens",
+    "kv_score_window",
+)
+
 
 def kv_bytes_per_token(config, dtype) -> int:
     """Bytes of key plus value cache one token occupies across all decoder layers."""
@@ -80,7 +88,13 @@ class GenerationMeasurement(FirstTokenTimer):
         return self.duration
 
     def finish(
-        self, output_ids, tokenizer, reported_tokens, stop, kv_tokens: int | None = None
+        self,
+        output_ids,
+        tokenizer,
+        reported_tokens,
+        stop,
+        kv_tokens: int | None = None,
+        kv_eviction: dict | None = None,
     ):
         """Read counters after elapsed() so reporting overhead is excluded.
 
@@ -88,6 +102,10 @@ class GenerationMeasurement(FirstTokenTimer):
         are added only when the caller opts in (``phase_memory``, ``kv_bytes_per_token`` or
         ``kv_tokens``); otherwise the record is unchanged. ``kv_live_bytes`` covers every
         layer, so on a multi-GPU split each device entry repeats the whole-model figure.
+        ``kv_eviction`` (target KV eviction runs only) adds the top-level fields
+        ``kv_prompt_tokens``, ``kv_kept_prompt_tokens``, ``kv_evicted_tokens`` and
+        ``kv_score_window`` (prompt tokens after the last image token; the attention policy
+        scores over them). Without it the record is unchanged.
         """
         ids = output_ids.tolist()
         eos = tokenizer.eos_token_id
@@ -131,7 +149,7 @@ class GenerationMeasurement(FirstTokenTimer):
             for entry in memory.values():
                 entry["kv_tokens"] = None if kv_tokens is None else int(kv_tokens)
                 entry["kv_live_bytes"] = live
-        return {
+        record = {
             "schema_version": 1,
             "input_ids_sha256": self.input_fingerprint,
             "input_ids_tokens": self.input_tokens,
@@ -150,6 +168,10 @@ class GenerationMeasurement(FirstTokenTimer):
             "iterations": stop.get("iterations"),
             "gpu_memory": memory,
         }
+        if kv_eviction is not None:
+            for field in EVICTION_FIELDS:
+                record[field] = int(kv_eviction[field])
+        return record
 
 
 def references(row):

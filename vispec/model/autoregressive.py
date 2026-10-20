@@ -2,9 +2,11 @@
 
 Runs on the same loaded ``SpecModel`` instance that ViSpec uses, so both methods share
 weights, KV-cache fork kernels and the preallocated KV buffer (``kv_layout="fixed"``). With
-``kv_layout="compact"`` the target cache is sized per sample instead, as in ``specgenerate``.
+``kv_layout="compact"`` the target cache is sized per sample instead, as in ``specgenerate``,
+and ``kv_sparsity`` can evict image positions from it after the prefill.
 """
 
+import contextlib
 import time
 
 import torch
@@ -15,6 +17,7 @@ from .kv_cache import (
     expected_kv_capacity,
     initialize_past_key_values,
 )
+from .spec_model_ours import TargetKVEviction, check_kv_sparsity
 from .utils import reset_tree_mode
 
 
@@ -34,6 +37,7 @@ def autoregressive_generate(
     max_new_tokens: int,
     on_first_token=None,
     generation_stats: dict | None = None,
+    kv_sparsity=None,
 ):
     """Greedy decoding. Returns (prompt+output ids [1, L], new_token_count, steps).
 
@@ -42,7 +46,11 @@ def autoregressive_generate(
     ``on_first_token(token)`` is called once, right after the prefill's argmax.
     ``generation_stats`` receives ``stop_reason``, ``iterations``, ``generation_limits``
     and ``decode_time`` (seconds from the first token being ready to the end of the loop).
+    ``kv_sparsity`` (a ``SparsityConfig``, compact layout only) evicts image positions from
+    the target KV cache once, after the prefill, and adds ``kv_eviction`` (the
+    ``TargetKVEviction.stats`` fields) to ``generation_stats``. ``None`` evicts nothing.
     """
+    check_kv_sparsity(kv_sparsity, getattr(model, "kv_layout", "fixed"))
     if max_new_tokens < 1:
         raise ValueError("max_new_tokens must be positive")
     kwargs = dict(model_inputs)
@@ -83,14 +91,19 @@ def autoregressive_generate(
     reset_tree_mode(model)
 
     slim = {"logits_to_keep": 1} if getattr(model, "slim_prefill", False) else {}
-
-    outputs = model.base_model(
-        input_ids=input_ids,
-        past_key_values=past_key_values,
-        use_cache=True,
-        **slim,
-        **kwargs,
+    eviction = (
+        None if kv_sparsity is None else TargetKVEviction(model, input_ids, kv_sparsity)
     )
+
+    # Score capture (attention policy) is on for the prefill call only.
+    with eviction.prefill_capture() if eviction is not None else contextlib.nullcontext():
+        outputs = model.base_model(
+            input_ids=input_ids,
+            past_key_values=past_key_values,
+            use_cache=True,
+            **slim,
+            **kwargs,
+        )
     input_id = outputs.logits[:, -1:].argmax(dim=-1)
     input_ids = torch.cat([input_ids, input_id], dim=-1)
     if on_first_token is not None:
@@ -106,11 +119,16 @@ def autoregressive_generate(
     # positions than there are tokens, so decode positions come from the token count, and
     # no kv_offset is needed: each step's KV is appended at the cache length by KVCache.cat.
     position_ids = None
+    kv_eviction = None
     if compact:
-        # keep=None: nothing is evicted yet. Same helper and slack as specgenerate (one draft
+        # keep=None keeps every position; with kv_sparsity, the one kept set of prompt
+        # positions applies to every layer. Same helper and slack as specgenerate (one draft
         # tree of margin included); it sizes the decode buffer from the kept length.
         tree_slots = model.spec_layer.total_tokens + 1
-        compact_for_decode(model, None, max_new_tokens, tree_slots + 10)
+        keep = None if eviction is None else eviction.keep(model.past_key_values_data[0].device)
+        kept = compact_for_decode(model, keep, max_new_tokens, tree_slots + 10)
+        if eviction is not None:
+            kv_eviction = eviction.stats(kept)
         # Rebind, so no local keeps the prefill-sized buffer alive.
         past_key_values = model.past_key_values
         rope_deltas = model.base_model.rope_deltas
@@ -148,5 +166,7 @@ def autoregressive_generate(
             generation_limits={"max_new_tokens": max_new_tokens},
             decode_time=end_time - start_time,
         )
+        if kv_eviction is not None:
+            generation_stats["kv_eviction"] = kv_eviction
     new_token = input_ids.shape[1] - input_len
     return input_ids, new_token, steps

@@ -23,7 +23,8 @@ from tqdm import tqdm
 
 from ..model.autoregressive import autoregressive_generate
 from ..model.kv_cache import KV_LAYOUTS
-from ..model.spec_model_ours import SpecModel
+from ..model.sparsity import POLICIES, RETENTIONS, SparsityConfig
+from ..model.spec_model_ours import SpecModel, check_kv_sparsity
 from .benchmarks import (
     BENCHMARK_NAMES,
     PROMPT_STYLES,
@@ -105,6 +106,40 @@ def add_generation_arguments(parser):
         "reuses them; 'compact' sizes the cache to each sample's prompt and output budget, "
         "within --kv-capacity (Qwen2.5-VL only).",
     )
+    # Target-side visual KV eviction, after --kv-layout so the earlier keys keep their order.
+    # Leaving out both flags runs without eviction (no kv_sparsity). Giving either one turns
+    # eviction on, with the other at its default (retention 1.0, policy spatial).
+    parser.add_argument(
+        "--kv-retention",
+        type=float,
+        choices=RETENTIONS,
+        default=None,
+        help="Fraction of each image's prompt tokens kept in the target KV cache after the "
+        "prefill (default 1.0 once eviction is on). Needs --kv-layout compact.",
+    )
+    parser.add_argument(
+        "--kv-policy",
+        choices=POLICIES,
+        default=None,
+        help="Which image tokens the target KV cache keeps: 'spatial' (uniform raster "
+        "stride) or 'attention' (top prefill attention from the prompt tokens after the "
+        "last image token). Default spatial once eviction is on. Needs --kv-layout compact.",
+    )
+
+
+def kv_sparsity_config(args):
+    """The ``SparsityConfig`` for target KV eviction, or None when neither flag is given.
+
+    Raises ValueError when eviction is on without ``--kv-layout compact`` (also at 1.0).
+    """
+    if args.kv_retention is None and args.kv_policy is None:
+        return None
+    config = SparsityConfig(
+        retention=1.0 if args.kv_retention is None else args.kv_retention,
+        policy="spatial" if args.kv_policy is None else args.kv_policy,
+    )
+    check_kv_sparsity(config, args.kv_layout)
+    return config
 
 
 def check_arguments(parser, args):
@@ -112,6 +147,10 @@ def check_arguments(parser, args):
         parser.error("--method autoregressive is greedy only; use --temperature 0.0")
     if args.num_samples < 1:
         parser.error("--num-samples must be positive")
+    # Fails before any model loads; generation_args then records the effective settings.
+    config = kv_sparsity_config(args)
+    if config is not None:
+        args.kv_retention, args.kv_policy = config.retention, config.policy
 
 
 def parse_args(argv=None):
@@ -136,6 +175,7 @@ def answer_text(output_ids, tokenizer):
 
 def generate(model, args, model_inputs, on_first_token=None, generation_stats=None):
     """Run one generation; returns (ids [1, L], new_token, idx, acceptance, decode_time)."""
+    kv_sparsity = kv_sparsity_config(args)
     if args.method == "vispec":
         return model.specgenerate(
             **model_inputs,
@@ -146,6 +186,7 @@ def generate(model, args, model_inputs, on_first_token=None, generation_stats=No
             on_first_token=on_first_token,
             generation_stats=generation_stats,
             return_decode_time=True,
+            kv_sparsity=kv_sparsity,
         )
     stats = {} if generation_stats is None else generation_stats
     output_ids, new_token, steps = autoregressive_generate(
@@ -154,6 +195,7 @@ def generate(model, args, model_inputs, on_first_token=None, generation_stats=No
         args.max_new_token,
         on_first_token=on_first_token,
         generation_stats=stats,
+        kv_sparsity=kv_sparsity,
     )
     return output_ids, new_token, steps, [], stats["decode_time"]
 
@@ -295,7 +337,12 @@ def run(args):
         kv_tokens = int(model.current_length_data[0])
         output_ids = output_ids[0][input_len:]
         record = measurement.finish(
-            output_ids, tokenizer, new_token, generation_stats, kv_tokens=kv_tokens
+            output_ids,
+            tokenizer,
+            new_token,
+            generation_stats,
+            kv_tokens=kv_tokens,
+            kv_eviction=generation_stats.get("kv_eviction"),
         )
         choice = {
             "index": 0,

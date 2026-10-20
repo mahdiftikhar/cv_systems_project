@@ -20,6 +20,7 @@
 
 # Modifications are denoted by the symbol: [MODIFIED]
 
+import contextlib
 import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -1069,6 +1070,32 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
     SDPA API.
     """
 
+    # [MODIFIED] Prefill score capture for target-side KV eviction, set and cleared by
+    # capture_kv_scores. While kv_score_window is a positive int, a prefill call (q_len > 1)
+    # adds this layer's window attention to kv_score_sink. The defaults leave forward as is.
+    kv_score_window = None
+    kv_score_sink = None
+
+    def _add_kv_scores(self, query_states, key_states):
+        """Add sum over heads and window queries of softmax(Q_win K^T / sqrt(d)) to the sink.
+
+        Read-only: it works on fp32 copies of the rotary-embedded states that the attention
+        used (key_states already expanded by repeat_kv), with its own causal mask, so the
+        attention output does not change.
+        """
+        q_len, kv_len = query_states.shape[-2], key_states.shape[-2]
+        window = min(int(self.kv_score_window), q_len)
+        query = query_states[:, :, q_len - window :, :].float()
+        logits = torch.matmul(query, key_states.float().transpose(2, 3)) / math.sqrt(
+            self.head_dim
+        )
+        # Window query i sits at cache position kv_len - window + i and sees keys up to it.
+        query_pos = torch.arange(kv_len - window, kv_len, device=logits.device)
+        key_pos = torch.arange(kv_len, device=logits.device)
+        logits = logits.masked_fill(key_pos[None, :] > query_pos[:, None], float("-inf"))
+        scores = torch.softmax(logits, dim=-1).sum(dim=(0, 1, 2))
+        self.kv_score_sink.add_(scores.to(self.kv_score_sink.device))
+
     # Adapted from Qwen2Attention.forward
     def forward(
         self,
@@ -1161,6 +1188,9 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
             dropout_p=self.attention_dropout if self.training else 0.0,
             is_causal=is_causal,
         )
+        # [MODIFIED] Prefill score capture (off unless capture_kv_scores is active).
+        if self.kv_score_window and q_len > 1:
+            self._add_kv_scores(query_states, key_states)
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(bsz, q_len, self.hidden_size)
@@ -1168,6 +1198,38 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
         attn_output = self.o_proj(attn_output)
 
         return attn_output, None, past_key_value
+
+
+@contextlib.contextmanager
+def capture_kv_scores(text_model, window: int, prompt_len: int):
+    """[MODIFIED] Capture prefill importance scores for every prompt position.
+
+    Inside the block, each language-model attention layer of ``text_model`` (the
+    ``Qwen2_5_VLModel`` decoder stack, never the vision encoder) adds the attention that its
+    last ``window`` prefill queries pay to each key position to one shared fp32 tensor of
+    shape ``[prompt_len]``, ``text_model.kv_scores``, which is yielded. The flags and the sink
+    are removed on exit, also after an error, so later calls run the unmodified forward.
+    """
+    window, prompt_len = int(window), int(prompt_len)
+    if window < 1 or prompt_len < window:
+        raise ValueError(f"score window must lie in [1, {prompt_len}], got {window}")
+    attentions = [layer.self_attn for layer in text_model.layers]
+    if not all(isinstance(attn, Qwen2_5_VLSdpaAttention) for attn in attentions):
+        raise ValueError("KV score capture needs the SDPA attention (attn_implementation='sdpa')")
+    sink = torch.zeros(
+        prompt_len, dtype=torch.float32, device=attentions[0].q_proj.weight.device
+    )
+    try:
+        text_model.kv_scores = sink
+        for attn in attentions:
+            attn.kv_score_window = window
+            attn.kv_score_sink = sink
+        yield sink
+    finally:
+        for attn in attentions:
+            attn.__dict__.pop("kv_score_window", None)
+            attn.__dict__.pop("kv_score_sink", None)
+        text_model.__dict__.pop("kv_scores", None)
 
 
 QWEN2_5_VL_ATTENTION_CLASSES = {
