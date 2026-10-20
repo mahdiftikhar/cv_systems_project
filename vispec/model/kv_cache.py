@@ -295,3 +295,15 @@ def compact_past_key_values(model, keep: torch.LongTensor | None, capacity: int)
     model.past_key_values_data = new_data
     model.current_length_data = new_lengths
     return kept
+
+
+def compact_for_decode(model, keep: torch.LongTensor | None, max_new_tokens: int, slack: int) -> int:
+    """Compact the target cache after prefill and size it for decoding; return the kept length.
+
+    The caller supplies only ``keep`` (``None`` keeps every cached position). The kept length
+    comes from ``keep`` itself (its length, or the current cache length for ``None``), and the
+    new capacity is ``kept + max_new_tokens + slack``. Decoders derive their offset from the
+    returned value, ``kv_offset = prompt_len - kept``, never from a length read beforehand.
+    """
+    kept = int(model.current_length_data[0]) if keep is None else int(torch.as_tensor(keep).numel())
+    return compact_past_key_values(model, keep, kept + int(max_new_tokens) + int(slack))

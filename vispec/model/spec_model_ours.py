@@ -15,7 +15,7 @@ from .configs import EConfig
 from .kv_cache import (
     KV_LAYOUTS,
     allocate_past_key_values,
-    compact_past_key_values,
+    compact_for_decode,
     expected_kv_capacity,
     initialize_past_key_values,
 )
@@ -589,11 +589,9 @@ class SpecModel(nn.Module):
         # first step of the decode phase, so decode_time includes it and TTFT does not.
         kv_offset = 0
         if compact:
-            # keep=None: nothing is evicted, so every prefill position is kept.
-            prompt_kept = int(current_length_data[0])
-            compact_past_key_values(
-                self, None, prompt_kept + max_new_tokens + tree_slots + 10
-            )
+            # keep=None: nothing is evicted yet. The helper derives the kept length from keep
+            # and sizes the decode buffer from it; the offset comes from its result.
+            prompt_kept = compact_for_decode(self, None, max_new_tokens, tree_slots + 10)
             # Rebind, so no local keeps the prefill-sized buffer alive.
             past_key_values = self.past_key_values
             past_key_values_data = self.past_key_values_data

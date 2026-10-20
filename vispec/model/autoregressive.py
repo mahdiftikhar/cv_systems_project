@@ -11,7 +11,7 @@ import torch
 
 from .kv_cache import (
     allocate_past_key_values,
-    compact_past_key_values,
+    compact_for_decode,
     expected_kv_capacity,
     initialize_past_key_values,
 )
@@ -102,17 +102,15 @@ def autoregressive_generate(
     torch.cuda.synchronize()
     start_time = time.time()
     # As in specgenerate, the compaction is the first step of the decode phase: decode_time
-    # includes it and TTFT does not. Afterwards the cache holds input_len - prompt_kept fewer
-    # positions than there are tokens, so decode positions come from the token count.
+    # includes it and TTFT does not. Afterwards the cache holds input_len - kept fewer
+    # positions than there are tokens, so decode positions come from the token count, and
+    # no kv_offset is needed: each step's KV is appended at the cache length by KVCache.cat.
     position_ids = None
     if compact:
-        # keep=None: nothing is evicted, so every prefill position is kept. The capacity
-        # formula matches specgenerate's (one draft tree of margin included).
-        prompt_kept = int(model.current_length_data[0])
+        # keep=None: nothing is evicted yet. Same helper and slack as specgenerate (one draft
+        # tree of margin included); it sizes the decode buffer from the kept length.
         tree_slots = model.spec_layer.total_tokens + 1
-        compact_past_key_values(
-            model, None, prompt_kept + max_new_tokens + tree_slots + 10
-        )
+        compact_for_decode(model, None, max_new_tokens, tree_slots + 10)
         # Rebind, so no local keeps the prefill-sized buffer alive.
         past_key_values = model.past_key_values
         rope_deltas = model.base_model.rope_deltas
