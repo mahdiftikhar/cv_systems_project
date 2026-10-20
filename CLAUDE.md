@@ -135,8 +135,31 @@ python -m vispec.evaluation.evaluate --method {autoregressive,vispec} --benchmar
 seed-42 shuffle as experiment 00, 100 COCO Karpathy-test images), the prompt instructions per style
 and the image pixel limits. The evaluator refuses to overwrite an existing answer file.
 
-Submit with the Ampere path, not Newton: `PROMPT_STYLE=long|short bash experiment/submit_ampere.sh
-experiment/02_qwen_autoregressive experiment/03_qwen_vispec` (see `experiment/AMPERE_SETUP.md`). It
+Visual-sparsity flags of `evaluate` (all default off; giving one flag of a pair fills the other with
+retention 1.0 or policy `spatial`):
+
+- `--kv-layout {fixed,compact}`: `fixed` (default) preallocates `--kv-capacity` slots once. `compact`
+  sizes the cache per sample, within the capacity. Recorded as `kv_layout` in `runtime.json`
+  `generation_args`, with the other flags below.
+- `--kv-retention {0.25,0.5,0.75,1.0}` and `--kv-policy {spatial,attention}`: target-side eviction of
+  image tokens once after prefill. Requires `--kv-layout compact`.
+- `--draft-retention` and `--draft-policy` (same values): draft-side pruning of the image adaptor
+  input. ViSpec only; `--method autoregressive` rejects them.
+
+Experiment 04 profiles decode. Experiment 05 (`DRAFT_ARMS`) and 06 (`KV_ARMS`) sweep arms of
+`<retention>:<policy>[:<method>]` (06 only takes the method, `vispec` by default or `autoregressive`),
+one run folder per arm via `experiment/qwen_arm_runner.sh`, always with `--kv-layout compact`. An
+invalid arm list exits 2 before any folder is created. Run the same-job references first: 02 and 03
+with `KV_LAYOUT=compact` (default `fixed` keeps the Week 1 command line). Run metadata `method` is
+`autoregressive` or `vispec_speculative`.
+
+`compare_metrics --mode sparsity` compares an arm with the same method at 100% retention (a null
+retention counts as 1.0), not with the other method. `diagnose_divergence` refuses runs with a
+non-null `kv_retention` below 1.0, because its stock full-KV model cannot reproduce eviction.
+Draft-only arms stay diagnosable.
+
+Submit with the Ampere path, not Newton: `PROMPT_STYLE=long|short [KV_LAYOUT=compact] [KV_ARMS=...|DRAFT_ARMS=...] bash experiment/submit_ampere.sh
+experiment/02_qwen_autoregressive experiment/03_qwen_vispec [experiment/05_qwen_draft_pruning] [experiment/06_qwen_kv_eviction]` (see `experiment/AMPERE_SETUP.md`). It
 pins the 48 GB `NVIDIA RTX A6000` and runs each `run.sh` in one allocation. Week 1 uses
 `CLUSTER_PARTITION=preempt`, where a requeued job reruns the runner into a fresh run folder.
 
@@ -162,5 +185,5 @@ Qwen hazards:
 - `.gitignore` ignores `experiment/*/runs/*`, except the two snapshots for jobs 950793 and 950803.
   Treat those as immutable evidence and write reruns and re-reports to new directories.
 - Experiments 00 and 01 cover only TextVQA, GQA and MM-Vet with LLaVA. The Qwen path is in scope
-  through experiments 02 and 03 (see the Qwen section above). The Mixtral, Medusa, training
+  through experiments 02 to 06 (see the Qwen section above). The Mixtral, Medusa, training
   (`vispec/train`) and data-generation (`vispec/ge_data`) paths are inherited and unexercised.

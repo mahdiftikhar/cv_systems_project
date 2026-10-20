@@ -14,7 +14,7 @@ cd "$repo_dir"
 # step 02 -- Reject positional arguments and require a valid prompt style.
 # ==========================================
 if [[ $# -gt 0 ]]; then
-    echo "Usage: PROMPT_STYLE={long|short} [BENCH_DIR=/absolute/path] [PYTHON_BIN=python] $0" >&2
+    echo "Usage: PROMPT_STYLE={long|short} [BENCH_DIR=/absolute/path] [PYTHON_BIN=python] [KV_LAYOUT=fixed|compact] $0" >&2
     exit 2
 fi
 prompt_style="${PROMPT_STYLE:-}"
@@ -45,6 +45,13 @@ python_bin="${PYTHON_BIN:-/home/aeternum/anaconda3/envs/vipsec/bin/python}"
 method="autoregressive"
 method_dir="autoregressive_qwen"
 benchmarks=(textvqa coco_caption)
+# fixed (default) is the Week 1 layout; compact sizes the KV cache per sample and gives the
+# same-job reference for experiments 05 and 06.
+kv_layout="${KV_LAYOUT:-fixed}"
+if [[ "$kv_layout" != "fixed" && "$kv_layout" != "compact" ]]; then
+    echo "KV_LAYOUT must be 'fixed' or 'compact' (got '${kv_layout}')." >&2
+    exit 2
+fi
 
 # ==========================================
 # step 04 -- Check Python and create a unique run folder with Git and script snapshots.
@@ -123,6 +130,7 @@ fi
     printf 'prompt_style=%s\nslim_prefill=true\nkv_capacity=%s\nnum_samples=%s\n' "$prompt_style" "$kv_capacity" "$num_samples"
     printf 'max_new_tokens=%s\n' "$max_new_tokens"
     printf 'benchmarks=%s\n' "${benchmarks[*]}"
+    printf 'kv_layout=%s\n' "$kv_layout"
 } > "$run_dir/metadata.txt"
 echo "Run artifacts: $run_dir"
 cat "$run_dir/metadata.txt"
@@ -160,6 +168,9 @@ for benchmark in "${benchmarks[@]}"; do
         --max-new-token "$max_new_tokens"
         --temperature "$temperature"
         --kv-capacity "$kv_capacity")
+    if [[ "$kv_layout" == "compact" ]]; then
+        cmd+=(--kv-layout compact)
+    fi
 
     # ==========================================
     # step 09 -- Print the exact command and run it; stop if evaluation fails.
