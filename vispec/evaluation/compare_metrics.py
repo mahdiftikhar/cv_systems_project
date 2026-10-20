@@ -76,6 +76,30 @@ def check_sparsity_settings(original, draft, benchmark, mode):
     }
 
 
+def check_same_slurm_job(reports):
+    """Sparsity mode: every report must come from one Slurm job and restart attempt."""
+    jobs, restarts = set(), set()
+    for report in reports:
+        metadata = report["summary"]["metadata"]
+        job = (metadata.get("slurm_job_id") or "").strip()
+        if not job or job == "unset":
+            raise ValueError(
+                f"Sparsity mode needs slurm_job_id in metadata.txt: {report['path']}"
+            )
+        jobs.add(job)
+        restarts.add((metadata.get("slurm_restart_count") or "0").strip())
+    if len(jobs) > 1:
+        raise ValueError(
+            "Sparsity mode compares runs from one Slurm job; got slurm_job_id "
+            + ", ".join(sorted(jobs))
+        )
+    if len(restarts) > 1:
+        raise ValueError(
+            "Sparsity mode compares runs from one restart attempt; got slurm_restart_count "
+            + ", ".join(sorted(restarts))
+        )
+
+
 def load_report(path):
     path = Path(path).resolve()
     summary = json.loads((path / "summary.json").read_text())
@@ -188,6 +212,7 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
             if len(values) > 1:
                 raise ValueError(f"Different {setting} settings are not repeated runs")
     if mode == "sparsity":
+        check_same_slurm_job(all_reports)
         # The reference and the candidate must share the decoding configuration.
         for setting in ("depth", "top_k", "total_token", "num_q"):
             values = {r["summary"]["metadata"].get(setting) for r in all_reports}
