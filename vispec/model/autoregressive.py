@@ -1,14 +1,20 @@
 """Greedy autoregressive decoding on the shared SpecModel.
 
 Runs on the same loaded ``SpecModel`` instance that ViSpec uses, so both methods share
-weights, KV-cache fork kernels and the preallocated KV buffer.
+weights, KV-cache fork kernels and the preallocated KV buffer (``kv_layout="fixed"``). With
+``kv_layout="compact"`` the target cache is sized per sample instead, as in ``specgenerate``.
 """
 
 import time
 
 import torch
 
-from .kv_cache import expected_kv_capacity, initialize_past_key_values
+from .kv_cache import (
+    allocate_past_key_values,
+    compact_past_key_values,
+    expected_kv_capacity,
+    initialize_past_key_values,
+)
 from .utils import reset_tree_mode
 
 
@@ -55,7 +61,13 @@ def autoregressive_generate(
         )
 
     expected = expected_kv_capacity(model)
-    if (
+    compact = getattr(model, "kv_layout", "fixed") == "compact"
+    if compact:
+        # A fresh buffer for the prefill only (prompt + margin); resized after prefill.
+        # allocate_past_key_values frees the previous sample's buffer first.
+        allocate_past_key_values(model, input_len + 10)
+        past_key_values = model.past_key_values
+    elif (
         hasattr(model, "past_key_values")
         and model.past_key_values_data[0].shape[3] == expected
     ):
@@ -89,6 +101,21 @@ def autoregressive_generate(
     steps = 0
     torch.cuda.synchronize()
     start_time = time.time()
+    # As in specgenerate, the compaction is the first step of the decode phase: decode_time
+    # includes it and TTFT does not. Afterwards the cache holds input_len - prompt_kept fewer
+    # positions than there are tokens, so decode positions come from the token count.
+    position_ids = None
+    if compact:
+        # keep=None: nothing is evicted, so every prefill position is kept. The capacity
+        # formula matches specgenerate's (one draft tree of margin included).
+        prompt_kept = int(model.current_length_data[0])
+        tree_slots = model.spec_layer.total_tokens + 1
+        compact_past_key_values(
+            model, None, prompt_kept + max_new_tokens + tree_slots + 10
+        )
+        # Rebind, so no local keeps the prefill-sized buffer alive.
+        past_key_values = model.past_key_values
+        rope_deltas = model.base_model.rope_deltas
     while True:
         if eos is not None and input_id.item() == eos:
             stop_reason = "eos"
@@ -96,8 +123,19 @@ def autoregressive_generate(
         if input_ids.shape[1] - input_len >= max_new_tokens:
             stop_reason = "token_limit"
             break
+        if compact:
+            # input_id is the last token of input_ids, at logical index shape[1] - 1. Its
+            # M-RoPE position is that index plus rope_deltas on all 3 axes (as tree_decoding
+            # builds them), never the cache length the base model would otherwise use.
+            position_ids = (rope_deltas + (input_ids.shape[1] - 1)).unsqueeze(0).expand(
+                3, -1, -1
+            )
         outputs = model.base_model(
-            input_id, use_cache=True, past_key_values=past_key_values, **slim
+            input_id,
+            use_cache=True,
+            past_key_values=past_key_values,
+            position_ids=position_ids,
+            **slim,
         )
         input_id = outputs.logits[:, -1:].argmax(dim=-1)
         input_ids = torch.cat([input_ids, input_id], dim=-1)

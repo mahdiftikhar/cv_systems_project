@@ -12,7 +12,13 @@ from transformers import AutoConfig, AutoTokenizer
 
 from .cnets_ours import Model
 from .configs import EConfig
-from .kv_cache import expected_kv_capacity, initialize_past_key_values
+from .kv_cache import (
+    KV_LAYOUTS,
+    allocate_past_key_values,
+    compact_past_key_values,
+    expected_kv_capacity,
+    initialize_past_key_values,
+)
 from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 from .modeling_llava_kv import (
     CustomLlavaForConditionalGeneration as KVLlavaForConditionalGeneration,
@@ -26,6 +32,22 @@ from .modeling_qwen2_5_vl_kv import (
 )
 from .modeling_qwen2_kv import LlamaForCausalLM as KVQwen2ForCausalLM
 from .utils import *
+
+QWEN2_5_VL = "Qwen2_5_VLForConditionalGeneration"
+
+
+def check_kv_layout(kv_layout, architecture):
+    """Raise ValueError unless ``kv_layout`` is known and supported for ``architecture``.
+
+    Only the Qwen2.5-VL fork takes explicit M-RoPE positions on every decode path, which the
+    compact layout needs once the cache length can differ from the token count.
+    """
+    if kv_layout not in KV_LAYOUTS:
+        raise ValueError(f"kv_layout must be one of {KV_LAYOUTS}, got {kv_layout!r}")
+    if kv_layout == "compact" and architecture != QWEN2_5_VL:
+        raise ValueError(
+            f"kv_layout='compact' is only supported for {QWEN2_5_VL}, not {architecture}"
+        )
 
 
 class SpecModel(nn.Module):
@@ -42,11 +64,20 @@ class SpecModel(nn.Module):
         num_q: int = 2,
         slim_prefill: bool = False,
         kv_capacity: int | None = None,
+        kv_layout: str = "fixed",
     ):
 
         super().__init__()
         self.base_model = base_model
         self.config = base_model.config
+        # The compact layout needs the Qwen2.5-VL KV fork itself, not only its name.
+        architecture = (
+            QWEN2_5_VL
+            if isinstance(base_model, KVQwen2_5_VLForConditionalGeneration)
+            else type(base_model).__name__
+        )
+        check_kv_layout(kv_layout, architecture)
+        self.kv_layout = kv_layout
         # Only the Qwen2.5-VL KV fork accepts last_hidden_only/logits_to_keep; every other
         # architecture (the LLaVA forks included) keeps the original forward call.
         if slim_prefill and not isinstance(
@@ -135,10 +166,13 @@ class SpecModel(nn.Module):
         num_q: int = 2,
         slim_prefill: bool = False,
         kv_capacity: int | None = None,
+        kv_layout: str = "fixed",
         **kwargs,
     ):
         # assert Type=="LLaMA" or "Mixtral"
         Type = AutoConfig.from_pretrained(base_model_path).architectures[0]
+        # Fail before any weights load.
+        check_kv_layout(kv_layout, Type)
         if Type == "LlamaForCausalLM":
             base_model = KVLlamaForCausalLM.from_pretrained(base_model_path, **kwargs)
         elif Type == "Qwen2ForCausalLM":
@@ -194,6 +228,7 @@ class SpecModel(nn.Module):
             num_q=num_q,
             slim_prefill=slim_prefill,
             kv_capacity=kv_capacity,
+            kv_layout=kv_layout,
         )
 
         if total_token == -1:
@@ -330,10 +365,21 @@ class SpecModel(nn.Module):
         input_ids = input_ids.clone()
         self.spec_layer.reset_kv()
 
-        # Initialize the past key and value states. Reuse the stored buffer only if it has
-        # the requested capacity (as autoregressive_generate checks); a buffer left from a
-        # different kv_capacity is reallocated.
-        if (
+        compact = self.kv_layout == "compact"
+        # Tree tokens one verification step writes past the committed sequence.
+        tree_slots = self.spec_layer.total_tokens + 1
+        # Initialize the past key and value states. The compact layout sizes a fresh buffer
+        # for the prefill (prompt + one tree + margin) and resizes it after initialize_tree;
+        # allocate_past_key_values frees the previous sample's buffer first. The fixed layout
+        # reuses the stored buffer only if it has the requested capacity (as
+        # autoregressive_generate checks); a buffer left from a different kv_capacity is
+        # reallocated.
+        if compact:
+            allocate_past_key_values(self, input_ids.shape[1] + tree_slots + 10)
+            past_key_values = self.past_key_values
+            past_key_values_data = self.past_key_values_data
+            current_length_data = self.current_length_data
+        elif (
             hasattr(self, "past_key_values")
             and self.past_key_values_data[0].shape[3] == expected_kv_capacity(self)
         ):
@@ -539,6 +585,21 @@ class SpecModel(nn.Module):
             torch.cuda.synchronize()
             start_time = time.time()
 
+        # Cache length (physical) = token count (logical) - kv_offset. The compaction is the
+        # first step of the decode phase, so decode_time includes it and TTFT does not.
+        kv_offset = 0
+        if compact:
+            # keep=None: nothing is evicted, so every prefill position is kept.
+            prompt_kept = int(current_length_data[0])
+            compact_past_key_values(
+                self, None, prompt_kept + max_new_tokens + tree_slots + 10
+            )
+            # Rebind, so no local keeps the prefill-sized buffer alive.
+            past_key_values = self.past_key_values
+            past_key_values_data = self.past_key_values_data
+            current_length_data = self.current_length_data
+            kv_offset = input_len - prompt_kept
+
         stop_reason = "iteration_limit"
         for idx in range(max_length):
             # with Timer("all"):
@@ -603,6 +664,7 @@ class SpecModel(nn.Module):
                 # inputs_embeds,
                 # embed_weights,
                 # image_mask=special_image_mask,
+                kv_offset=kv_offset,
             )
 
             if is_llama3:

@@ -1,5 +1,9 @@
 import torch
 
+# "fixed" preallocates one buffer per model and reuses it; "compact" sizes the target cache
+# per sample and lets its length (physical) differ from the token count (logical).
+KV_LAYOUTS = ("fixed", "compact")
+
 
 class KVCache:
     """
@@ -188,3 +192,106 @@ def initialize_past_key_values(model, max_length: int | None = None):
             )
         bias += 1
     return past_key_values, past_key_values_data_list, current_length_data
+
+
+def _kv_text_model(model):
+    """The SpecModel's decoder that owns the target KV cache (as specgenerate resolves it)."""
+    base = model.base_model
+    return base.language_model if hasattr(base, "language_model") else base
+
+
+def release_past_key_values(model):
+    """Drop the SpecModel's references to its target KV buffers so they can be freed."""
+    for name in ("past_key_values", "past_key_values_data", "current_length_data"):
+        if hasattr(model, name):
+            delattr(model, name)
+
+
+def allocate_past_key_values(model, capacity: int) -> None:
+    """(Re)build ``model.past_key_values``, ``past_key_values_data`` and
+    ``current_length_data`` with exactly ``capacity`` token slots.
+
+    The previous buffers are released first, so they do not coexist with the new ones. The
+    caller must not hold its own references to them either.
+    """
+    capacity = int(capacity)
+    if capacity < 1:
+        raise ValueError(f"KV capacity must be positive, got {capacity}")
+    release_past_key_values(model)
+    (
+        model.past_key_values,
+        model.past_key_values_data,
+        model.current_length_data,
+    ) = initialize_past_key_values(_kv_text_model(model), max_length=capacity)
+
+
+def _owner(view, bases):
+    """(index into ``bases``, index along dim 0) of ``view``, a dim-0 slice of one base."""
+    for index, base in enumerate(bases):
+        if view.untyped_storage().data_ptr() == base.untyped_storage().data_ptr():
+            return index, (view.storage_offset() - base.storage_offset()) // base.stride(0)
+    raise ValueError("KV cache entry does not view any of the model's KV buffers")
+
+
+def compact_past_key_values(model, keep: torch.LongTensor | None, capacity: int) -> int:
+    """Copy the cached positions ``keep`` into fresh buffers of ``capacity`` slots.
+
+    ``keep`` holds strictly ascending cache indices below the current length; ``None`` keeps
+    all ``current_length`` positions. Kept entry ``i`` lands in slot ``i`` of every layer, and
+    the cache length becomes the kept count, which is returned. The new buffers keep the old
+    per-device split and dtype. The old buffers are dropped once copied, so they are freed as
+    soon as the caller rebinds its own references to ``model.past_key_values*``.
+    """
+    old_caches = model.past_key_values
+    old_data = model.past_key_values_data
+    old_lengths = model.current_length_data
+    length = int(old_lengths[0])
+    if keep is None:
+        kept = length
+    else:
+        keep = torch.as_tensor(keep, dtype=torch.long)
+        check = keep.cpu()
+        if check.dim() != 1:
+            raise ValueError(f"keep must be 1-D, got shape {tuple(check.shape)}")
+        if check.numel() and (int(check[0]) < 0 or int(check[-1]) >= length):
+            raise ValueError(f"keep indices must lie in [0, {length})")
+        if check.numel() > 1 and not bool((check[1:] > check[:-1]).all()):
+            raise ValueError("keep indices must be strictly ascending")
+        kept = int(check.numel())
+    if kept < 1:
+        raise ValueError("compaction must keep at least one cached position")
+    capacity = int(capacity)
+    if capacity < kept:
+        raise ValueError(f"KV capacity {capacity} cannot hold {kept} kept positions")
+
+    new_data = []
+    for old in old_data:
+        # [2 * layers on this device, batch, kv heads, slots, head dim]
+        new = torch.zeros(
+            old.shape[:3] + (capacity,) + old.shape[4:], dtype=old.dtype, device=old.device
+        )
+        if keep is None:
+            new[:, :, :, :kept].copy_(old[:, :, :, :kept])
+        else:
+            index = keep.to(old.device)
+            # One layer at a time keeps the gathered temporary to a single layer's entries.
+            for entry in range(old.shape[0]):
+                new[entry, :, :, :kept].copy_(old[entry].index_select(2, index))
+        new_data.append(new)
+    new_lengths = torch.zeros_like(old_lengths)
+    new_lengths.fill_(kept)
+    new_caches = []
+    for layer in old_caches:
+        pair = []
+        for cache in layer:
+            buffer, entry = _owner(cache.data, old_data)
+            _, length_entry = _owner(cache.current_length, [old_lengths])
+            pair.append(KVCache(new_data[buffer][entry], new_lengths[length_entry]))
+        new_caches.append(pair)
+
+    del old_caches, old_data, old_lengths
+    release_past_key_values(model)
+    model.past_key_values = new_caches
+    model.past_key_values_data = new_data
+    model.current_length_data = new_lengths
+    return kept

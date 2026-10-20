@@ -518,11 +518,15 @@ def update_inference_inputs(
     # inputs_embeds=None,
     # embed_weights=None,
     # image_mask=None,
+    kv_offset: int = 0,
 ):
+    # prev_input_len counts tokens (logical); prev_kv_len is the cache length (physical),
+    # which is kv_offset shorter once prompt positions were evicted from the cache.
     prev_input_len = input_ids.shape[1]
-    # Map the best candidate indices to the original indices in the sequence
+    prev_kv_len = prev_input_len - kv_offset
+    # Map the best candidate indices to the cache slots the tree was written to
     select_indices = (
-        retrieve_indices[best_candidate, : accept_length + 1] + prev_input_len
+        retrieve_indices[best_candidate, : accept_length + 1] + prev_kv_len
     )
     # Append the tokens from the best candidate to the input sequence
     input_ids = torch.cat(
@@ -540,13 +544,13 @@ def update_inference_inputs(
         ]
         # Destination tensor where the relevant past information will be stored
         dst = past_key_values_data[
-            ..., prev_input_len : prev_input_len + tgt.shape[-2], :
+            ..., prev_kv_len : prev_kv_len + tgt.shape[-2], :
         ]
         # Copy relevant past information from the source to the destination
         dst.copy_(tgt, non_blocking=True)
 
     # Update the current length tensor (currently only support batch size is 1)
-    current_length_data.fill_(prev_input_len + tgt.shape[-2])
+    current_length_data.fill_(prev_kv_len + tgt.shape[-2])
 
     retrieve_hidden_state_new = hidden_state_new[:, retrieve_indices]
     accept_hidden_state_new = retrieve_hidden_state_new[

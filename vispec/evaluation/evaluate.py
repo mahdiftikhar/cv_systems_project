@@ -22,6 +22,7 @@ import torch
 from tqdm import tqdm
 
 from ..model.autoregressive import autoregressive_generate
+from ..model.kv_cache import KV_LAYOUTS
 from ..model.spec_model_ours import SpecModel
 from .benchmarks import (
     BENCHMARK_NAMES,
@@ -94,6 +95,16 @@ def add_generation_arguments(parser):
         action="store_true",
         help="Keep full prefill logits and per-layer hidden states (slimming is on by default).",
     )
+    # Added last, so the earlier keys of vars(args) (runtime.json generation_args) keep
+    # their order.
+    parser.add_argument(
+        "--kv-layout",
+        choices=KV_LAYOUTS,
+        default="fixed",
+        help="Target KV cache layout: 'fixed' preallocates --kv-capacity slots once and "
+        "reuses them; 'compact' sizes the cache to each sample's prompt and output budget, "
+        "within --kv-capacity (Qwen2.5-VL only).",
+    )
 
 
 def check_arguments(parser, args):
@@ -160,6 +171,7 @@ def load_model(args):
         num_q=args.num_q,
         slim_prefill=not args.no_slim_prefill,
         kv_capacity=args.kv_capacity,
+        kv_layout=args.kv_layout,
         torch_dtype="auto",
         low_cpu_mem_usage=True,
         device_map="auto",
