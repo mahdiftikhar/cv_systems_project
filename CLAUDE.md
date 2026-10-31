@@ -187,5 +187,5 @@ Qwen hazards:
 - `.gitignore` ignores `experiment/*/runs/*`, except the two snapshots for jobs 950793 and 950803.
   Treat those as immutable evidence and write reruns and re-reports to new directories.
 - Experiments 00 and 01 cover only TextVQA, GQA and MM-Vet with LLaVA. The Qwen path is in scope
-  through experiments 02 to 08 (see the Qwen section above). The Mixtral, Medusa, training
+  through experiments 02 to 09 (see the Qwen section above). The Mixtral, Medusa, training
   (`vispec/train`) and data-generation (`vispec/ge_data`) paths are inherited and unexercised.

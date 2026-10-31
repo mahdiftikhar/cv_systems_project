@@ -123,7 +123,7 @@ A failed arm is recorded and the remaining arms still run, but a failed benchmar
 4. Size the time limit for 14 arms of 55 windows each. The default `run_sequence.sbatch` limit is 8
    hours, which is probably too short; pass `--time` in `SBATCH_EXTRA`. `CLUSTER_PARTITION=preempt`
    reaches the same pinned nodes. A requeued job reruns the runner into fresh run folders, so all arms of
-   one job must share one Slurm job ID for `sweep_table`.
+   one job must share one Slurm job ID for `sweep_table`. A requeue keeps the job ID and reruns `run.sh` from the start, so folders of an interrupted attempt sit next to the new ones, and `sweep_table` stops with "Two completed folders for one arm" if both are completed. Pass `sweep_table` and `compare_metrics` only the final attempt's folders: those with the highest `slurm_restart_count` and `exit_code=0` in `metadata.txt` or `exit-code.txt`.
 
 ## How to run
 
