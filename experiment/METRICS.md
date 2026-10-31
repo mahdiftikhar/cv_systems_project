@@ -481,6 +481,41 @@ python -m vispec.evaluation.sweep_table --run-dirs <run>... --output-dir experim
   `post_compaction_peak_allocated_gib` memory field are read when present. Week 2 runs lack them,
   and their cells stay empty.
 
+## Trade-off plots (Week 5)
+
+`experiment/plot_tradeoffs.py` reads `sweep.json` files from `sweep_table` and draws the trade-off
+curves. It loads no models and recomputes no ratio.
+
+```bash
+python experiment/plot_tradeoffs.py --sweeps <sweep.json>... --output-dir experiment/sweeps/<UTC>_tradeoffs
+```
+
+- The output folder must be new (the script refuses an existing one). It holds one PNG and one SVG
+  per (benchmark, prompt style), and `figures.json`: the source `sweep.json` paths with sha256, the
+  command line, and every plotted point (figure, panel, series, budget label, x and y with their
+  column names, source file and row index).
+- Axes: x is the ratio column and y is the quality delta, so the ViSpec reference sits at (1, 0).
+  The quality axis is labelled per benchmark (VQA points, CIDEr-D x100, ROUGE-1 F1). It is the
+  `quality_delta_vs_vispec_ref` column.
+- Panels: (1) `latency_speedup_vs_vispec_ref`; (2) `live_kv_arm_over_samepolicy_1_0`;
+  (3) `post_compaction_peak_arm_over_samepolicy_1_0`; (4) `speedup_vs_ar`. Each (job, method,
+  sweep, policy) is one series, and each point is labelled with its retention budget (`kv x/dr y`
+  for combined arms). Stars mark the ViSpec and AR references.
+- Ratio directions are those of the column names, never inverted. `*_speedup_vs_*` is reference
+  latency over arm latency (above 1 means faster). `*_arm_over_*` is arm over reference memory
+  (above 1 means more memory). Axis labels state this.
+- A panel with no value shows "no data". Week 2 tables have no post-compaction field. `sweep_table`
+  writes only the absolute `post_compaction_peak_gib`, so panel 3 stays empty until the table adds
+  the `arm_over` column. The script does not divide it itself.
+- Groups: every ratio was computed inside one (prompt style, Slurm job) group. A series always
+  belongs to one group and its legend names the job when a figure holds several. A request to put
+  rows of two groups into one series raises `ValueError`, as does reading the same row from two
+  files. The three long-style Week 3 jobs therefore appear as separate, job-labelled series on one
+  figure, never averaged.
+- `reverse_summary`: the four panels use ROUGE-1 F1. BERTScore is truncated and does not reflect
+  later pages (W4-R10), so it only gets a fifth, separately labelled panel. That panel reads
+  `bertscore_f1_delta_vs_vispec_ref`, which `sweep_table` does not write yet, so it shows "no data".
+
 ## Qwen experiments (02 and 03)
 
 Experiments 02 and 03 use the unified evaluator `vispec.evaluation.evaluate` and
