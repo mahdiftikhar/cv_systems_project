@@ -645,3 +645,158 @@ revision pinned in `.preparation/assets_qwen.json` when the checkpoint is a loca
 folder, while the Week 1 runtime files hold `null`. A new run therefore cannot be
 paired with a Week 1 run, which the GPU and allocation checks would usually
 prevent anyway.
+
+## Re:Verse window summaries (`reverse_summary`, Week 4)
+
+`reverse_summary` tests the sparsity methods on long multi-image prompts. Each prompt is a
+window of 5 or 6 consecutive manga pages from volume 1 of Re:Verse+, and the model summarises
+the story. Each summary is scored against the hand-made light-novel-style text of the same
+pages. `load_samples`, `build_messages` and `build_inputs` in
+`vispec/evaluation/benchmarks.py` build it; `evaluate`, `offset_check`, `profile_generation`
+and `diagnose_divergence` accept `--benchmark reverse_summary` (prompt style `long` only).
+
+### Data and terms
+
+- The data is the user's frozen local copy of Re:Verse+ (`FREEZE.json` 2026-10-16), reached
+  through the git-ignored symlink `bench_data/reverse_plus`. `prepare.sh --suite reverse`
+  checks it and writes `.preparation/assets_reverse.json`; the loader refuses to run without
+  that file, and when the copy's `FREEZE.json` digest differs from the prepared one.
+- The dataset directory is read-only. The code only opens its files for reading.
+- Terms (`TERMS.txt`): non-commercial research use only, and no redistribution. Credit Yen
+  Press, the official English publisher of Re:Zero. Cite the data as a re-aligned derivative
+  of Re:Verse (arXiv:2508.08508), not as the published Re:Verse text.
+- No page image or page text is committed or copied into the repository. Run folders and
+  reports keep only each window's page numbers and a SHA-256 digest of its reference (see
+  "Run files" below).
+
+### Windows
+
+- Images are `volume_1/images/chapter_<n>/NNN.jpg` and page texts
+  `volume_1/text/chapter_<n>/NNN.txt` (`NNN` is 1-based). The `chapter_<n>.txt` aggregates are
+  not used.
+- For every chapter, the loader asserts that the image pages and the text pages match one to
+  one and are exactly `1..N`, with `N` the prepared count. All 11 chapters pass (308 pages).
+- A chapter of `n` pages is split into `ceil(n/6)` non-overlapping consecutive windows whose
+  sizes differ by at most 1, with the larger windows first. This gives 55 windows: 33 of 6
+  pages and 22 of 5 pages.
+
+| Chapter | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Pages | 24 | 29 | 18 | 31 | 41 | 26 | 28 | 29 | 34 | 22 | 26 |
+| Window sizes | 6,6,6,6 | 6,6,6,6,5 | 6,6,6 | 6,5,5,5,5,5 | 6×6,5 | 6,5,5,5,5 | 6,6,6,5,5 | 6,6,6,6,5 | 6,6,6,6,5,5 | 6,6,5,5 | 6,5,5,5,5 |
+
+- The question ID is `v1_ch{n:02d}_p{first:03d}-{last:03d}`, for example `v1_ch05_p019-024`.
+- `--num-samples` is a maximum here: the first `min(num_samples, 55)` windows in chapter
+  order. The runners' default of 100 gives all 55, and the manifest records 55 expected
+  questions, so a report over 55 answers is complete.
+
+### References
+
+A window's reference is its pages' texts joined in page order with newlines. Each page text is
+read as UTF-8 with any BOM removed. The `<D>…</D>` (speech) and `<T>…</T>` (thought) tags are
+removed and their inner text is kept. Any other markup, or an empty page, raises. Volume 1
+references have 296 to 2,069 words per window (median 949).
+
+### Prompt
+
+One style (`long`), the same in every arm. The pages are given as images only, with no OCR,
+in reading order, followed by the instruction "Summarize the story told in these manga pages,
+in order." The system turn is the one the other Qwen benchmarks use. The decoded prompt of
+`v1_ch01_p001-006`, with image pads abbreviated:
+
+```
+<|im_start|>system
+A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.<|im_end|>
+<|im_start|>user
+<|vision_start|><|image_pad|>x1148<|vision_end|> ... (6 pages) ...<|vision_start|><|image_pad|>x1148<|vision_end|>Summarize the story told in these manga pages, in order.<|im_end|>
+<|im_start|>assistant
+```
+
+The single-image benchmarks keep their own layout (text, then the image). Their inputs are
+byte-identical to those before this benchmark was added.
+
+### Positions and the pixel cap
+
+The ViSpec draft's RoPE table has 8,192 rows (`max_position_embeddings` of the released
+draft). The draft indexes it with the full, uncompressed token count
+(`cnets_ours.Model.topK_genrate`, `len_posi = input_ids.shape[1]`), and that index keeps
+growing while the answer is generated. So a window's prompt must leave room for the whole
+output (ruling W4-R7):
+
+```
+prompt tokens + max_new_tokens + depth + 1 <= 8192, so prompt tokens <= 7,164 at 1,024 new tokens and depth 3
+```
+
+- The loader computes each window's prompt length exactly with the real processor on CPU:
+  the image tokens from `image_grid_thw` (checked against the image-pad count in
+  `input_ids`) plus the text tokens. It raises when a window exceeds the budget, and never
+  truncates. The evaluator, `offset_check` and `profile_generation` compute the budget from
+  their own `--max-new-token`, `--depth` and the draft config; 7,164 is the default.
+- At the Week 1 cap of `max_pixels = 1280*28*28` (1,003,520), windows are 6,155 / 7,375 / 7,433
+  tokens (min / median / max). Six-page windows exceed the budget, so a 6-page summary could
+  run the draft past its table during generation.
+- `max_pixels` is therefore lowered once, uniformly, for `reverse_summary` only, to
+  `1200*28*28` (940,800). `min_pixels` stays `256*28*28`. This is the largest round cap that
+  fits: `1210*28*28` still gives a 7,201-token window. Windows are now 5,805 / 6,955 / 6,967
+  tokens (min / median / max). The largest window (`v1_ch01_p019-024`) is 197 tokens under
+  the budget. A typical 900×1300 page is 82×56 patches, which is 1,148 tokens (1,218 at the
+  Week 1 cap). The window sizes stay 5 to 6 pages.
+- TextVQA and COCO keep the Week 1 limits.
+
+The evaluator's manifest (`<answer>.manifest.json`) records, per window, the chapter, pages,
+`prompt_positions`, `image_tokens` per page, `text_tokens` and `reference_sha256`. At the top
+level it records the window rule, the dataset freeze digest, the pixel limits, the budget and
+the min, median and max positions.
+
+### Scorers
+
+`Scorer.score_corpus("reverse_summary", ...)` returns `rouge1_f1` and `bertscore_f1`, both
+0-100 means over windows, with per-window 0-1 fractions in `per_sample`. Each metric becomes
+pending on its own, with a reason, when its package, weights or inputs are missing. Scoring
+never aborts a report.
+
+- **ROUGE-1 F1:** `rouge-score==0.1.2`, `rouge1` with the Porter stemmer, reference as target
+  and summary as prediction. This is each window's `score`, so `quality.score_percent`,
+  `sweep_table` quality and the `compare_metrics` quality delta are ROUGE-1 F1.
+- **BERTScore F1:** `bert-score==0.3.13` with the local `models/bert-base-uncased` (revision
+  `86b5e0934494bd15c9632b12f734a8a67f723594`), layer 9, no idf and no baseline rescaling.
+  The weights' SHA-256 must equal the one in `.preparation/assets_reverse.json`, or BERTScore
+  stays pending. The model loads offline from the local folder (`HF_HUB_OFFLINE=1` and
+  `TRANSFORMERS_OFFLINE=1` are set before loading). Without rescaling, unrelated English text
+  scores about 35 (bert-score's own layer-9 baseline is 0.352).
+- **Truncation:** bert-base-uncased reads at most 512 word pieces, and bert-score truncates
+  longer texts to their first 510 pieces plus `[CLS]` and `[SEP]`. Fifty of the 55 references
+  are longer (up to 2,723 pieces), so BERTScore compares a summary with the opening of its
+  reference only. Long summaries are truncated the same way. The report records
+  `truncated_references` and `truncated_predictions`. ROUGE-1 uses the full texts.
+- **Device:** `report_metrics --bertscore-device` (or `$BERTSCORE_DEVICE`) takes `auto`,
+  `cpu`, `cuda` or `cuda:N`. `auto`, the default, is CUDA when a GPU is visible and CPU
+  otherwise. The device is recorded but kept out of `score_protocol`, so CPU and GPU reports
+  stay comparable; their BERTScore values can differ in the last float digits. On the CPU
+  node (24 torch threads), scoring 55 windows with long candidates took 24.7 s, of which
+  19.9 s was the BERTScore call including the model load.
+- `--bert-model` (or `$BERTSCORE_MODEL`) points at another local folder; its weights must
+  still match the prepared digest.
+
+### Run files and reports
+
+- Answer records keep `reference_answers` empty for this benchmark, and the manifest keeps
+  only the digests. `report_metrics` reads the references again from
+  `<--bench-dir>/reverse_plus` (default `<repo>/bench_data`) and checks each one against the
+  recorded digest. A missing dataset or a different digest makes both scores pending.
+- `summary.json` gets a `reverse_summary` entry only when the run evaluated it, so reports
+  of TextVQA and COCO runs are unchanged. The entry's `quality` adds `primary`
+  (`rouge1_f1`), `rouge1_f1`, `bertscore_f1`, `bertscore_scored` and
+  `bertscore_pending_reason`. The top-level `reverse_summary_scores` block records both
+  methods, the BERT folder, revision, weights digest, layer, device, seconds and the
+  truncation counts. Each scored row in `samples.jsonl` carries `score` (ROUGE-1 F1) and
+  `bertscore_f1`, both 0-1. The report also writes `reverse_summary_predictions.json`.
+
+```bash
+python -m vispec.evaluation.evaluate --method vispec --benchmark reverse_summary --prompt-style long \
+  --base-model-path models/Qwen2.5-VL-3B-Instruct --spec-model-path models/ViSpec-Qwen2.5-VL-3B-Instruct \
+  --data-dir bench_data --kv-layout compact --answer-file <new path> --model-id test
+python -m vispec.evaluation.report_metrics --run-dir <run> --bench-dir bench_data [--bertscore-device cpu]
+python -m vispec.evaluation.offset_check --benchmark reverse_summary --kv-retention 1.0 \
+  --kv-policy spatial --num-samples 3 --dtype float32 --output-dir <new_dir>
+```

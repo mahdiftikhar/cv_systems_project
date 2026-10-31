@@ -42,7 +42,7 @@ from torch.autograd import DeviceType
 from torch.profiler import ProfilerActivity, profile, record_function
 
 from ..model import spec_model_ours
-from .benchmarks import build_inputs, load_samples
+from .benchmarks import build_inputs, draft_position_budget, load_processor, load_samples
 from .evaluate import (
     WARMUPS,
     add_generation_arguments,
@@ -380,8 +380,17 @@ def run(args):
         raise FileExistsError(f"{summary_path} already exists; use a fresh --output-dir")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    samples = load_samples(args.benchmark, Path(args.data_dir), args.num_samples)
-    processor, model, tokenizer = load_model(args)
+    processor = load_processor(args.base_model_path)
+    samples = load_samples(
+        args.benchmark,
+        Path(args.data_dir),
+        args.num_samples,
+        processor=processor,
+        position_budget=draft_position_budget(
+            args.max_new_token, args.depth, args.spec_model_path
+        ),
+    )
+    processor, model, tokenizer = load_model(args, processor)
     write_run_runtime(summary_path, model, args)
     kv_bpt = kv_bytes_per_token(model.base_model.config, model.base_model.dtype)
     device = str(model.base_model.device)

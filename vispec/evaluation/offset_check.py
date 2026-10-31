@@ -38,7 +38,15 @@ import torch
 from ..model.autoregressive import autoregressive_generate
 from ..model.sparsity import POLICIES, RETENTIONS, SparsityConfig
 from ..model.spec_model_ours import SpecModel
-from .benchmarks import BENCHMARK_NAMES, PROMPT_STYLES, build_inputs, load_processor, load_samples
+from .benchmarks import (
+    BENCHMARK_NAMES,
+    PROMPT_STYLES,
+    build_inputs,
+    check_prompt_style,
+    draft_position_budget,
+    load_processor,
+    load_samples,
+)
 from .diagnose_divergence import fingerprint, git_commit
 
 DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16}
@@ -74,7 +82,13 @@ def parse_args(argv=None):
     parser.add_argument("--num-samples", type=int, default=5)
     parser.add_argument("--dtype", choices=tuple(DTYPES), default="float32")
     parser.add_argument("--output-dir", required=True, type=Path)
-    parser.add_argument("--benchmark", choices=BENCHMARK_NAMES, default="textvqa")
+    parser.add_argument(
+        "--benchmark",
+        choices=BENCHMARK_NAMES,
+        default="textvqa",
+        help="Benchmark whose first --num-samples prompts are checked (default textvqa). "
+        "reverse_summary uses its Re:Verse page windows (long style only), at most 55.",
+    )
     parser.add_argument("--prompt-style", choices=PROMPT_STYLES, default="long")
     parser.add_argument("--base-model-path", default="models/Qwen2.5-VL-3B-Instruct")
     parser.add_argument(
@@ -92,6 +106,10 @@ def parse_args(argv=None):
         parser.error("--num-samples must be positive")
     if args.max_new_token < 1:
         parser.error("--max-new-token must be positive")
+    try:
+        check_prompt_style(args.benchmark, args.prompt_style)
+    except ValueError as error:
+        parser.error(str(error))
     if args.output_dir.exists():
         parser.error(f"--output-dir {args.output_dir} already exists; use a new folder")
     return args
@@ -261,8 +279,18 @@ def run(args):
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         torch.set_float32_matmul_precision("highest")
-    samples = load_samples(args.benchmark, args.data_dir, args.num_samples)
+    # The processor comes first: reverse_summary checks each window's prompt length
+    # against the draft's position budget while loading its samples.
     processor = load_processor(args.base_model_path)
+    samples = load_samples(
+        args.benchmark,
+        args.data_dir,
+        args.num_samples,
+        processor=processor,
+        position_budget=draft_position_budget(
+            args.max_new_token, args.depth, args.spec_model_path
+        ),
+    )
     model = load_model(args)
     if processor.tokenizer.eos_token_id != model.tokenizer.eos_token_id:
         raise RuntimeError(

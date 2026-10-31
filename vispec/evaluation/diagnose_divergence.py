@@ -664,18 +664,21 @@ def main(argv=None):
     args.output_dir.mkdir(parents=True, exist_ok=False)
     print(f"{len(cases)} mismatching turns to diagnose ({skipped} from other runs skipped)")
 
+    # The processor comes first: reverse_summary needs it to rebuild its multi-image
+    # windows (and their position check) exactly as the evaluator did.
+    processor = load_processor(args.base_model_path)
     samples = {}
     for benchmark in {case["benchmark"] for case in cases}:
         size = subset_size(original_run, benchmark, original_meta)
         samples[benchmark] = {
-            s.question_id: s for s in load_samples(benchmark, args.data_dir, size)
+            s.question_id: s
+            for s in load_samples(benchmark, args.data_dir, size, processor=processor)
         }
         missing = {str(c["question_id"]) for c in cases if c["benchmark"] == benchmark}
         missing -= set(samples[benchmark])
         if missing:
             raise ValueError(f"{benchmark} questions not in the subset: {sorted(missing)}")
 
-    processor = load_processor(args.base_model_path)
     for case in cases:
         for key in ("ar", "vispec"):
             token_id = case[f"{key}_token_id"]

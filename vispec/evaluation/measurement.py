@@ -248,7 +248,12 @@ def references(row):
     return []
 
 
-def write_manifest(answer_file, data, benchmark):
+def write_manifest(answer_file, data, benchmark, extra=None):
+    """Write ``<answer_file stem>.manifest.json``: the expected questions of one run.
+
+    A row's optional ``manifest_fields`` dict is copied into its question entry, and
+    ``extra`` into the top level (reverse_summary window settings and positions).
+    """
     questions = [
         {
             "question_id": str(
@@ -258,17 +263,20 @@ def write_manifest(answer_file, data, benchmark):
                         "gqa": "question_id",
                         "mmvet": "id",
                         "coco_caption": "question_id",
+                        "reverse_summary": "question_id",
                     }[benchmark]
                 ]
             ),
             "reference_answers": references(row),
+            **row.get("manifest_fields", {}),
         }
         for row in data
     ]
     path = Path(answer_file).with_suffix(".manifest.json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps({"benchmark": benchmark, "questions": questions}, indent=2) + "\n"
+        json.dumps({"benchmark": benchmark, **(extra or {}), "questions": questions}, indent=2)
+        + "\n"
     )
 
 

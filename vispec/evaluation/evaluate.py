@@ -29,8 +29,13 @@ from .benchmarks import (
     BENCHMARK_NAMES,
     PROMPT_STYLES,
     build_inputs,
+    check_prompt_style,
+    draft_position_budget,
     load_processor,
     load_samples,
+    manifest_header,
+    manifest_row,
+    stored_references,
 )
 from .measurement import (
     GenerationMeasurement,
@@ -188,6 +193,10 @@ def check_arguments(parser, args):
         parser.error("--method autoregressive is greedy only; use --temperature 0.0")
     if args.num_samples < 1:
         parser.error("--num-samples must be positive")
+    try:
+        check_prompt_style(args.benchmark, args.prompt_style)
+    except ValueError as error:
+        parser.error(str(error))
     # Both sparsity settings fail before any model loads, and they combine (target eviction
     # plus draft pruning). generation_args then records the effective settings.
     config = kv_sparsity_config(args)
@@ -259,9 +268,13 @@ def generate(
     return output_ids, new_token, steps, [], stats["decode_time"]
 
 
-def load_model(args):
-    """Load the processor and the shared SpecModel; returns (processor, model, tokenizer)."""
-    processor = load_processor(args.base_model_path)
+def load_model(args, processor=None):
+    """Load the processor (unless given) and the shared SpecModel.
+
+    Returns (processor, model, tokenizer).
+    """
+    if processor is None:
+        processor = load_processor(args.base_model_path)
 
     model = SpecModel.from_pretrained(
         base_model_path=args.base_model_path,
@@ -344,20 +357,24 @@ def run(args):
         )
     answer_file.parent.mkdir(parents=True, exist_ok=True)
 
-    samples = load_samples(args.benchmark, Path(args.data_dir), args.num_samples)
+    # The processor comes first: reverse_summary checks every window's exact prompt length
+    # against the draft's position budget while loading its samples.
+    processor = load_processor(args.base_model_path)
+    budget = draft_position_budget(args.max_new_token, args.depth, args.spec_model_path)
+    samples = load_samples(
+        args.benchmark,
+        Path(args.data_dir),
+        args.num_samples,
+        processor=processor,
+        position_budget=budget,
+    )
     write_manifest(
         answer_file,
-        [
-            {
-                "qid": s.question_id,
-                "question_id": s.question_id,
-                "answers": list(s.references),
-            }
-            for s in samples
-        ],
+        [manifest_row(args.benchmark, s) for s in samples],
         args.benchmark,
+        extra=manifest_header(args.benchmark, samples, budget),
     )
-    processor, model, tokenizer = load_model(args)
+    processor, model, tokenizer = load_model(args, processor)
     write_run_runtime(answer_file, model, args)
 
     kv_bpt = kv_bytes_per_token(model.base_model.config, model.base_model.dtype)
@@ -421,7 +438,7 @@ def run(args):
                 json.dumps(
                     {
                         "question_id": sample.question_id,
-                        "reference_answers": list(sample.references),
+                        "reference_answers": stored_references(args.benchmark, sample),
                         "answer_id": shortuuid.uuid(),
                         "model_id": args.model_id,
                         "choices": [choice],
