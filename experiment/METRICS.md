@@ -468,8 +468,12 @@ python -m vispec.evaluation.sweep_table --run-dirs <run>... --output-dir experim
 - Roles: the autoregressive reference is `method=autoregressive` with no sparsity settings, the
   ViSpec reference is `vispec_speculative` with none. Autoregressive eviction arms are arms. The
   same-policy 1.0 arm has the same method, sweep and policy at retention 1.0.
-- Latency ratios are reference latency over arm latency (above 1 means the arm is faster).
-  Speedup is the AR reference latency over the arm latency. Memory ratios are arm over reference.
+- The direction is in the column name. `speedup_vs_ar`, `latency_speedup_vs_vispec_ref` and
+  `latency_speedup_vs_samepolicy_1_0` are reference latency over arm latency (above 1 means the arm
+  is faster). `decode_peak_arm_over_samepolicy_1_0` and `live_kv_arm_over_samepolicy_1_0` are arm
+  over reference memory (above 1 means more memory). `sweep.json` repeats this in `column_notes`.
+- When an arm and a reference cover different samples, the affected cells stay empty and the row's
+  `note` column and the Notes section name the reference and both counts.
 - Token and text agreement use the `compare_metrics` logic (`token_agreement`,
   `answer_agreement_rates`). Agreement against the AR reference is computed by the tool, because
   method mode refuses sparsity-arm-versus-AR pairs.

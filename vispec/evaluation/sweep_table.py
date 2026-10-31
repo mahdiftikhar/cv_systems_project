@@ -38,10 +38,20 @@ COLUMNS = (
     "draft_min_kept_per_image", "post_compaction_peak_gib",
     "token_matched_vs_vispec", "token_checked_vs_vispec", "token_agreement_vs_vispec",
     "answer_agreement_vs_vispec", "token_matched_vs_ar", "token_checked_vs_ar",
-    "token_agreement_vs_ar", "speedup_vs_ar", "latency_ratio_vs_vispec_ref",
-    "latency_ratio_vs_samepolicy_1_0", "decode_peak_ratio_vs_samepolicy_1_0",
-    "live_kv_ratio_vs_samepolicy_1_0", "quality_delta_vs_vispec_ref",
+    "token_agreement_vs_ar", "speedup_vs_ar", "latency_speedup_vs_vispec_ref",
+    "latency_speedup_vs_samepolicy_1_0", "decode_peak_arm_over_samepolicy_1_0",
+    "live_kv_arm_over_samepolicy_1_0", "quality_delta_vs_vispec_ref", "note",
 )
+
+COLUMN_NOTES = {
+    "speedup_vs_ar": "AR reference mean latency / arm mean latency; above 1 means the arm is faster",
+    "latency_speedup_vs_vispec_ref": "ViSpec reference mean latency / arm mean latency; above 1 means the arm is faster",
+    "latency_speedup_vs_samepolicy_1_0": "same-policy 1.0 arm mean latency / arm mean latency; above 1 means the arm is faster",
+    "decode_peak_arm_over_samepolicy_1_0": "arm mean decode peak / same-policy 1.0 arm mean decode peak; above 1 means more memory",
+    "live_kv_arm_over_samepolicy_1_0": "arm mean live KV / same-policy 1.0 arm mean live KV; above 1 means more memory",
+    "quality_delta_vs_vispec_ref": "arm quality minus ViSpec reference quality, percentage points",
+    "note": "per-row warning, for example sample sets that differ from a reference (affected cells are empty)",
+}
 
 
 def newest_report(run_dir):
@@ -266,6 +276,14 @@ def build_group(style, job, runs, notes):
             def same_keys(other):
                 return peers(other) and set(other["maps"][benchmark]) == set(run["maps"][benchmark])
 
+            mismatches = [
+                f"sample sets differ vs {label}: {len(run['maps'][benchmark])} vs "
+                f"{len(other['maps'][benchmark])}"
+                for label, other in (
+                    ("vispec ref", vispec), ("ar ref", ar), ("same-policy 1.0", same_policy)
+                )
+                if peers(other) and not same_keys(other)
+            ]
             vs_vispec = agreement(vispec, run, benchmark)
             vs_ar = agreement(ar, run, benchmark)
             quality = quality_mean(run["maps"][benchmark], set(run["maps"][benchmark]))
@@ -311,17 +329,17 @@ def build_group(style, job, runs, notes):
                 "token_checked_vs_ar": vs_ar and vs_ar["checked"],
                 "token_agreement_vs_ar": vs_ar and vs_ar["rate"],
                 "speedup_vs_ar": ratio(mean_latency(ar), latency) if same_keys(ar) else None,
-                "latency_ratio_vs_vispec_ref": (
+                "latency_speedup_vs_vispec_ref": (
                     ratio(mean_latency(vispec), latency) if same_keys(vispec) else None
                 ),
-                "latency_ratio_vs_samepolicy_1_0": (
+                "latency_speedup_vs_samepolicy_1_0": (
                     ratio(mean_latency(sp), latency) if sp else None
                 ),
-                "decode_peak_ratio_vs_samepolicy_1_0": (
+                "decode_peak_arm_over_samepolicy_1_0": (
                     ratio(stat(memory, "decode_peak_allocated_gib"),
                           mem(sp, "decode_peak_allocated_gib")) if sp else None
                 ),
-                "live_kv_ratio_vs_samepolicy_1_0": (
+                "live_kv_arm_over_samepolicy_1_0": (
                     ratio(stat(memory, "kv_live_mib"), mem(sp, "kv_live_mib")) if sp else None
                 ),
                 "quality_delta_vs_vispec_ref": (
@@ -329,8 +347,12 @@ def build_group(style, job, runs, notes):
                     if quality is not None and ref_quality is not None and quality_comparable
                     else None
                 ),
+                "note": "; ".join(mismatches) or None,
                 "run_dir": str(run["run_dir"]),
             })
+    for row in rows:
+        if row["note"]:
+            notes.append(f"{style}/{job} {row['method']} {row['arm']} {row['benchmark']}: {row['note']}")
     return rows
 
 
@@ -365,7 +387,8 @@ def write_outputs(rows, notes, skipped, output_dir):
     output_dir.mkdir(parents=True, exist_ok=False)
     fields = list(COLUMNS) + ["run_dir"]
     (output_dir / "sweep.json").write_text(json.dumps(
-        {"columns": fields, "rows": rows, "notes": notes, "skipped_runs": skipped},
+        {"columns": fields, "column_notes": COLUMN_NOTES, "rows": rows, "notes": notes,
+         "skipped_runs": skipped},
         indent=2, allow_nan=False) + "\n")
     with (output_dir / "sweep.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
@@ -374,8 +397,8 @@ def write_outputs(rows, notes, skipped, output_dir):
     lines = [
         "# Retention sweep table", "",
         "- One table per (prompt style, Slurm job). Every ratio stays inside its job.",
-        "- Latency ratios are reference latency / arm latency (above 1 means the arm is faster);"
-        " memory ratios are arm / reference.",
+        "- `*_speedup_vs_*` columns are reference latency / arm latency (above 1 means the arm is faster);"
+        " `*_arm_over_*` columns are arm / reference memory (above 1 means more memory).",
         "- Speedup is the AR reference latency over the arm latency. Agreement is exact generated"
         " token IDs through first EOS (token) or whitespace-normalised decoded text (text).",
         "- `Pending` means the value is absent or its reference is missing.", "",
@@ -386,8 +409,8 @@ def write_outputs(rows, notes, skipped, output_dir):
         "decode_peak_max_gib", "live_kv_mean_mib", "quality", "kv_min_kept_per_image",
         "draft_min_kept_per_image", "post_compaction_peak_gib",
         "token_agreement_vs_vispec", "answer_agreement_vs_vispec", "token_agreement_vs_ar",
-        "speedup_vs_ar", "latency_ratio_vs_vispec_ref", "latency_ratio_vs_samepolicy_1_0",
-        "decode_peak_ratio_vs_samepolicy_1_0", "live_kv_ratio_vs_samepolicy_1_0",
+        "speedup_vs_ar", "latency_speedup_vs_vispec_ref", "latency_speedup_vs_samepolicy_1_0",
+        "decode_peak_arm_over_samepolicy_1_0", "live_kv_arm_over_samepolicy_1_0",
         "quality_delta_vs_vispec_ref",
     )
     seen = []
