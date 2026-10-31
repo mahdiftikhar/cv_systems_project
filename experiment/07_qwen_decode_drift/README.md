@@ -13,7 +13,11 @@ and a full recompute, which any cached decoder would show, or a deviation specif
 The difference matters because every Week 3 arm decodes through the fork. A fork-specific
 deviation would be inherited by all of them.
 
-Status: **pending**. The job has not run yet.
+Status: **measured** (Slurm job 398844, exit code 0). **Both stop conditions hold**, so by the
+plan's rule the 35537 case points to a deviation specific to the fork. The fork and stock HF
+greedy decoding agree exactly on 19 of 100 questions. At 35537:162 the fork's logits for 13 and
+95518 tie exactly, while stock incremental decoding prefers 95518 by 0.375 logits. The results and
+the inferences drawn from them are [below](#results).
 
 ## Decision rule
 
@@ -117,6 +121,11 @@ PROMPT_STYLE=long CLUSTER_PARTITION=preempt SBATCH_EXTRA="--cpus-per-task=4 --me
 
 Inside an existing one-GPU allocation, run `PROMPT_STYLE=long bash experiment/07_qwen_decode_drift/run.sh`.
 
+Job 398844 was submitted from a Git worktree. A worktree has no copy of the git-ignored reference
+run, so the same command was prefixed with
+`ANSWERS=/home/aeternum/Research2/cv_systems_project/experiment/02_qwen_autoregressive/runs/20261020T084113Z_66f492a5dc65_long_2P5sjB/results/textvqa_test/autoregressive_qwen/test.jsonl`.
+`metadata.txt` records that path and its SHA-256.
+
 ## Run artifacts
 
 Each launch creates `runs/<UTC>_<commit12>_long_XXXXXX/`. It holds the full commit, the
@@ -145,15 +154,130 @@ drift/drift.md     the same results as tables
 
 ## Results
 
-**Pending.**
+### Hardware and run
+
+| Item | Value |
+| --- | --- |
+| Job | Slurm 398844, `preempt`, 00:23:13, exit code 0, restart count 0 |
+| Node and card | `c4-2`, Intel Xeon Silver 4210R, one `NVIDIA RTX A6000` (UUID `GPU-121d8d15-73ed-7503-0def-2b7d7340e02a`, driver 615.71.09) |
+| Allocation | 1 GPU, 4 CPUs, 22,528 MB |
+| Code | Commit `ebd13d6335c3`, no tracked changes (`tracked-changes.patch` is empty) |
+| Run folder | [`runs/20261031T131409Z_ebd13d6335c3_long_P6J18R`](runs/20261031T131409Z_ebd13d6335c3_long_P6J18R/drift/drift.md), [device report](runs/20261031T131409Z_ebd13d6335c3_long_P6J18R/device.txt) |
+
+The job ran from a separate Git worktree, with `models/`, `bench_data/`, `.preparation/`, `.cache/`
+and `tools/downloaded/` symlinked to the main checkout. `git-status.txt` therefore lists four
+untracked symlink entries and no tracked changes. The link points at a run folder that Git
+ignores. It is preserved on project storage and resolves only in a checkout that has it.
+
+The reference fork answers were generated on a different card (`c1-8`, job 393336). For question
+35537 the fork re-run on this card reproduced all 1,024 saved tokens. The Week 1 (`c2-2`) and
+Week 2 (`c1-8`) 02 runs also match token for token, so the fork's greedy tokens have so far not
+depended on which A6000 they ran on.
+
+### Stop conditions
+
+| Condition | Result | Evidence |
+| --- | --- | --- |
+| (a) stock incremental (ii) prefers 95518 while the fork (i) prefers 13 | **Holds** | (i) gives 13 and 95518 the same bf16 logit, 24.375, and `torch.argmax` takes the lower ID, 13. (ii) prefers 95518 by 0.375 |
+| (b) a Part A first mismatch with a stock bf16 teacher-forced margin above 0.5 | **Holds** | Only question 35537 at index 162 (margin 0.625), which is the focus case itself. The other 80 mismatches have margins of at most 0.500 (question 39341, at exactly 0.5) |
+
+By the plan's rule, the result points to a deviation specific to the fork, which every arm
+inherits. Condition (b) is not independent evidence, because it is triggered only by the same case
+that condition (a) examines.
+
+### Part B: question 35537, output index 162
+
+The prefix is the fork's first 162 output tokens. Stock `generate` followed that prefix through
+index 161 and first differed at index 162. So (ii) is measured on the same prefix as (i), and
+condition (a) uses (ii). Logits are in raw logit units.
+
+| Condition | Logit of 13 (".") | Logit of 95518 ("**:") | 95518 minus 13 | Preferred | Top-2 margin |
+| --- | ---: | ---: | ---: | --- | ---: |
+| (i) fork incremental AR, bf16 | 24.375 | 24.375 | 0.000 | 13 (exact tie) | 0.000 |
+| (ii) stock incremental `generate`, bf16 | 24.125 | 24.500 | 0.375 | 95518 | 0.375 |
+| (ii-tf) stock incremental, teacher-forced, bf16 | 24.125 | 24.500 | 0.375 | 95518 | 0.375 |
+| (iii) stock full recompute, bf16 | 24.000 | 24.625 | 0.625 | 95518 | 0.625 |
+| (iv) stock full recompute, fp32 | 24.023 | 24.747 | 0.724 | 95518 | 0.724 |
+
+In every condition these two tokens are the top 2. The third-ranked token is at least 4.5 logits
+below the top one.
+The table below gives the largest absolute logit difference over the whole vocabulary between pairs
+of conditions:
+
+| Pair | Max abs logit difference |
+| --- | ---: |
+| (i) fork vs (ii) stock incremental | 0.594 |
+| (ii) vs (ii-tf) | 0.000 |
+| (ii-tf) stock incremental vs (iii) stock full recompute | 0.172 |
+| (i) fork vs (iii) stock full recompute | 0.625 |
+| (iii) bf16 vs (iv) fp32 full recompute | 0.430 |
+| (i) fork vs (iv) fp32 full recompute | 0.746 |
+
+Four checks back these numbers:
+
+- The fork re-run reproduced all 1,024 saved tokens.
+- The hook saw 1,024 base-model forward calls, one per output token, and its captured argmax is
+  the token the re-run emitted, 13.
+- The `generate` scores equal its raw logits, so no logits processor was active.
+- The manual cached loop (ii-tf) reproduces `generate`'s logits exactly.
+
+### Part A: fork AR tokens against stock greedy `generate` (TextVQA `long`, 100 questions)
+
+| Measure | Value |
+| --- | --- |
+| Exact agreement | **19/100** |
+| First mismatches | 81. Index min 1, median 46, max 314. None at index 0 (the prefill token agrees on all 100), and 7 at index 1 (the first cached decode step). No sequence ended early |
+| Stock bf16 teacher-forced margin at the first mismatch | 44 exact ties (0.000), 73 at most 0.125, 78 at most 0.25, 1 at exactly 0.500 (39341), 1 above 0.5 (35537, 0.625) |
+| bf16 full-recompute argmax | Stock token 54, fork token 26, neither 1 |
+| fp32 full-recompute argmax (TF32 off) | Fork token 41, stock token 40. Median fp32 margin 0.078. Above 0.5: 35537 (0.724, stock), 39158 (0.936, stock) and 35830 (0.500, fork) |
+| Stop reasons | Fork: 96 EOS, 4 at the 1,024-token cap. Stock: 94 EOS, 6 at the cap |
+
+The per-question table, with both tokens, the top-2 and both margins, is in the run's
+[`drift.md`](runs/20261031T131409Z_ebd13d6335c3_long_P6J18R/drift/drift.md). For scale, fork AR and
+ViSpec agreed on 22/100 long-style TextVQA questions in Week 1. The fork and stock HF cached
+decoding agree less often than that.
+
+### Reading the results
+
+The measurements show that the fork's cached decode does not reproduce stock HF cached decoding.
+At the focus step, the fork's logits are up to 0.59 away from stock incremental decoding, while
+stock incremental decoding and stock full recompute are at most 0.17 apart. The 35537 case
+therefore goes beyond the cached-against-full drift that stock HF itself shows. Stock's own
+cached decode prefers 95518.
+
+The following points are **inferences** and were not measured:
+
+- **Rounding, not wrong arithmetic.** The deviation looks like a different bf16 rounding path,
+  not a wrong computation. Of the 81 divergences, 80 are within the 0.5-logit near-tie band, and
+  44 are exact bf16 ties. None occurs at the prefill token. In fp32 the full recompute sides with
+  the fork about as often as with stock (41 against 40), so neither decoder is closer to the fp32
+  reference on these points. In bf16 the full recompute sides with stock 54 to 26, which fits stock
+  incremental decoding sharing more of its numeric path with stock full recompute.
+- **Weak preference at the focus step.** The fork's preference for 13 is the weakest possible: an
+  exact bf16 tie broken by token order. Stock incremental decoding sits 0.375 logits toward 95518,
+  and fp32 sits 0.724 toward it.
+- **Mechanism not isolated.** Reading the code shows that the fork's decode attention keeps the
+  stock SDPA call and the same mask decision. The fork differs from stock in three ways:
+  - it stores keys and values in a preallocated buffer (`KVCache.cat` returns narrowed views)
+    instead of `DynamicCache`;
+  - it passes explicit M-RoPE position IDs in the compact layout;
+  - it projects only the last prefill position to the vocabulary (slim prefill).
+
+  The stock model's vision tower was recorded as `eager` attention. The fork's vision-tower
+  setting was not recorded. Any of these is a candidate, and no experiment here separates them.
 
 ## Limitations
 
 - One focus case. Part B measures one token position of one question, so it cannot estimate how
-  often the fork drifts.
+  often the fork drifts. Condition (b) holds only through that same case.
 - Part A covers only TextVQA in the `long` style (100 questions). COCO and the `short` style are not
   probed.
-- One run on one card. Repeat variability is not measured, although greedy bf16 decoding on the
-  same card and software stack has reproduced token for token so far (Week 1 and Week 2 02 runs).
+- Part A compares the saved fork tokens (job 393336, card `GPU-8d51152c`) with stock tokens from
+  this job's card. Only question 35537 was re-run through the fork on this card. Earlier cross-card
+  agreement (Week 1 against Week 2, 100/100) suggests the card does not matter, but this was not
+  re-checked for the other 99 questions.
+- One run. Repeat variability is not measured, although greedy bf16 decoding on the same software
+  stack has reproduced token for token so far.
 - The stock reference uses the same transformers 4.51.3 code that the fork was forked from. A bug
   shared by both would be invisible here.
+- The probe does not identify which difference between the fork and stock moves the logits.
