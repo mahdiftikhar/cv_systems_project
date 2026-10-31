@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Shared by experiment/05_qwen_draft_pruning/run.sh and experiment/06_qwen_kv_eviction/run.sh.
-# Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (draft|kv),
+# Shared by experiment/05_qwen_draft_pruning, 06_qwen_kv_eviction and 08_qwen_combined_sparsity run.sh.
+# Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (draft|kv|combined),
 # arms (space-separated <retention>:<policy>[:<method>]), prompt_style, and has done
 # `set -euo pipefail` and `cd "$repo_dir"`.
 # Each arm gets its own run folder with the full launch evidence and its own EXIT report.
@@ -91,11 +91,14 @@ qwen_run_arm() {
     fi
     # Sparsity settings this arm applies; "none" in metadata means the flag is omitted.
     local kv_retention="none" kv_policy="none" draft_retention="none" draft_policy="none"
-    if [[ "$sweep" == "kv" ]]; then
-        kv_retention="$ret"; kv_policy="$policy"
-    else
-        draft_retention="$ret"; draft_policy="$policy"
-    fi
+    case "$sweep" in
+        draft) draft_retention="$ret"; draft_policy="$policy" ;;
+        kv) kv_retention="$ret"; kv_policy="$policy" ;;
+        combined)
+            kv_retention="$ret"; kv_policy="$policy"
+            draft_retention="$ret"; draft_policy="$policy" ;;
+        *) echo "Unknown sweep type '$sweep' (expected draft, kv or combined)." >&2; exit 2 ;;
+    esac
 
     command -v "$python_bin" >/dev/null || return 1
     export PATH="$(dirname "$python_bin"):$PATH"
@@ -205,11 +208,13 @@ qwen_run_arm() {
             cmd+=(--depth "$depth" --top-k "$top_k" --total-token "$total_token" --num-q "$num_q")
         fi
         cmd+=(--kv-capacity "$kv_capacity" --kv-layout compact)
-        if [[ "$sweep" == "kv" ]]; then
-            cmd+=(--kv-retention "$ret" --kv-policy "$policy")
-        else
-            cmd+=(--draft-retention "$ret" --draft-policy "$policy")
-        fi
+        case "$sweep" in
+            draft) cmd+=(--draft-retention "$ret" --draft-policy "$policy") ;;
+            kv) cmd+=(--kv-retention "$ret" --kv-policy "$policy") ;;
+            combined) cmd+=(--kv-retention "$ret" --kv-policy "$policy"
+                --draft-retention "$ret" --draft-policy "$policy") ;;
+            *) echo "Unknown sweep type '$sweep' (expected draft, kv or combined)." >&2; exit 2 ;;
+        esac
         printf '\nRunning:'
         printf ' %q' "${cmd[@]}"
         printf '\n'

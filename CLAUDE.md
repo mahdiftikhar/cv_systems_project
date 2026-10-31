@@ -146,7 +146,7 @@ retention 1.0 or policy `spatial`):
 - `--draft-retention` and `--draft-policy` (same values): draft-side pruning of the image adaptor
   input. ViSpec only; `--method autoregressive` rejects them.
 
-Experiment 04 profiles decode. Experiment 05 (`DRAFT_ARMS`) and 06 (`KV_ARMS`) sweep arms of
+Experiment 04 profiles decode. Experiment 07 is the cached-decode drift probe and 08 the combined draft-and-KV sparsity sweep (`COMBINED_ARMS`, `<retention>:<policy>`, ViSpec only, the same budget and policy on both sides). Experiment 05 (`DRAFT_ARMS`) and 06 (`KV_ARMS`) sweep arms of
 `<retention>:<policy>[:<method>]` (06 only takes the method, `vispec` by default or `autoregressive`),
 one run folder per arm via `experiment/qwen_arm_runner.sh`, always with `--kv-layout compact`. An
 invalid arm list exits 2 before any folder is created. Run the same-job references first: 02 and 03
@@ -187,5 +187,5 @@ Qwen hazards:
 - `.gitignore` ignores `experiment/*/runs/*`, except the two snapshots for jobs 950793 and 950803.
   Treat those as immutable evidence and write reruns and re-reports to new directories.
 - Experiments 00 and 01 cover only TextVQA, GQA and MM-Vet with LLaVA. The Qwen path is in scope
-  through experiments 02 to 06 (see the Qwen section above). The Mixtral, Medusa, training
+  through experiments 02 to 08 (see the Qwen section above). The Mixtral, Medusa, training
   (`vispec/train`) and data-generation (`vispec/ge_data`) paths are inherited and unexercised.

@@ -90,6 +90,7 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [04: Qwen decode profile](04_qwen_decode_profile/README.md) | Where AR and ViSpec decode time goes (`torch.profiler`) | Measured (job 393060), `long`, 3 samples per benchmark. Decode is inferred to be host-bound |
 | [05: Qwen draft pruning](05_qwen_draft_pruning/README.md) | ViSpec with a pruned draft image-adaptor input, vs the same arm at 100% | Week 2 measured (jobs 393336, 393337), retention 1.0 and 0.5, 100/100 per benchmark. Identity gate passed. Draft-only diagnosis failed for `long` 0.5:attention (1 unexplained case). 0.25, 0.75 and combined arms pending |
 | [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 measured (jobs 393336, 393337), retention 1.0 and 0.5, 100/100 per benchmark. Identity gate and bookkeeping check passed. 0.25, 0.75 and combined arms pending |
+| [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Pending, no run yet |
 
 Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
 Qwen2.5-VL-3B-Instruct on TextVQA and COCO Captions (100 samples each) in two prompt styles,
