@@ -1006,9 +1006,10 @@ class Model(nn.Module):
                             b, img_id_end - img_adapted.shape[0] + 1 : img_id_end
                         ],
                     ]
+                    # This image's own text rows and adapted rows (h_s[-2], h_s[-1]).
                     t_m += [
-                        eye_m[img_id_start : img_id_start + h_s[0].shape[0], :],
-                        eye_m[img_id_end - h_s[1].shape[0] : img_id_end, :],
+                        eye_m[img_id_start : img_id_start + h_s[-2].shape[0], :],
+                        eye_m[img_id_end - h_s[-1].shape[0] : img_id_end, :],
                     ]
                     img_id_start = img_id_end
 
@@ -1019,6 +1020,13 @@ class Model(nn.Module):
                 h_s.append(self.fc(torch.cat((rst_emd, hidden), dim=-1)))
                 p_i.append(position_ids[b, img_id_start:])
                 t_m.append(eye_m[img_id_start:, :])
+                h_s_rows = sum(h.shape[0] for h in h_s)
+                t_m_rows = sum(m.shape[0] for m in t_m)
+                if t_m_rows != h_s_rows:
+                    raise RuntimeError(
+                        f"draft image branch, batch row {b}: trans_mat has {t_m_rows} rows "
+                        f"but the compressed sequence has {h_s_rows}"
+                    )
                 h_s = torch.cat(h_s, dim=0).unsqueeze(0)
                 p_i = torch.cat(p_i, dim=0).unsqueeze(0)
                 t_m = torch.cat(t_m, dim=0).unsqueeze(0)
