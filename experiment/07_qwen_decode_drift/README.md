@@ -14,17 +14,17 @@ The difference matters because every Week 3 arm decodes through the fork. A fork
 deviation would be inherited by all of them.
 
 Status: **measured** (Slurm job 398844, exit code 0). **The stop rule fired**: both stop conditions
-hold, and by the rule's reading the 35537 case points to a deviation specific to the fork. **The
-user ruled it bf16 implementation noise**, so it is recorded as a known limitation and the plan
-continues unchanged (see [Decision](#decision)). The fork and stock HF greedy decoding agree
+hold, and by the rule's reading the 35537 case points to a deviation specific to the fork. **We
+judged it bf16 implementation noise**, so it is recorded as a known limitation and the remaining
+experiments continue unchanged (see [Decision](#decision)). The fork and stock HF greedy decoding agree
 exactly on 19 of 100 questions. At 35537:162 the fork's logits for 13 and 95518 tie exactly, while
 stock incremental decoding prefers 95518 by 0.375 logits. The results and the inferences drawn from
 them are [below](#results).
 
 ## Decision rule
 
-The Week 3 plan (Task 1, Step 6) defines two stop conditions. If either holds, the result points to
-a deviation specific to the fork, and the controller stops and reports to the user.
+The probe has two stop conditions, fixed before it ran. If either holds, the result points to
+a deviation specific to the fork, and work stops until the result has been reviewed.
 
 - **(a)** In Part B, stock incremental decoding (ii) prefers 95518 while the fork (i) prefers 13.
 - **(b)** In Part A, fork and stock greedy decoding disagree at a first mismatch whose stock
@@ -163,7 +163,7 @@ drift/drift.md     the same results as tables
 | Job | Slurm 398844, `preempt`, 00:23:13, exit code 0, restart count 0 |
 | Node and card | `c4-2`, Intel Xeon Silver 4210R, one `NVIDIA RTX A6000` (UUID `GPU-121d8d15-73ed-7503-0def-2b7d7340e02a`, driver 615.71.09) |
 | Allocation | 1 GPU, 4 CPUs, 22,528 MB |
-| Code | Commit `ebd13d6335c3`, no tracked changes (`tracked-changes.patch` is empty) |
+| Code | Commit `ebd13d6335c3`, tagged `run-398844-drift-probe` (the probe was written on a side branch and merged here as `d89246c`), no tracked changes (`tracked-changes.patch` is empty) |
 | Run folder | [`runs/20261031T131409Z_ebd13d6335c3_long_P6J18R`](runs/20261031T131409Z_ebd13d6335c3_long_P6J18R/drift/drift.md), [device report](runs/20261031T131409Z_ebd13d6335c3_long_P6J18R/device.txt) |
 
 The job ran from a separate Git worktree, with `models/`, `bench_data/`, `.preparation/`, `.cache/`
@@ -183,16 +183,16 @@ depended on which A6000 they ran on.
 | (a) stock incremental (ii) prefers 95518 while the fork (i) prefers 13 | **Holds** | (i) gives 13 and 95518 the same bf16 logit, 24.375, and `torch.argmax` takes the lower ID, 13. (ii) prefers 95518 by 0.375 |
 | (b) a Part A first mismatch with a stock bf16 teacher-forced margin above 0.5 | **Holds** | Only question 35537 at index 162 (margin 0.625), which is the focus case itself. The other 80 mismatches have margins of at most 0.500 (question 39341, at exactly 0.5) |
 
-By the plan's rule, the result points to a deviation specific to the fork, which every arm
+By the stop rule, the result points to a deviation specific to the fork, which every arm
 inherits. Condition (b) is not independent evidence, because it is triggered only by the same case
 that condition (a) examines. The verdict string in `drift.json` and `drift.md` ("STOP") is kept as
 the run's evidence.
 
 ### Decision
 
-The user ruled the result bf16 implementation noise ("Accept as bf16 noise"). This ruling
+On review, we judged the result bf16 implementation noise. That judgement
 supersedes the stop rule's reading. The result is recorded as a known limitation, and the Week 3
-plan continues unchanged. The reasons:
+sweeps continue unchanged. The reasons:
 
 - 80 of the 81 Part A divergences are near-ties, at or below the 0.5-logit threshold.
 - At those first mismatches, the fp32 full recompute sides with the fork 41 times and with stock
@@ -309,5 +309,5 @@ The following points are **inferences** and were not measured:
   shared by both would be invisible here.
 - **Known limitation: the mechanism is not isolated.** The fork's cached decode does not reproduce
   stock HF cached decoding token for token (19/100 on long TextVQA), and the probe does not identify
-  which difference between the fork and stock moves the logits. The user ruled the divergence bf16
+  which difference between the fork and stock moves the logits. We judged the divergence bf16
   implementation noise, so every Week 3 arm inherits this decode path as it is.

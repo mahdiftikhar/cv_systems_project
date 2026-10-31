@@ -16,7 +16,7 @@ Status: **measured for Week 2** at retention 1.0 and 0.5 (jobs 393336 and 393337
 samples per benchmark). The 1.0 identity gate passed on every arm. Acceptance and latency predictions held. At
 0.5 in the `short` style every arm agrees with the reference on 100/100 samples, and in the `long` style
 48 to 77 of 100 agree. The draft-only divergence diagnosis failed for `long` 0.5:attention (79 near-ties and 1
-unexplained case), which the controller's evidence traces to the shared cached decode and not to pruning, an
+unexplained case), which the evidence traces to the shared cached decode and not to pruning, an
 inference left open in [Results](#draft-only-divergence-diagnosis). Retention 0.25 and 0.75 and the combined arms are
 Week 3, pending.
 
@@ -135,7 +135,7 @@ The gate passed. Every 1.0 arm reproduces its null reference token for token on 
 | 05 ViSpec 1.0:spatial vs 03 | 100/100 | 100/100 | 100/100 | 100/100 |
 | 05 ViSpec 1.0:attention vs 03 | 100/100 | 100/100 | 100/100 | 100/100 |
 
-A controller check adds that the Week 2 compact references (02 and 03, `long`) equal the Week 1 fixed-layout runs token for token on 100/100 for TextVQA and for COCO Captions. The same holds for the `short` style. The compact layout therefore changed no output. The Week 1 runs are jobs 392660 and 392661 (see the [03 README](../03_qwen_vispec/README.md#results)).
+A separate check shows that the Week 2 compact references (02 and 03, `long`) equal the Week 1 fixed-layout runs token for token on 100/100 for TextVQA and for COCO Captions. The same holds for the `short` style. The compact layout therefore changed no output. The Week 1 runs are jobs 392660 and 392661 (see the [03 README](../03_qwen_vispec/README.md#results)).
 
 ### Style `long` (speed and acceptance measurement)
 
@@ -255,7 +255,7 @@ Diagnosis files:
 
 **The `long` 0.5:attention gate failed**: 79 near-ties and 1 unexplained case of 80. The threshold of 0.5 logits was not changed. `long` 0.5:spatial passed with 67 of 67 near-ties, and both `short` arms had 100/100 agreement and so no cases.
 
-The unexplained case is TextVQA question 35537, first mismatch at output index 162. The controller examined it and recorded this evidence:
+The unexplained case is TextVQA question 35537, first mismatch at output index 162. Examining it gave this evidence:
 
 - The reference (unpruned ViSpec, run 03) emitted "." (token 13) at index 162. The Week 1 02 and 03 runs and the Week 2 02 and 03 references emit the same token there.
 - The stock model, teacher-forced on the shared 162-token prefix, prefers "**:" (token 95518) over "." by 0.625 logits in bf16 and 0.724 in fp32.
@@ -265,7 +265,7 @@ From this we infer that the deviating token belongs to the shared incremental KV
 
 ### Notes on the attention policy
 
-The attention policy ranks the adaptor's image tokens by attention from its own learned queries and keeps the top fraction. In the Task 6 smoke run on 5 `long` TextVQA samples, the attention-selected and spatial-selected halves overlapped at a Jaccard of 0.31 to 0.35, which is about the 1/3 expected for two unrelated half-subsets. So the attention policy is not a disguised stride pattern. The selected indices are not saved with the Week 2 runs, so the overlap was not re-measured there. Attention scoring also runs at retention 1.0, so the 1.0 attention arm carries that overhead, which is part of why the primary latency reference is the same-policy 1.0 arm.
+The attention policy ranks the adaptor's image tokens by attention from its own learned queries and keeps the top fraction. In a smoke run on 5 `long` TextVQA samples, the attention-selected and spatial-selected halves overlapped at a Jaccard of 0.31 to 0.35, which is about the 1/3 expected for two unrelated half-subsets. So the attention policy is not a disguised stride pattern. The selected indices are not saved with the Week 2 runs, so the overlap was not re-measured there. Attention scoring also runs at retention 1.0, so the 1.0 attention arm carries that overhead, which is part of why the primary latency reference is the same-policy 1.0 arm.
 
 ### Week 3 (pending)
 
@@ -277,7 +277,7 @@ The attention policy ranks the adaptor's image tokens by attention from its own 
 
 - One run per arm and style: repeat variability is unknown. Subsets are 100 samples, not full benchmarks, so agreement counts and quality differences are noisy.
 - The `long` and `short` styles ran on different nodes, host CPUs and cards. Do not compare their latencies.
-- The draft-only diagnosis gate failed for `long` 0.5:attention, with one unexplained case. The controller's reading (a shared cached-decode effect, not pruning) is an inference from one case, and the underlying drift is open.
+- The draft-only diagnosis gate failed for `long` 0.5:attention, with one unexplained case. Our reading (a shared cached-decode effect, not pruning) is an inference from one case, and the underlying drift is open.
 - Exact agreement reflects bf16 near-ties and method effects together. Draft-only arms would reproduce the reference in exact arithmetic.
 - Pruning changes only the draft input. It cannot shrink target KV memory; see [06](../06_qwen_kv_eviction/README.md) for that.
 - The attention-policy overlap comes from a 5-sample smoke run and was not re-measured in these runs.

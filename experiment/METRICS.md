@@ -482,7 +482,7 @@ python -m vispec.evaluation.sweep_table --run-dirs <run>... --output-dir experim
   and note as the other `arm_over` columns, and is empty when either run lacks the field (Week 2).
 - `bertscore_f1` (reverse_summary only) is the mean BERTScore F1, 0-100.
   `bertscore_f1_delta_vs_vispec_ref` is the arm's minus the ViSpec reference's, in points. Both are
-  empty for other benchmarks. BERTScore is truncated and does not reflect later pages (W4-R10), so
+  empty for other benchmarks. BERTScore cuts each text at 512 word pieces, so it does not reflect later pages, and
   the primary `quality` and `quality_delta_vs_vispec_ref` stay ROUGE-1 F1 for reverse_summary.
 - `kv_min_kept_per_image`, `kv_image_tokens`, `draft_min_kept_per_image` and the
   `post_compaction_peak_allocated_gib` memory field are read when present. Week 2 runs lack them,
@@ -511,17 +511,17 @@ python experiment/plot_tradeoffs.py --sweeps <sweep.json>... --output-dir experi
 - Ratio directions are those of the column names, never inverted. `*_speedup_vs_*` is reference
   latency over arm latency (above 1 means faster). `*_arm_over_*` is arm over reference memory
   (above 1 means more memory). Axis labels state this.
-- A panel with no value shows "no data". Week 2 tables have no post-compaction field. `sweep_table`
-  writes only the absolute `post_compaction_peak_gib`, so panel 3 stays empty until the table adds
-  the `arm_over` column. The script does not divide it itself.
+- A panel with no value shows "no data". Week 2 tables have no post-compaction field, so panel 3
+  stays empty for them. The script reads `post_compaction_peak_arm_over_samepolicy_1_0` from the
+  table and does not divide anything itself.
 - Groups: every ratio was computed inside one (prompt style, Slurm job) group. A series always
   belongs to one group and its legend names the job when a figure holds several. A request to put
   rows of two groups into one series raises `ValueError`, as does reading the same row from two
   files. The three long-style Week 3 jobs therefore appear as separate, job-labelled series on one
   figure, never averaged.
-- `reverse_summary`: the four panels use ROUGE-1 F1. BERTScore is truncated and does not reflect
-  later pages (W4-R10), so it only gets a fifth, separately labelled panel. That panel reads
-  `bertscore_f1_delta_vs_vispec_ref`, which `sweep_table` does not write yet, so it shows "no data".
+- `reverse_summary`: the four panels use ROUGE-1 F1. BERTScore cuts each text at 512 word pieces and
+  does not reflect later pages, so it only gets a fifth, separately labelled panel. That panel reads
+  `bertscore_f1_delta_vs_vispec_ref`.
 
 ## Qwen experiments (02 and 03)
 
@@ -699,7 +699,7 @@ and `diagnose_divergence` accept `--benchmark reverse_summary` (prompt style `lo
 
 ### Data and terms
 
-- The data is the user's frozen local copy of Re:Verse+ (`FREEZE.json` 2026-10-16), reached
+- The data is a frozen local copy of Re:Verse+ (`FREEZE.json` 2026-10-16), reached
   through the git-ignored symlink `bench_data/reverse_plus`. `prepare.sh --suite reverse`
   checks it and writes `.preparation/assets_reverse.json`; the loader refuses to run without
   that file, and when the copy's `FREEZE.json` digest differs from the prepared one.
@@ -763,7 +763,7 @@ The ViSpec draft's RoPE table has 8,192 rows (`max_position_embeddings` of the r
 draft). The draft indexes it with the full, uncompressed token count
 (`cnets_ours.Model.topK_genrate`, `len_posi = input_ids.shape[1]`), and that index keeps
 growing while the answer is generated. So a window's prompt must leave room for the whole
-output (ruling W4-R7):
+output:
 
 ```
 prompt tokens + max_new_tokens + depth + 1 <= 8192, so prompt tokens <= 7,164 at 1,024 new tokens and depth 3

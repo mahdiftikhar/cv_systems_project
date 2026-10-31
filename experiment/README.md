@@ -90,7 +90,7 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [04: Qwen decode profile](04_qwen_decode_profile/README.md) | Where AR and ViSpec decode time goes (`torch.profiler`) | Measured (job 393060), `long`, 3 samples per benchmark. Decode is inferred to be host-bound |
 | [05: Qwen draft pruning](05_qwen_draft_pruning/README.md) | ViSpec with a pruned draft image-adaptor input, vs the same arm at 100% | Week 2 measured (jobs 393336, 393337), retention 1.0 and 0.5, 100/100 per benchmark. Identity gate passed. Draft-only diagnosis failed for `long` 0.5:attention (1 unexplained case). 0.25, 0.75 and combined arms pending |
 | [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 measured (jobs 393336, 393337), retention 1.0 and 0.5, 100/100 per benchmark. Identity gate and bookkeeping check passed. 0.25, 0.75 and combined arms pending |
-| [07: Qwen decode drift](07_qwen_decode_drift/README.md) | Fork cached AR decode vs stock HF cached and full-recompute decoding (Week 2 case 35537:162) | Measured (job 398844), `long` TextVQA, 100 questions. Fork and stock HF greedy agree on 19/100, and 80 of 81 first mismatches are bf16 near-ties. At 35537:162 the fork ties 13 and 95518 exactly, while stock incremental decoding prefers 95518 by 0.375. **Both plan stop conditions hold**, so the stop rule fired on one exact-tie case; ruled bf16 implementation noise (known limitation). The mechanism is not isolated |
+| [07: Qwen decode drift](07_qwen_decode_drift/README.md) | Fork cached AR decode vs stock HF cached and full-recompute decoding (Week 2 case 35537:162) | Measured (job 398844), `long` TextVQA, 100 questions. Fork and stock HF greedy agree on 19/100, and 80 of 81 first mismatches are bf16 near-ties. At 35537:162 the fork ties 13 and 95518 exactly, while stock incremental decoding prefers 95518 by 0.375. **Both plan stop conditions hold**, so the stop rule fired on one exact-tie case; judged bf16 implementation noise (known limitation). The mechanism is not isolated |
 | [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Pending, no run yet |
 | [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (about 7 to 8k tokens), `long` style, same-job references | Pending, no run yet |
 
@@ -209,7 +209,7 @@ What the measurements show:
   the 10.0-point limit (18 against 28); the rule was "more than 10".
 - **Draft pruning (05)** cost acceptance at most slightly and did not move latency, as predicted. Exact agreement
   is 100/100 in `short` and 48 to 77 of 100 in `long`. The draft-only diagnosis **failed** for `long` 0.5:attention
-  (79 near-ties and 1 unexplained case); `long` 0.5:spatial passed (67 of 67). The controller's evidence points to
+  (79 near-ties and 1 unexplained case); `long` 0.5:spatial passed (67 of 67). The evidence points to
   the shared cached decode and not to pruning, which is an inference, and the underlying drift is open.
 - **KV eviction (06)** cut live KV to 0.65 to 0.67 (`long`) and 0.53 to 0.58 (`short`) of the 1.0 arm and moved the
   decode peak by about 0.2% or less. Latency changed little per token, but long TextVQA end-to-end latency rose as

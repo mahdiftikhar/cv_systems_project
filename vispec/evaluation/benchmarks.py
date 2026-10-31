@@ -33,7 +33,7 @@ REVERSE_WINDOW_PAGES = 6
 # ViSpec-Qwen2.5-VL-3B-Instruct draft). The draft indexes it with the full, uncompressed
 # token count (cnets_ours.Model.topK_genrate, len_posi = input_ids.shape[1]), and that index
 # keeps growing during generation. So a window's prompt must leave room for the whole
-# output (ruling W4-R7): prompt + max_new_tokens + depth + 1 <= rows.
+# output: prompt + max_new_tokens + depth + 1 <= rows.
 DRAFT_POSITION_LIMIT = 8192
 # The budget at the Week 3 settings (1,024 new tokens, depth 3): 8192 - 1024 - 3 - 1.
 REVERSE_POSITION_BUDGET = DRAFT_POSITION_LIMIT - 1024 - 3 - 1
@@ -292,7 +292,7 @@ def draft_rope_rows(spec_model_path=None) -> int:
 def draft_position_budget(
     max_new_tokens: int = 1024, depth: int = 3, spec_model_path=None
 ) -> int:
-    """Largest prompt whose full generation stays inside the draft's RoPE table (W4-R7).
+    """Largest prompt whose full generation stays inside the draft's RoPE table.
 
     prompt + max_new_tokens + depth + 1 <= rope rows; 7,164 at the Week 3 settings.
     """

@@ -27,7 +27,7 @@ REQUIRED = (
     "latency_speedup_vs_vispec_ref", "live_kv_arm_over_samepolicy_1_0",
     "post_compaction_peak_gib", "speedup_vs_ar", "quality_delta_vs_vispec_ref",
 )
-# Optional columns. sweep_table does not write them today; a panel reads them if a table has them.
+# Optional columns. Older sweep tables lack them; a panel reads them if a table has them.
 POST_COMPACTION_RATIO = "post_compaction_peak_arm_over_samepolicy_1_0"
 BERTSCORE_DELTA = "bertscore_f1_delta_vs_vispec_ref"
 
@@ -206,7 +206,7 @@ def plot_all(rows, output_dir, points):
         quality_label = QUALITY_AXIS.get(benchmark, f"{benchmark} quality delta vs ViSpec ref (points)")
         panels = [(spec, "quality_delta_vs_vispec_ref", quality_label) for spec in PANELS]
         if benchmark == "reverse_summary":
-            # W4-R10: BERTScore is truncated and ignores later pages, so it only ever gets its own panel.
+            # BERTScore is truncated and ignores later pages, so it only ever gets its own panel.
             panels.append((("bertscore", "BERTScore F1 (separate panel, truncated)",
                             "latency_speedup_vs_vispec_ref", SPEEDUP_LABEL), BERTSCORE_DELTA, BERT_AXIS))
         nrows = (len(panels) + 1) // 2

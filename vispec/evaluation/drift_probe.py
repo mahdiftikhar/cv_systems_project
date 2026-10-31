@@ -24,7 +24,7 @@ alternative token under:
 - (iii) stock full recompute, bf16;
 - (iv) stock full recompute, fp32 (TF32 off).
 
-The two stop conditions (Week 3 plan, Task 1 Step 6) are evaluated and written out:
+The two stop conditions, fixed before the run, are evaluated and written out:
 
 - (a) in Part B, (ii) prefers the alternative token while (i) prefers the fork token;
 - (b) in Part A, a first mismatch whose stock bf16 teacher-forced margin is above 0.5.
@@ -156,7 +156,7 @@ def load_reference_runtime(answers_path):
     gen = runtime.get("generation_args") or {}
     if gen.get("method") != "autoregressive":
         raise ValueError(f"{answers_path} is not an autoregressive run (method {gen.get('method')!r})")
-    # Absent and null are the same setting (ruling R9); the probe needs the plain reference.
+    # Absent and null are the same setting; the probe needs the plain reference.
     active = {k: gen.get(k) for k in SPARSITY_KEYS if gen.get(k) is not None}
     if active:
         raise ValueError(f"{answers_path} ran with sparsity settings {active}; use a reference run")

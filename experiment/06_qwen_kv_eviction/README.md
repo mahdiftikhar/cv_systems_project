@@ -140,7 +140,7 @@ The gate passed. Every 1.0 arm reproduces its null reference token for token on 
 | 06 ViSpec 1.0:spatial vs 03 | 100/100 | 100/100 | 100/100 | 100/100 |
 | 06 ViSpec 1.0:attention vs 03 | 100/100 | 100/100 | 100/100 | 100/100 |
 
-A controller check adds that the Week 2 compact references (02 and 03, `long`) equal the Week 1 fixed-layout runs token for token on 100/100 for TextVQA and for COCO Captions. The same holds for the `short` style. The compact layout therefore changed no output. The Week 1 runs are jobs 392660 and 392661 (see the [02](../02_qwen_autoregressive/README.md#results) and [03](../03_qwen_vispec/README.md#results) READMEs).
+A separate check shows that the Week 2 compact references (02 and 03, `long`) equal the Week 1 fixed-layout runs token for token on 100/100 for TextVQA and for COCO Captions. The same holds for the `short` style. The compact layout therefore changed no output. The Week 1 runs are jobs 392660 and 392661 (see the [02](../02_qwen_autoregressive/README.md#results) and [03](../03_qwen_vispec/README.md#results) READMEs).
 
 ### Bookkeeping check at 0.5
 
@@ -312,7 +312,7 @@ The reason latency did not move is an inference, not a measurement. The [04 prof
 
 ### Notes on the attention policy
 
-The score window is the fixed 6-token chat-template tail after the image, because the question comes before the image in these prompts. `kv_score_window` is 6 in every record of the 0.5 attention arms (400 records), so the attention policy ranks image tokens by how much that template tail attends to them. We infer from this that the ranking cannot depend on the question. The attention-selected and spatial-selected halves overlapped at a Jaccard of 0.32 to 0.34 on 5 `long` TextVQA samples in the Task 5 smoke run, which is about the 1/3 that two unrelated half-subsets give. So the attention policy is not a disguised stride pattern. The selected indices are not saved with the Week 2 runs, so the overlap was not re-measured there. Attention scoring also runs at retention 1.0, so the 1.0 attention arm carries that overhead, which is why the same-policy 1.0 arm is the primary latency reference.
+The score window is the fixed 6-token chat-template tail after the image, because the question comes before the image in these prompts. `kv_score_window` is 6 in every record of the 0.5 attention arms (400 records), so the attention policy ranks image tokens by how much that template tail attends to them. We infer from this that the ranking cannot depend on the question. The attention-selected and spatial-selected halves overlapped at a Jaccard of 0.32 to 0.34 in a smoke run on 5 `long` TextVQA samples, which is about the 1/3 that two unrelated half-subsets give. So the attention policy is not a disguised stride pattern. The selected indices are not saved with the Week 2 runs, so the overlap was not re-measured there. Attention scoring also runs at retention 1.0, so the 1.0 attention arm carries that overhead, which is why the same-policy 1.0 arm is the primary latency reference.
 
 ### Week 3 (pending)
 

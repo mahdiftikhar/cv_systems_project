@@ -78,7 +78,7 @@ Each chapter of `n` pages is split into `ceil(n/6)` consecutive, non-overlapping
 differ by at most 1, larger windows first. The 11 chapters (308 pages) give 55 windows of 5 to 6 pages.
 The reference of a window is its pages' narration texts joined in page order, with the `<D>` and `<T>`
 markup removed. Every window uses the same prompt, and the loader raises if a prompt exceeds 8,192
-positions. The loader and its pixel limit are in Task 2's evaluator code, not in this runner.
+positions. The loader and its pixel limit are in `vispec/evaluation/benchmarks.py`, not in this runner.
 
 **Dataset terms.** The data is for non-commercial research only. It must not be redistributed. Credit
 Yen Press, and cite it as a re-aligned derivative of Re:Verse (arXiv:2508.08508). No page image or text is

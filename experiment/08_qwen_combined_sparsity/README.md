@@ -8,7 +8,7 @@ prefill (as in [06](../06_qwen_kv_eviction/README.md)), and the draft's image ad
 fraction (as in [05](../05_qwen_draft_pruning/README.md)). Each arm applies the same retention and the
 same policy to both sides. The question is whether the two effects add, cancel or interact.
 
-**Diagonal only.** The plan's call is to run the diagonal of the retention-by-retention grid: an arm
+**Diagonal only.** Only the diagonal of the retention-by-retention grid is run: an arm
 `R:P` sets `--kv-retention R --kv-policy P --draft-retention R --draft-policy P`. Off-diagonal pairs
 (for example target 0.5 with draft 1.0, or different policies on the two sides) are not run. The
 single-side effects are already given by 05 and 06, and the diagonal keeps the arm count at

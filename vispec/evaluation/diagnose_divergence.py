@@ -12,7 +12,7 @@ the last position, and repeats the pass in fp32 for up to ``--fp32-limit`` cases
 A case is ``both_wrong`` when the bf16 argmax agrees with neither method and both the
 AR and the ViSpec token logits are more than 0.5 below the bf16 maximum. Otherwise it is
 ``near_tie`` when the bf16 top-2 margin is at most 0.5 logits, else ``unexplained`` (a
-possible bug). The gate (ruling R20) passes only when no case is ``unexplained`` or
+possible bug). The gate passes only when no case is ``unexplained`` or
 ``both_wrong``. Cases where one sequence ended (no token at the first differing index)
 are also listed separately with both runs' stop reasons.
 
@@ -451,7 +451,7 @@ def summarize(cases, skipped=0, prompt_fingerprint_mismatches=0):
         "ended_sequences": ended,
         "ended_sequence_counts": stop_counts,
         "gate": {
-            "rule": "passes when unexplained + both_wrong == 0 (ruling R20)",
+            "rule": "passes when unexplained + both_wrong == 0",
             "unexplained": unexplained,
             "both_wrong": both_wrong,
             "counted_unexplained": unexplained + both_wrong,
@@ -758,7 +758,7 @@ def main(argv=None):
                 f"margin <= {NEAR_TIE_MARGIN}, else unexplained"
             ),
             "ar_vispec_logit_gap": "|AR token logit - ViSpec token logit| in that pass; None when a sequence ended",
-            "gate_passes": "true when unexplained + both_wrong == 0 (ruling R20)",
+            "gate_passes": "true when unexplained + both_wrong == 0",
             "agrees": "whether that pass's argmax equals the AR token, the ViSpec token, or neither",
             "argmax": "torch.argmax, the first maximal index (decoder tie-break); top-2 is the best remaining token",
             "tokens_tied_at_max": "number of vocabulary entries whose logit equals the argmax logit",

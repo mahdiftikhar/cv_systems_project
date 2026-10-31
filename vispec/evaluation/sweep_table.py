@@ -51,8 +51,8 @@ COLUMN_NOTES = {
     "decode_peak_arm_over_samepolicy_1_0": "arm mean decode peak / same-policy 1.0 arm mean decode peak; above 1 means more memory",
     "live_kv_arm_over_samepolicy_1_0": "arm mean live KV / same-policy 1.0 arm mean live KV; above 1 means more memory",
     "post_compaction_peak_arm_over_samepolicy_1_0": "arm mean post-compaction peak / same-policy 1.0 arm mean post-compaction peak; above 1 means more memory; empty when either run lacks the field",
-    "bertscore_f1": "reverse_summary only: mean BERTScore F1 over windows, 0-100; truncated, does not reflect later pages (W4-R10)",
-    "bertscore_f1_delta_vs_vispec_ref": "reverse_summary only: arm BERTScore F1 minus ViSpec reference BERTScore F1, points; truncated, does not reflect later pages (W4-R10); the primary quality delta stays ROUGE-1",
+    "bertscore_f1": "reverse_summary only: mean BERTScore F1 over windows, 0-100; truncated at 512 word pieces, does not reflect later pages",
+    "bertscore_f1_delta_vs_vispec_ref": "reverse_summary only: arm BERTScore F1 minus ViSpec reference BERTScore F1, points; truncated at 512 word pieces, does not reflect later pages; the primary quality delta stays ROUGE-1",
     "quality_delta_vs_vispec_ref": "arm quality minus ViSpec reference quality, percentage points",
     "note": "per-row warning, for example sample sets that differ from a reference (affected cells are empty)",
 }
