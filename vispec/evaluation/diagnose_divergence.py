@@ -107,16 +107,54 @@ def report_run_dir(report_path):
     return Path(summary["run_dir"]).resolve()
 
 
+def metadata_retention(run):
+    """kv_retention from ``run``'s metadata.txt: a float, or None for ``none``.
+
+    Raises ValueError when the file or the key is missing or the value is not a number,
+    so an unknown setting is never read as "no eviction".
+    """
+    value = metadata(run).get("kv_retention")
+    if value is None:
+        raise ValueError(
+            f"Cannot diagnose {run}: an answer file has no runtime.json and metadata.txt "
+            "has no kv_retention, so whether the run evicts target KV entries is unknown. "
+            "No diagnosis was run."
+        )
+    value = value.strip()
+    if value == "none":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        raise ValueError(
+            f"Cannot diagnose {run}: metadata.txt has kv_retention={value!r}, which is "
+            "neither a number nor 'none'. No diagnosis was run."
+        ) from None
+
+
 def refuse_unreproducible_eviction(*runs):
     """Refuse runs with target-side KV eviction: the stock full-KV model cannot reproduce it.
 
-    A null or absent kv_retention means no eviction. Draft-only sparsity leaves the target
-    model unchanged, so those runs stay diagnosable.
+    kv_retention comes from each benchmark's runtime.json ``generation_args``, where a null
+    or absent value means no eviction (Week 1 files have no ``generation_args``). When a run
+    has no runtime.json, or an answer file has none beside it, the run's metadata.txt
+    ``kv_retention`` is read as well (``none`` means no eviction). If neither source exists
+    the run is refused, so an unknown setting fails closed. Draft-only sparsity leaves the
+    target model unchanged, so those runs stay diagnosable.
     """
     for run in runs:
-        for path in sorted((run / "results").glob("*_test/*/*.runtime.json")):
+        results = run / "results"
+        runtimes = sorted(results.glob("*_test/*/*.runtime.json"))
+        settings = []
+        for path in runtimes:
             args = json.loads(path.read_text()).get("generation_args") or {}
-            retention = args.get("kv_retention")
+            settings.append(args.get("kv_retention"))
+        answers = sorted(results.glob("*_test/*/*.jsonl"))
+        if not runtimes or any(
+            not path.with_suffix(".runtime.json").exists() for path in answers
+        ):
+            settings.append(metadata_retention(run))
+        for retention in settings:
             if retention is not None and retention < 1.0:
                 raise ValueError(
                     f"Cannot diagnose {run}: kv_retention={retention} evicts target KV "

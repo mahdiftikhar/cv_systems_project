@@ -38,6 +38,7 @@ def autoregressive_generate(
     on_first_token=None,
     generation_stats: dict | None = None,
     kv_sparsity=None,
+    on_kv_compacted=None,
 ):
     """Greedy decoding. Returns (prompt+output ids [1, L], new_token_count, steps).
 
@@ -49,6 +50,8 @@ def autoregressive_generate(
     ``kv_sparsity`` (a ``SparsityConfig``, compact layout only) evicts image positions from
     the target KV cache once, after the prefill, and adds ``kv_eviction`` (the
     ``TargetKVEviction.stats`` fields) to ``generation_stats``. ``None`` evicts nothing.
+    ``on_kv_compacted()`` (compact layout only) is called once, right after the compaction
+    has released the prefill-sized buffer, as in ``specgenerate``.
     """
     check_kv_sparsity(kv_sparsity, getattr(model, "kv_layout", "fixed"))
     if max_new_tokens < 1:
@@ -131,6 +134,8 @@ def autoregressive_generate(
             kv_eviction = eviction.stats(kept)
         # Rebind, so no local keeps the prefill-sized buffer alive.
         past_key_values = model.past_key_values
+        if on_kv_compacted is not None:
+            on_kv_compacted()
         rope_deltas = model.base_model.rope_deltas
     while True:
         if eos is not None and input_id.item() == eos:

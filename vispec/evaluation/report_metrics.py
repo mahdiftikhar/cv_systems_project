@@ -118,10 +118,12 @@ def memory_summary(rows):
     Peaks are the largest value across visible devices for the turn. kv_live_bytes and
     kv_tokens are whole-model figures repeated on every device entry, so they are read
     once per turn (the largest repeated value). ``max`` is added to each distribution.
+    The post-compaction peak exists only in compact-layout records from Week 3 on.
     """
     fields = {
         "prefill_peak_allocated_gib": [],
         "decode_peak_allocated_gib": [],
+        "post_compaction_peak_allocated_gib": [],
         "kv_live_mib": [],
         "kv_tokens": [],
     }
@@ -137,6 +139,9 @@ def memory_summary(rows):
         )
         fields["decode_peak_allocated_gib"].append(
             per_turn(entries, "decode_peak_allocated_bytes", 2**30)
+        )
+        fields["post_compaction_peak_allocated_gib"].append(
+            per_turn(entries, "post_compaction_peak_allocated_bytes", 2**30)
         )
         fields["kv_live_mib"].append(per_turn(entries, "kv_live_bytes", 2**20))
         fields["kv_tokens"].append(per_turn(entries, "kv_tokens", 1))

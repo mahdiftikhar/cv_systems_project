@@ -300,30 +300,24 @@ def initialize_tree(
     input_ids = torch.cat((input_ids, token.to(input_ids.device)), dim=1)
     # Clone the output hidden states
 
-    try:
-        draft_tokens, retrieve_indices, tree_mask, tree_position_ids = (
-            model.spec_layer.topK_genrate(
-                hidden_states,
-                input_ids,
-                model.base_model.lm_head,
-                logits_processor,
-                inputs_embeds=inputs_embeds,
-                # embed_weights=embed_weights,
-                image_mask=image_mask,
-            )
+    # The head is chosen as update_inference_inputs chooses it: LLaVA wrappers keep it on
+    # their language_model, Qwen2.5-VL and the plain decoders on the base model. No
+    # try/except, so an error inside the draft (draft pruning included) raises as itself.
+    if hasattr(model.base_model, "language_model"):
+        head = model.base_model.language_model.lm_head
+    else:
+        head = model.base_model.lm_head
+    draft_tokens, retrieve_indices, tree_mask, tree_position_ids = (
+        model.spec_layer.topK_genrate(
+            hidden_states,
+            input_ids,
+            head,
+            logits_processor,
+            inputs_embeds=inputs_embeds,
+            # embed_weights=embed_weights,
+            image_mask=image_mask,
         )
-    except:
-        draft_tokens, retrieve_indices, tree_mask, tree_position_ids = (
-            model.spec_layer.topK_genrate(
-                hidden_states,
-                input_ids,
-                model.base_model.language_model.lm_head,
-                logits_processor,
-                inputs_embeds=inputs_embeds,
-                # embed_weights=embed_weights,
-                image_mask=image_mask,
-            )
-        )
+    )
     return (
         draft_tokens,
         retrieve_indices,

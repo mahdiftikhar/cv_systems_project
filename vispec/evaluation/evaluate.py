@@ -218,8 +218,18 @@ def answer_text(output_ids, tokenizer):
     return tokenizer.decode(cut, skip_special_tokens=True).strip()
 
 
-def generate(model, args, model_inputs, on_first_token=None, generation_stats=None):
-    """Run one generation; returns (ids [1, L], new_token, idx, acceptance, decode_time)."""
+def generate(
+    model,
+    args,
+    model_inputs,
+    on_first_token=None,
+    generation_stats=None,
+    on_kv_compacted=None,
+):
+    """Run one generation; returns (ids [1, L], new_token, idx, acceptance, decode_time).
+
+    ``on_kv_compacted()`` runs once right after the compact layout's KV compaction.
+    """
     kv_sparsity = kv_sparsity_config(args)
     draft_sparsity = draft_sparsity_config(args)
     if args.method == "vispec":
@@ -234,6 +244,7 @@ def generate(model, args, model_inputs, on_first_token=None, generation_stats=No
             return_decode_time=True,
             kv_sparsity=kv_sparsity,
             draft_sparsity=draft_sparsity,
+            on_kv_compacted=on_kv_compacted,
         )
     stats = {} if generation_stats is None else generation_stats
     output_ids, new_token, steps = autoregressive_generate(
@@ -243,6 +254,7 @@ def generate(model, args, model_inputs, on_first_token=None, generation_stats=No
         on_first_token=on_first_token,
         generation_stats=stats,
         kv_sparsity=kv_sparsity,
+        on_kv_compacted=on_kv_compacted,
     )
     return output_ids, new_token, steps, [], stats["decode_time"]
 
@@ -379,6 +391,7 @@ def run(args):
             model_inputs,
             on_first_token=measurement.mark,
             generation_stats=generation_stats,
+            on_kv_compacted=measurement.mark_compaction,
         )
         wall_time = measurement.elapsed()
         kv_tokens = int(model.current_length_data[0])

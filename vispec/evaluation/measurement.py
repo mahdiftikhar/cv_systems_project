@@ -10,19 +10,27 @@ import torch
 
 from .timing import FirstTokenTimer
 
-# Target KV eviction fields, added to a record only when eviction ran.
+# Target KV eviction fields, added to a record only when eviction ran. The last two were
+# added in Week 3; kv_min_kept_per_image is null for a prompt without image tokens.
 EVICTION_FIELDS = (
     "kv_prompt_tokens",
     "kv_kept_prompt_tokens",
     "kv_evicted_tokens",
     "kv_score_window",
+    "kv_image_tokens",
+    "kv_min_kept_per_image",
 )
-# Draft-side visual pruning fields (image tokens summed over the prompt's images), added to a
-# record only when draft pruning ran.
+# Draft-side visual pruning fields (image tokens summed over the prompt's images, and the
+# fewest kept for one image), added to a record only when draft pruning ran.
 DRAFT_PRUNING_FIELDS = (
     "draft_image_tokens",
     "draft_kept_image_tokens",
+    "draft_min_kept_per_image",
 )
+
+
+def _count(value):
+    return None if value is None else int(value)
 
 
 def kv_bytes_per_token(config, dtype) -> int:
@@ -41,7 +49,9 @@ class GenerationMeasurement(FirstTokenTimer):
 
     With ``phase_memory`` the first ``mark`` (the first output token, after the target
     prefill) records each device's allocated-memory peak as the prefill peak and resets the
-    peak counters, so ``finish`` can report the remaining (decode) peak separately.
+    peak counters, so ``finish`` can report the remaining (decode) peak separately. In the
+    compact KV layout ``mark_compaction`` (right after the target cache is compacted) splits
+    the decode phase once more, for the post-compaction peak.
     """
 
     def __init__(
@@ -54,6 +64,8 @@ class GenerationMeasurement(FirstTokenTimer):
         self.kv_bytes_per_token = kv_bytes_per_token
         self.prefill_peak_allocated = None
         self.prefill_peak_reserved = None
+        self.compaction_peak_allocated = None
+        self.compaction_peak_reserved = None
         self.input_fingerprint = None
         self.input_tokens = None
         if model_inputs is not None:
@@ -87,6 +99,34 @@ class GenerationMeasurement(FirstTokenTimer):
             for device in self.devices:
                 torch.cuda.reset_peak_memory_stats(device)
 
+    def mark_compaction(self):
+        """Split the decode-phase peak at the target KV compaction (``on_kv_compacted``).
+
+        Keeps each device's allocated and reserved peaks since ``mark`` (they include the
+        compaction transient), then resets the peak counters, so ``finish`` reads the
+        post-compaction peak on its own. ``finish`` folds the kept peaks back into
+        ``decode_peak_allocated_bytes`` and the whole-call peaks, which therefore keep their
+        meaning. The allocator counters are host-side, so no synchronize is needed. Does
+        nothing without ``phase_memory`` or before the first ``mark``.
+        """
+        if not self.phase_memory or self.prefill_peak_allocated is None:
+            return
+        allocated = {
+            str(device): torch.cuda.max_memory_allocated(device) for device in self.devices
+        }
+        reserved = {
+            str(device): torch.cuda.max_memory_reserved(device) for device in self.devices
+        }
+        if self.compaction_peak_allocated is not None:
+            # A second call: the earlier window still belongs to the decode phase.
+            for device in allocated:
+                allocated[device] = max(allocated[device], self.compaction_peak_allocated[device])
+                reserved[device] = max(reserved[device], self.compaction_peak_reserved[device])
+        self.compaction_peak_allocated = allocated
+        self.compaction_peak_reserved = reserved
+        for device in self.devices:
+            torch.cuda.reset_peak_memory_stats(device)
+
     def elapsed(self):
         for device in self.devices:
             torch.cuda.synchronize(device)
@@ -109,13 +149,17 @@ class GenerationMeasurement(FirstTokenTimer):
         are added only when the caller opts in (``phase_memory``, ``kv_bytes_per_token`` or
         ``kv_tokens``); otherwise the record is unchanged. ``kv_live_bytes`` covers every
         layer, so on a multi-GPU split each device entry repeats the whole-model figure.
+        After ``mark_compaction`` each device entry also has
+        ``post_compaction_peak_allocated_bytes``, the peak from the compaction to the end of
+        the call; ``decode_peak_allocated_bytes`` stays the peak of the whole decode phase.
         ``kv_eviction`` (target KV eviction runs only) adds the top-level fields
-        ``kv_prompt_tokens``, ``kv_kept_prompt_tokens``, ``kv_evicted_tokens`` and
+        ``kv_prompt_tokens``, ``kv_kept_prompt_tokens``, ``kv_evicted_tokens``,
         ``kv_score_window`` (prompt tokens after the last image token; the attention policy
-        scores over them). ``draft_pruning`` (draft pruning runs only) then adds
-        ``draft_image_tokens`` and ``draft_kept_image_tokens``, the image tokens the draft's
-        image adaptor had and saw, summed over the prompt's images. Without either the
-        record is unchanged.
+        scores over them), ``kv_image_tokens`` (image tokens before eviction) and
+        ``kv_min_kept_per_image`` (fewest kept for one image). ``draft_pruning`` (draft
+        pruning runs only) then adds ``draft_image_tokens`` and ``draft_kept_image_tokens``,
+        the image tokens the draft's image adaptor had and saw, summed over the prompt's
+        images, and ``draft_min_kept_per_image``. Without either the record is unchanged.
         """
         ids = output_ids.tolist()
         eos = tokenizer.eos_token_id
@@ -139,13 +183,21 @@ class GenerationMeasurement(FirstTokenTimer):
                     continue
                 prefill = self.prefill_peak_allocated[device]
                 decode = entry["peak_allocated_bytes"]
+                reserved = entry["peak_reserved_bytes"]
+                post_compaction = None
+                if self.compaction_peak_allocated is not None:
+                    # The counters were reset at the compaction: what they hold now is the
+                    # post-compaction peak, and the decode peak is the larger of both windows.
+                    post_compaction = decode
+                    decode = max(self.compaction_peak_allocated[device], post_compaction)
+                    reserved = max(self.compaction_peak_reserved[device], reserved)
                 entry["prefill_peak_allocated_bytes"] = prefill
                 entry["decode_peak_allocated_bytes"] = decode
+                if post_compaction is not None:
+                    entry["post_compaction_peak_allocated_bytes"] = post_compaction
                 # Whole-generation peaks, as without phase_memory.
                 entry["peak_allocated_bytes"] = max(prefill, decode)
-                entry["peak_reserved_bytes"] = max(
-                    self.prefill_peak_reserved[device], entry["peak_reserved_bytes"]
-                )
+                entry["peak_reserved_bytes"] = max(self.prefill_peak_reserved[device], reserved)
         if (
             self.phase_memory
             or self.kv_bytes_per_token is not None
@@ -180,10 +232,10 @@ class GenerationMeasurement(FirstTokenTimer):
         }
         if kv_eviction is not None:
             for field in EVICTION_FIELDS:
-                record[field] = int(kv_eviction[field])
+                record[field] = _count(kv_eviction[field])
         if draft_pruning is not None:
             for field in DRAFT_PRUNING_FIELDS:
-                record[field] = int(draft_pruning[field])
+                record[field] = _count(draft_pruning[field])
         return record
 
 

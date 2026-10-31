@@ -138,11 +138,12 @@ GiB. We measure it to assess the GPU capacity required by each decoding method.
 
 ### Phase memory and live KV (`memory` block)
 
-Each benchmark in `summary.json` has a `memory` block with four fields: `prefill_peak_allocated_gib`
-(GiB, bytes / 2**30), `decode_peak_allocated_gib` (GiB), `kv_live_mib` (MiB, bytes / 2**20) and
-`kv_tokens` (tokens). Each field is a distribution over turns (`count`, `mean`, `median`, `p95`,
-`stdev`) plus `max`. The prefill and decode peaks come from the per-device `gpu_memory` entries and
-take the largest value across visible devices for a turn. `kv_live_bytes` and `kv_tokens` are
+Each benchmark in `summary.json` has a `memory` block with up to five fields: `prefill_peak_allocated_gib`
+(GiB, bytes / 2**30), `decode_peak_allocated_gib` (GiB), `post_compaction_peak_allocated_gib` (GiB,
+compact-layout records from Week 3 on, see [Compact KV layout](#compact-kv-layout-experiments-05-and-06)),
+`kv_live_mib` (MiB, bytes / 2**20) and `kv_tokens` (tokens). Each field is a distribution over turns
+(`count`, `mean`, `median`, `p95`, `stdev`) plus `max`. The three peaks come from the per-device
+`gpu_memory` entries and take the largest value across visible devices for a turn. `kv_live_bytes` and `kv_tokens` are
 whole-model figures repeated on every device entry, so each is counted once per turn. Turns without
 a field (LLaVA runs, older records, or a null phase peak) are excluded and `count` shows how many
 remain. A field with no turns is omitted, so a LLaVA report has an empty `memory` block.
@@ -389,6 +390,16 @@ explicit value.
   `ValueError`. Latency and memory ratios between arms are only controlled within one
   allocation: the runtime signature (GPU, affinity, revision) can match across jobs.
   Method mode does not apply this check, because the LLaVA 00/01 pair spans two jobs.
+- **Runtime evidence (Week 3 on):** for every benchmark that any compared report
+  evaluated (it has a runtime file, a manifest or answers), every report must have that
+  benchmark's runtime entry with `generation_args`. Otherwise `compare_metrics` raises
+  `ValueError` naming the report. Before Week 3 such a side's settings were left null in
+  the `sparsity` block. Benchmarks that no report evaluated (the empty `gqa` and `mmvet`
+  entries of a Qwen report) are not checked.
+- **Requeued jobs:** a requeued preempt job reruns the runner into fresh folders, so one
+  `slurm_job_id` can own several folders per arm, one per `slurm_restart_count`. Take the
+  final attempt: the folders with the highest `slurm_restart_count` of that job. The
+  same-job rule above then holds, because all of them share that restart count.
 - **Output:** `comparison.json` gains a `mode` field and a `sparsity` block with each
   side's settings per benchmark. Other keys are unchanged. In sparsity mode the
   `original` columns are the reference and the `draft` columns the candidate.
@@ -403,6 +414,41 @@ and it labels no divergence. Draft-only arms (`draft_retention` below 1.0 with
 For a sparsity-mode comparison, `--original-run` is the reference and `--draft-run`
 the candidate, and both must share one method; the "ar" and "vispec" labels in the
 output then mean reference and candidate.
+
+The refusal fails closed (Week 3 on). `kv_retention` comes from each benchmark's
+`runtime.json` `generation_args`, where null or absent means no eviction. When a run has
+no `runtime.json`, or an answer file has none beside it, the tool also reads
+`kv_retention` from the run's `metadata.txt` (`none` means no eviction). When neither
+source gives a value (no `metadata.txt`, or no `kv_retention` key in it, as in a 02 or 03
+reference) or the value is not a number, the run is refused as well, because its eviction
+setting is unknown.
+
+### Offset check (`offset_check`)
+
+`diagnose_divergence` cannot check an eviction arm, so `offset_check` is the only oracle
+for large `kv_offset` values. Greedy ViSpec commits only tokens that the target itself
+picks in tree verification, so an autoregressive run and a ViSpec run with the same
+target-side eviction must return the same tokens, whatever the draft proposes. Draft-side
+pruning changes only the proposals, so the agreement must also hold in a combined arm. In
+bf16 a different kernel shape can flip a near-tied argmax. In fp32 with TF32 off those
+flips go away (Week 2: 5/5 at 0.5 spatial), so an fp32 mismatch points at the cache
+bookkeeping: the offset, the decode positions or the kept rows.
+
+```bash
+python -m vispec.evaluation.offset_check --kv-retention 0.25 --kv-policy spatial \
+  [--draft-retention 0.25 --draft-policy spatial] --num-samples 5 --dtype float32 \
+  --output-dir <new_dir>
+```
+
+It loads one `SpecModel` with `--kv-layout compact` in `--dtype` (long TextVQA by
+default) and runs `autoregressive_generate` and `specgenerate` on each sample. It writes
+`offset_check.json` and `offset_check.md` to the new folder. Per question they record exact
+agreement of the raw output IDs through EOS, the first differing zero-based index when the
+IDs differ, the eviction counts of both runs (`kv_counts_match`), `kv_offset` and the
+draft-pruning counts. The exit code is 0 only when every question agrees and both methods
+report the same eviction counts. The fp32 weights of Qwen2.5-VL-3B take about 14 GiB
+(twice the 7.0 GiB of bf16 checkpoint), plus the draft and activations, so the check fits
+one A6000.
 
 ## Qwen experiments (02 and 03)
 
@@ -469,19 +515,74 @@ buffer. The transient is most visible for the autoregressive arm, whose decode p
 then set by compaction and not by decoding. `decode_time` also includes compaction and
 selection of the kept positions in these arms.
 
+From Week 3 on, the evaluator also splits the decode phase at the compaction. Right after
+the compaction has released the prefill-sized buffer, and before decoding goes on, it keeps
+each device's peak so far and resets the peak counters (`on_kv_compacted`, then
+`GenerationMeasurement.mark_compaction`). The per-device field
+`post_compaction_peak_allocated_bytes` is the allocator peak from that reset to the end of
+the call. It measures steady-state decoding with the compacted buffer, without the
+transient, so it shows what eviction saves during decoding. The peak kept before the reset
+is folded back in at finish. `decode_peak_allocated_bytes` therefore keeps its Week 2
+meaning, the peak of the whole decode phase including the transient, and Week 2 and Week 3
+decode peaks stay comparable. `peak_allocated_bytes` and `peak_reserved_bytes` stay
+whole-call peaks for the same reason. The post-compaction peak is never above the decode
+peak, because its window is part of the decode phase.
+
+`post_compaction_peak_allocated_bytes` appears in every compact-layout record, including
+the no-flag compact references and the 1.0 arms, because each of them compacts. A
+reference and an arm then have the same field, so it can be compared between them.
+Fixed-layout records never compact and do not have the field, so they are unchanged.
+Records written before Week 3 do not have it either. `report_metrics` reports it as
+`post_compaction_peak_allocated_gib` in the `memory` block, over the turns that have it.
+
+Memory ratios stay valid under truncation. The decode buffer is sized from the kept prompt
+plus `max_new_tokens` plus slack before the first decode step, so a turn that stops at the
+1,024-token cap fills that buffer but cannot grow it. The decode and post-compaction peaks
+therefore depend on the kept prompt, not on where the answer stopped. Only the per-layer
+attention temporaries grow with the cache length: by shape arithmetic, the repeated K and V
+heads take about 8 KiB per cached token, so about 8 MiB over a full 1,024-token answer. A memory ratio between two
+arms stays a measurement of eviction even when one arm truncates a turn and the other does
+not. `kv_live_mib` and `kv_tokens` do grow with the output length (they include the output
+tokens), so read a live-KV ratio together with the output lengths. Latency and TPOT ratios
+are the ones that truncation confounds.
+
+The `spatial` policy (both sides) is a 1-D raster stride over each image's merged tokens,
+not a 2-D pool. In each image span it keeps `round(linspace(0, n - 1, k))`, so the kept
+tokens are evenly spaced in row-major order. At 0.5 it keeps every other token in raster
+order: every other column when the merged grid width is even, and a checkerboard when it
+is odd. Rounding absorbs the remainder in a few steps that are one token longer (one per
+image at 0.5, three at 0.25), which shifts the pattern by a column there. This is the Week 2
+selector. Week 3 keeps it unchanged so that Week 2 and Week 3 arms stay comparable.
+
 Per-question fields written by the eviction and draft-pruning arms (all counts of
 tokens, no units beyond tokens; absent in other runs):
 
 - `kv_prompt_tokens`: prompt tokens in the target KV cache before eviction (the input
   length, text and image).
 - `kv_kept_prompt_tokens`: prompt tokens still in the cache after eviction.
-- `kv_evicted_tokens`: `kv_prompt_tokens` - `kv_kept_prompt_tokens`.
-- `kv_score_window`: prompt tokens after the last image token. The attention policy
-  scores image tokens by the attention these tokens pay them; 0 without image tokens.
+- `kv_evicted_tokens`: `kv_prompt_tokens` - `kv_kept_prompt_tokens`. This is the
+  `kv_offset` of ViSpec decoding: the token count minus the physical cache length.
+- `kv_score_window`: prompt tokens after the last image token (the chat-template tail);
+  0 without image tokens. It is recorded for both policies, but only the `attention`
+  policy uses it: that policy scores image tokens by the prefill attention these tokens
+  pay them. The `spatial` policy ignores it.
+- `kv_image_tokens` (Week 3 on): image tokens in the prompt before eviction, summed over
+  the prompt's images.
+- `kv_min_kept_per_image` (Week 3 on): the fewest tokens kept in the target cache for any
+  one image, counted from the actual kept positions in each image span. Every image keeps
+  at least one token. Null for a prompt without image tokens.
 - `draft_image_tokens`: image tokens the draft's image adaptor received, summed over
   the prompt's images, before draft-side pruning.
 - `draft_kept_image_tokens`: image tokens the adaptor saw after pruning, summed the
   same way. Equal to `draft_image_tokens` at retention 1.0.
+- `draft_min_kept_per_image` (Week 3 on): the fewest tokens the adaptor saw for any one
+  image, counted from the rows it actually received. Null when no image was adapted.
+
+Records without the eviction or draft flags carry none of these fields. Their other fields
+are unchanged, except that compact-layout records gain `post_compaction_peak_allocated_bytes`
+(see above). Two guards fail closed: `select_in_span` raises `ValueError` unless
+`1 <= k <= n`, and the draft's attention scores raise `RuntimeError` when any score is not
+finite. The target's attention scores are checked against their expected sum.
 
 ### Decode time
 

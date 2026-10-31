@@ -39,9 +39,36 @@ def generation_setting(report, benchmark, key):
     return (runtime.get("generation_args") or {}).get(key)
 
 
+def evaluated(report, benchmark):
+    """Whether a report evaluated ``benchmark``: it has a runtime file, a manifest or answers.
+
+    ``report_metrics`` writes an entry for every known benchmark, so a Qwen report also has
+    empty ``gqa`` and ``mmvet`` entries (no manifest, no completed questions).
+    """
+    summary = report["summary"]
+    if summary.get("runtime", {}).get(benchmark):
+        return True
+    bench = summary["benchmarks"].get(benchmark) or {}
+    return bool(bench.get("completed_questions")) or bench.get("expected_questions") is not None
+
+
 def check_sparsity_settings(original, draft, benchmark, mode):
-    """Guard kv_layout and the sparsity settings; return each side's settings."""
+    """Guard kv_layout and the sparsity settings; return each side's settings.
+
+    In sparsity mode, once any report evaluated ``benchmark``, every report must have a
+    runtime entry with ``generation_args`` for it; a missing one raises, so a side's
+    settings are never left unknown.
+    """
     groups = {"original": original, "draft": draft}
+    if mode == "sparsity" and any(evaluated(r, benchmark) for r in original + draft):
+        for report in original + draft:
+            runtime = report["summary"].get("runtime", {}).get(benchmark)
+            if not runtime or not isinstance(runtime.get("generation_args"), dict):
+                raise ValueError(
+                    f"Sparsity mode needs the {benchmark} runtime.json with generation_args "
+                    f"in every report; {report['path']} has "
+                    + ("no runtime entry" if not runtime else "no generation_args")
+                )
     values = {
         name: [
             {key: generation_setting(r, benchmark, key) for key in LAYOUT_SETTINGS}
