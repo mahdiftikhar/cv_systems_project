@@ -40,7 +40,8 @@ COLUMNS = (
     "answer_agreement_vs_vispec", "token_matched_vs_ar", "token_checked_vs_ar",
     "token_agreement_vs_ar", "speedup_vs_ar", "latency_speedup_vs_vispec_ref",
     "latency_speedup_vs_samepolicy_1_0", "decode_peak_arm_over_samepolicy_1_0",
-    "live_kv_arm_over_samepolicy_1_0", "quality_delta_vs_vispec_ref", "note",
+    "live_kv_arm_over_samepolicy_1_0", "post_compaction_peak_arm_over_samepolicy_1_0",
+    "quality_delta_vs_vispec_ref", "bertscore_f1", "bertscore_f1_delta_vs_vispec_ref", "note",
 )
 
 COLUMN_NOTES = {
@@ -49,6 +50,9 @@ COLUMN_NOTES = {
     "latency_speedup_vs_samepolicy_1_0": "same-policy 1.0 arm mean latency / arm mean latency; above 1 means the arm is faster",
     "decode_peak_arm_over_samepolicy_1_0": "arm mean decode peak / same-policy 1.0 arm mean decode peak; above 1 means more memory",
     "live_kv_arm_over_samepolicy_1_0": "arm mean live KV / same-policy 1.0 arm mean live KV; above 1 means more memory",
+    "post_compaction_peak_arm_over_samepolicy_1_0": "arm mean post-compaction peak / same-policy 1.0 arm mean post-compaction peak; above 1 means more memory; empty when either run lacks the field",
+    "bertscore_f1": "reverse_summary only: mean BERTScore F1 over windows, 0-100; truncated, does not reflect later pages (W4-R10)",
+    "bertscore_f1_delta_vs_vispec_ref": "reverse_summary only: arm BERTScore F1 minus ViSpec reference BERTScore F1, points; truncated, does not reflect later pages (W4-R10); the primary quality delta stays ROUGE-1",
     "quality_delta_vs_vispec_ref": "arm quality minus ViSpec reference quality, percentage points",
     "note": "per-row warning, for example sample sets that differ from a reference (affected cells are empty)",
 }
@@ -295,6 +299,11 @@ def build_group(style, job, runs, notes):
                 (r.get("score_method"), json.dumps(r.get("score_protocol"), sort_keys=True))
                 for m in (vispec["maps"][benchmark], run["maps"][benchmark]) for r in m.values()
             }) == 1
+            bert = (bench.get("quality") or {}).get("bertscore_f1") if benchmark == "reverse_summary" else None
+            ref_bert = (
+                (vispec["report"]["summary"]["benchmarks"][benchmark].get("quality") or {}).get("bertscore_f1")
+                if benchmark == "reverse_summary" and same_keys(vispec) else None
+            )
             latency = mean_of("wall_time_s")
             kv_min = measurement_values(run, benchmark, "kv_min_kept_per_image")
             draft_min = measurement_values(run, benchmark, "draft_min_kept_per_image")
@@ -321,6 +330,14 @@ def build_group(style, job, runs, notes):
                 "kv_min_kept_per_image": min(kv_min) if kv_min else None,
                 "draft_min_kept_per_image": min(draft_min) if draft_min else None,
                 "post_compaction_peak_gib": stat(memory, "post_compaction_peak_allocated_gib"),
+                "bertscore_f1": bert,
+                "bertscore_f1_delta_vs_vispec_ref": (
+                    bert - ref_bert if bert is not None and ref_bert is not None else None
+                ),
+                "post_compaction_peak_arm_over_samepolicy_1_0": (
+                    ratio(stat(memory, "post_compaction_peak_allocated_gib"),
+                          mem(sp, "post_compaction_peak_allocated_gib")) if sp else None
+                ),
                 "token_matched_vs_vispec": vs_vispec and vs_vispec["matched"],
                 "token_checked_vs_vispec": vs_vispec and vs_vispec["checked"],
                 "token_agreement_vs_vispec": vs_vispec and vs_vispec["rate"],
@@ -411,7 +428,7 @@ def write_outputs(rows, notes, skipped, output_dir):
         "token_agreement_vs_vispec", "answer_agreement_vs_vispec", "token_agreement_vs_ar",
         "speedup_vs_ar", "latency_speedup_vs_vispec_ref", "latency_speedup_vs_samepolicy_1_0",
         "decode_peak_arm_over_samepolicy_1_0", "live_kv_arm_over_samepolicy_1_0",
-        "quality_delta_vs_vispec_ref",
+        "post_compaction_peak_arm_over_samepolicy_1_0", "quality_delta_vs_vispec_ref",
     )
     seen = []
     for r in rows:

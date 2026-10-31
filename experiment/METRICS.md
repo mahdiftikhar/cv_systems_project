@@ -477,6 +477,13 @@ python -m vispec.evaluation.sweep_table --run-dirs <run>... --output-dir experim
 - Token and text agreement use the `compare_metrics` logic (`token_agreement`,
   `answer_agreement_rates`). Agreement against the AR reference is computed by the tool, because
   method mode refuses sparsity-arm-versus-AR pairs.
+- `post_compaction_peak_arm_over_samepolicy_1_0` is the arm's mean `post_compaction_peak_allocated_gib`
+  over the same-policy 1.0 arm's (above 1 means more memory). It follows the same sample-set rule
+  and note as the other `arm_over` columns, and is empty when either run lacks the field (Week 2).
+- `bertscore_f1` (reverse_summary only) is the mean BERTScore F1, 0-100.
+  `bertscore_f1_delta_vs_vispec_ref` is the arm's minus the ViSpec reference's, in points. Both are
+  empty for other benchmarks. BERTScore is truncated and does not reflect later pages (W4-R10), so
+  the primary `quality` and `quality_delta_vs_vispec_ref` stay ROUGE-1 F1 for reverse_summary.
 - `kv_min_kept_per_image`, `kv_image_tokens`, `draft_min_kept_per_image` and the
   `post_compaction_peak_allocated_gib` memory field are read when present. Week 2 runs lack them,
   and their cells stay empty.
