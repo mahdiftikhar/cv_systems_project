@@ -36,6 +36,7 @@ from pathlib import Path
 
 import torch
 
+from ..model.vision_split import encode_images_separately
 from .benchmarks import build_inputs, load_processor, load_samples
 from .report_metrics import BENCHMARKS, metadata
 from .scoring import evidence
@@ -255,6 +256,8 @@ def load_model(path, dtype):
         path, torch_dtype=dtype, low_cpu_mem_usage=True, device_map=DEVICE
     )
     model.eval()
+    # Multi-page windows: encode one image at a time, as the fork does.
+    encode_images_separately(model.visual)
     return model
 
 
