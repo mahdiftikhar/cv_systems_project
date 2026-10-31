@@ -278,6 +278,11 @@ def fork_focus(fork_args, sample, saved_ids, saved_sha, focus_index):
     tokens = output_ids[0][input_len:].tolist()
     info = {
         "attn_implementation": getattr(model.base_model.config, "_attn_implementation", None),
+        # The vision tower's own config: _from_config sets attention on a copy of the
+        # sub-config, so the parent's vision_config does not show what the tower runs.
+        "vision_attn_implementation": getattr(
+            model.base_model.visual.config, "_attn_implementation", None
+        ),
         "kv_layout": model.kv_layout,
         "slim_prefill": model.slim_prefill,
         "kv_capacity": model.kv_capacity,
@@ -555,7 +560,9 @@ def main(argv=None):
     model = load_stock_model(args.base_model_path, torch.bfloat16)
     stock_attn = {
         "text": model.config._attn_implementation,
-        "vision": getattr(model.config.vision_config, "_attn_implementation", None),
+        # model.config.vision_config keeps the unset default; the tower's config is the copy
+        # that _from_config gave the attention setting.
+        "vision": getattr(model.visual.config, "_attn_implementation", None),
     }
     if stock_attn["text"] != "sdpa":
         raise RuntimeError(f"Stock model loaded with attention {stock_attn}, not sdpa")

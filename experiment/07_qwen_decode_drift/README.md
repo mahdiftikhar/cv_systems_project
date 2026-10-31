@@ -13,11 +13,13 @@ and a full recompute, which any cached decoder would show, or a deviation specif
 The difference matters because every Week 3 arm decodes through the fork. A fork-specific
 deviation would be inherited by all of them.
 
-Status: **measured** (Slurm job 398844, exit code 0). **Both stop conditions hold**, so by the
-plan's rule the 35537 case points to a deviation specific to the fork. The fork and stock HF
-greedy decoding agree exactly on 19 of 100 questions. At 35537:162 the fork's logits for 13 and
-95518 tie exactly, while stock incremental decoding prefers 95518 by 0.375 logits. The results and
-the inferences drawn from them are [below](#results).
+Status: **measured** (Slurm job 398844, exit code 0). **The stop rule fired**: both stop conditions
+hold, and by the rule's reading the 35537 case points to a deviation specific to the fork. **The
+user ruled it bf16 implementation noise**, so it is recorded as a known limitation and the plan
+continues unchanged (see [Decision](#decision)). The fork and stock HF greedy decoding agree
+exactly on 19 of 100 questions. At 35537:162 the fork's logits for 13 and 95518 tie exactly, while
+stock incremental decoding prefers 95518 by 0.375 logits. The results and the inferences drawn from
+them are [below](#results).
 
 ## Decision rule
 
@@ -183,7 +185,23 @@ depended on which A6000 they ran on.
 
 By the plan's rule, the result points to a deviation specific to the fork, which every arm
 inherits. Condition (b) is not independent evidence, because it is triggered only by the same case
-that condition (a) examines.
+that condition (a) examines. The verdict string in `drift.json` and `drift.md` ("STOP") is kept as
+the run's evidence.
+
+### Decision
+
+The user ruled the result bf16 implementation noise ("Accept as bf16 noise"). This ruling
+supersedes the stop rule's reading. The result is recorded as a known limitation, and the Week 3
+plan continues unchanged. The reasons:
+
+- 80 of the 81 Part A divergences are near-ties, at or below the 0.5-logit threshold.
+- At those first mismatches, the fp32 full recompute sides with the fork 41 times and with stock
+  40 times, so neither decoder is closer to the fp32 reference.
+- At 35537:162 the fork's two logits tie exactly in bf16 (24.375 each), so its choice of 13 comes
+  from the argmax tie-break.
+- The fork's largest logit difference from stock incremental decoding at that step (0.59) is the
+  same order as the stock model's own bf16-against-fp32 difference there (0.43).
+- Near a logit of 24, adjacent bf16 values are 0.125 apart, so the gaps above are a few bf16 steps.
 
 ### Part B: question 35537, output index 162
 
@@ -229,7 +247,7 @@ Four checks back these numbers:
 | First mismatches | 81. Index min 1, median 46, max 314. None at index 0 (the prefill token agrees on all 100), and 7 at index 1 (the first cached decode step). No sequence ended early |
 | Stock bf16 teacher-forced margin at the first mismatch | 44 exact ties (0.000), 73 at most 0.125, 78 at most 0.25, 1 at exactly 0.500 (39341), 1 above 0.5 (35537, 0.625) |
 | bf16 full-recompute argmax | Stock token 54, fork token 26, neither 1 |
-| fp32 full-recompute argmax (TF32 off) | Fork token 41, stock token 40. Median fp32 margin 0.078. Above 0.5: 35537 (0.724, stock), 39158 (0.936, stock) and 35830 (0.500, fork) |
+| fp32 full-recompute argmax (TF32 off) | Fork token 41, stock token 40. Median fp32 margin 0.078. Above 0.5: 35537 (0.724, stock), 39158 (0.936, stock) and 35830 (0.5001, fork) |
 | Stop reasons | Fork: 96 EOS, 4 at the 1,024-token cap. Stock: 94 EOS, 6 at the cap |
 
 The per-question table, with both tokens, the top-2 and both margins, is in the run's
@@ -251,8 +269,10 @@ The following points are **inferences** and were not measured:
   not a wrong computation. Of the 81 divergences, 80 are within the 0.5-logit near-tie band, and
   44 are exact bf16 ties. None occurs at the prefill token. In fp32 the full recompute sides with
   the fork about as often as with stock (41 against 40), so neither decoder is closer to the fp32
-  reference on these points. In bf16 the full recompute sides with stock 54 to 26, which fits stock
-  incremental decoding sharing more of its numeric path with stock full recompute.
+  reference on these points. In bf16 the full recompute sides with stock 54 to 26 (1 neither)
+  counting the ties, where `torch.argmax` takes the lower token ID. On the 37 untied cases it sides
+  with stock 26 to 10 (1 neither). That fits stock incremental decoding sharing more of its numeric
+  path with stock full recompute.
 - **Weak preference at the focus step.** The fork's preference for 13 is the weakest possible: an
   exact bf16 tie broken by token order. Stock incremental decoding sits 0.375 logits toward 95518,
   and fp32 sits 0.724 toward it.
@@ -263,8 +283,15 @@ The following points are **inferences** and were not measured:
   - it passes explicit M-RoPE position IDs in the compact layout;
   - it projects only the last prefill position to the vocabulary (slim prefill).
 
-  The stock model's vision tower was recorded as `eager` attention. The fork's vision-tower
-  setting was not recorded. Any of these is a candidate, and no experiment here separates them.
+  Vision attention is probably not a difference. The `drift.json` field
+  `settings.stock_attn_implementation.vision` reads `eager`, but it reads the parent config
+  (`model.config.vision_config`), which keeps the unset default. Both the stock model and the fork
+  build their vision tower with `Qwen2_5_VisionTransformerPretrainedModel._from_config`, which sets
+  attention on its own copy of the sub-config and, by code reading, selects SDPA. The field stays in
+  `drift.json` as recorded evidence, with this note. The probe now records the tower's own setting
+  (`model.visual.config` for stock, `model.base_model.visual.config` for the fork), but this run
+  predates that change. Any of the three remaining differences is a candidate, and no experiment
+  here separates them.
 
 ## Limitations
 
@@ -280,4 +307,7 @@ The following points are **inferences** and were not measured:
   stack has reproduced token for token so far.
 - The stock reference uses the same transformers 4.51.3 code that the fork was forked from. A bug
   shared by both would be invisible here.
-- The probe does not identify which difference between the fork and stock moves the logits.
+- **Known limitation: the mechanism is not isolated.** The fork's cached decode does not reproduce
+  stock HF cached decoding token for token (19/100 on long TextVQA), and the probe does not identify
+  which difference between the fork and stock moves the logits. The user ruled the divergence bf16
+  implementation noise, so every Week 3 arm inherits this decode path as it is.
