@@ -48,7 +48,9 @@ depth="${DEPTH:-3}"
 top_k="${TOP_K:-8}"
 total_token="${TOTAL_TOKEN:-30}"
 num_q="${NUM_Q:-2}"
-benchmarks=(textvqa coco_caption)
+# QWEN_BENCHMARKS overrides the list (experiment 09 uses reverse_summary); the default is unchanged.
+qwen_benchmarks="${QWEN_BENCHMARKS:-textvqa coco_caption}"
+read -r -a benchmarks <<< "$qwen_benchmarks"
 # fixed (default) is the Week 1 layout; compact sizes the KV cache per sample and gives the
 # same-job reference for experiments 05 and 06.
 kv_layout="${KV_LAYOUT:-fixed}"
@@ -134,6 +136,7 @@ fi
     printf 'prompt_style=%s\nslim_prefill=true\nkv_capacity=%s\nnum_samples=%s\n' "$prompt_style" "$kv_capacity" "$num_samples"
     printf 'max_new_tokens=%s\n' "$max_new_tokens"
     printf 'benchmarks=%s\n' "${benchmarks[*]}"
+    printf 'qwen_benchmarks=%s\n' "$qwen_benchmarks"
     printf 'kv_layout=%s\n' "$kv_layout"
 } > "$run_dir/metadata.txt"
 echo "Run artifacts: $run_dir"

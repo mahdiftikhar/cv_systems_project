@@ -146,7 +146,7 @@ retention 1.0 or policy `spatial`):
 - `--draft-retention` and `--draft-policy` (same values): draft-side pruning of the image adaptor
   input. ViSpec only; `--method autoregressive` rejects them.
 
-Experiment 04 profiles decode. Experiment 07 is the cached-decode drift probe and 08 the combined draft-and-KV sparsity sweep (`COMBINED_ARMS`, `<retention>:<policy>`, ViSpec only, the same budget and policy on both sides). Experiment 05 (`DRAFT_ARMS`) and 06 (`KV_ARMS`) sweep arms of
+Experiment 04 profiles decode. Experiment 09 (Re:Verse+ `reverse_summary` windows, `long` only) runs the reference (`REF_ARMS`, `ar vispec`), kv, draft and combined sweeps in one job via `QWEN_BENCHMARKS` and the runner's `reference` sweep type. Experiment 07 is the cached-decode drift probe and 08 the combined draft-and-KV sparsity sweep (`COMBINED_ARMS`, `<retention>:<policy>`, ViSpec only, the same budget and policy on both sides). Experiment 05 (`DRAFT_ARMS`) and 06 (`KV_ARMS`) sweep arms of
 `<retention>:<policy>[:<method>]` (06 only takes the method, `vispec` by default or `autoregressive`),
 one run folder per arm via `experiment/qwen_arm_runner.sh`, always with `--kv-layout compact`. An
 invalid arm list exits 2 before any folder is created. Run the same-job references first: 02 and 03
