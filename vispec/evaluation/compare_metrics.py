@@ -208,6 +208,23 @@ def token_agreement(original_maps, draft_maps, common):
     }
 
 
+def answer_agreement_rates(original_maps, draft_maps, common):
+    """Per-pair rate of equal decoded answers (whitespace-normalised) over common turns."""
+    rates = []
+    for original_map in original_maps:
+        for draft_map in draft_maps:
+            if common:
+                rates.append(
+                    sum(
+                        " ".join(original_map[key]["answer"].split())
+                        == " ".join(draft_map[key]["answer"].split())
+                        for key in common
+                    )
+                    / len(common)
+                )
+    return rates
+
+
 def compare(original_paths, draft_paths, output_dir, mode="method"):
     if mode not in MODES:
         raise ValueError(f"Unknown comparison mode: {mode!r}")
@@ -454,18 +471,9 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
             b = memory_mean(maps[len(original) :], field)
             memory_ratio[name] = b / a if a and b is not None else None
 
-        agreement = []
-        for original_map in maps[: len(original)]:
-            for draft_map in maps[len(original) :]:
-                if common:
-                    agreement.append(
-                        sum(
-                            " ".join(original_map[key]["answer"].split())
-                            == " ".join(draft_map[key]["answer"].split())
-                            for key in common
-                        )
-                        / len(common)
-                    )
+        agreement = answer_agreement_rates(
+            maps[: len(original)], maps[len(original) :], common
+        )
         tokens = token_agreement(maps[: len(original)], maps[len(original) :], common)
         greedy = all(
             float(report["summary"]["metadata"].get("temperature", "nan")) == 0

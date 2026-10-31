@@ -450,6 +450,33 @@ report the same eviction counts. The fp32 weights of Qwen2.5-VL-3B take about 14
 (twice the 7.0 GiB of bf16 checkpoint), plus the draft and activations, so the check fits
 one A6000.
 
+## Sweep table (Week 3)
+
+`vispec/evaluation/sweep_table.py` reads the saved reports of many runs and writes one table per
+(prompt style, Slurm job) to a new folder (`sweep.md`, `sweep.csv`, `sweep.json`). It loads no
+models.
+
+```bash
+python -m vispec.evaluation.sweep_table --run-dirs <run>... --output-dir experiment/sweeps/<UTC>_<label>
+```
+
+- Each run uses its newest `reports/*/summary.json`. A run that did not finish (`exit_code` not 0,
+  or no report) is listed as skipped. Two finished folders for one arm raise `ValueError`.
+- Inside a group every run must share the GPU UUID (`device.txt` and the report runtime), the
+  allocation, the prompt fingerprints, the Slurm job and restart count, and the model settings.
+  Otherwise the tool raises. Ratios never cross groups.
+- Roles: the autoregressive reference is `method=autoregressive` with no sparsity settings, the
+  ViSpec reference is `vispec_speculative` with none. Autoregressive eviction arms are arms. The
+  same-policy 1.0 arm has the same method, sweep and policy at retention 1.0.
+- Latency ratios are reference latency over arm latency (above 1 means the arm is faster).
+  Speedup is the AR reference latency over the arm latency. Memory ratios are arm over reference.
+- Token and text agreement use the `compare_metrics` logic (`token_agreement`,
+  `answer_agreement_rates`). Agreement against the AR reference is computed by the tool, because
+  method mode refuses sparsity-arm-versus-AR pairs.
+- `kv_min_kept_per_image`, `kv_image_tokens`, `draft_min_kept_per_image` and the
+  `post_compaction_peak_allocated_gib` memory field are read when present. Week 2 runs lack them,
+  and their cells stay empty.
+
 ## Qwen experiments (02 and 03)
 
 Experiments 02 and 03 use the unified evaluator `vispec.evaluation.evaluate` and

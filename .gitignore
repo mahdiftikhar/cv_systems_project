@@ -245,3 +245,4 @@ __marimo__/
 # macOS folder metadata is not a project artifact.
 .DS_Store
 /.smoke/
+experiment/sweeps/*
