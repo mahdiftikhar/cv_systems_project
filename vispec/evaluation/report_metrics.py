@@ -323,7 +323,13 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
         },
         "warnings": [
             "Generation limits differ between original and draft; inspect stop reasons before interpreting speedups.",
-            "Inherited TextVQA prompts request OCR explanations; strict answer scoring may penalize verbose responses.",
+            *(
+                []
+                if metadata(run_dir).get("answer_style") == "short"
+                else [
+                    "Inherited TextVQA prompts request OCR explanations; strict answer scoring may penalize verbose responses."
+                ]
+            ),
             "Memory is measured after warmup; initial cache/model allocation peaks are excluded.",
         ],
     }

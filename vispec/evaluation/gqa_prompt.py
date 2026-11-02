@@ -1,3 +1,6 @@
+SHORT_ANSWER_INSTRUCTION = "Answer the question using a single word or phrase."
+
+
 def build_prompt(data, args):
     from transformers import AutoProcessor
 
@@ -33,7 +36,9 @@ def build_prompt(data, args):
                 },
                 {
                     "type": "text",
-                    "text": "Please answer with an explanation.",
+                    "text": SHORT_ANSWER_INSTRUCTION
+                    if args.answer_style == "short"
+                    else "Please answer with an explanation.",
                 },
                 {"type": "image"},
             ],

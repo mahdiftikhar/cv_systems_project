@@ -1,3 +1,6 @@
+SHORT_ANSWER_INSTRUCTION = "Answer the question using a single word or phrase."
+
+
 def build_prompt(data, args):
     from transformers import AutoProcessor
 
@@ -33,7 +36,9 @@ def build_prompt(data, args):
                 },
                 {
                     "type": "text",
-                    "text": "Perform an OCR task on the provided image. Please extract the text accurately and provide a detailed explanation of the process. Ensure the response is comprehensive and well-structured.",
+                    "text": SHORT_ANSWER_INSTRUCTION
+                    if args.answer_style == "short"
+                    else "Perform an OCR task on the provided image. Please extract the text accurately and provide a detailed explanation of the process. Ensure the response is comprehensive and well-structured.",
                 },
                 {"type": "image"},
             ],

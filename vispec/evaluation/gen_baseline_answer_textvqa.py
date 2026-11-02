@@ -487,6 +487,12 @@ if __name__ == "__main__":
     )
 
     parser.add_argument("--data-folder", type=str, default="data/textvqa")
+    parser.add_argument(
+        "--answer-style",
+        choices=["long", "short"],
+        default="long",
+        help="long keeps the inherited prompt; short asks for a word or phrase.",
+    )
 
     args = parser.parse_args()
 

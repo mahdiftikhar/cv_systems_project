@@ -128,7 +128,7 @@ class SpecModel(nn.Module):
             base_model = KVMixtralForCausalLM.from_pretrained(base_model_path, **kwargs)
         elif Type == "LlavaNextForConditionalGeneration":
             base_model = KVLlavaNextForConditionalGeneration.from_pretrained(
-                base_model_path, attn_implementation="eager", **kwargs
+                base_model_path, **kwargs
             )
         elif Type == "LlavaForConditionalGeneration":
             base_model = KVLlavaForConditionalGeneration.from_pretrained(
