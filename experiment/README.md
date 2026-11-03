@@ -86,6 +86,7 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [00: Standard baseline](00_baseline_original/README.md) | Measure autoregressive generation | 418/418 completed                                |
 | [01: ViSpec baseline](01_baseline_draft/README.md)      | Measure speculative generation    | 418/418 completed. Output equivalence unresolved |
 | [02: Short answers](02_short_answers/README.md) | Measure accuracy with short-answer prompts, both methods in one job | Pending, no run yet |
+| [03: Pruned visual KV](03_pruned_visual_kv/README.md) | Test verification with image positions removed from the target KV cache | Pending, no run yet |
 
 The latest pair used temperature **0.0 (greedy)**, FP16, and a maximum of
 **1,024 output token IDs, including EOS**. Both launch trees were clean at

@@ -66,6 +66,51 @@ class KVCache:
         return torch.narrow(self.data, 2, 0, self.current_length)
 
 
+def prune_image_positions(past_key_values, image_mask, keep_ratio):
+    """
+    Remove evenly spaced image positions from a filled KV cache, in place.
+
+    Text positions always stay. Cached keys keep the rotary rotation of their original
+    position, so later tokens must keep using absolute position IDs.
+
+    Args:
+        past_key_values (list): KVCache pairs for each layer, filled by prefill.
+        image_mask (torch.Tensor): Boolean prompt mask of shape (1, prompt_length).
+        keep_ratio (float): Fraction of image positions to keep, from 0.0 to 1.0.
+
+    Returns:
+        dict: Prompt and image position counts before and after pruning.
+    """
+    image_positions = torch.nonzero(image_mask[0], as_tuple=True)[0]
+    text_positions = torch.nonzero(~image_mask[0], as_tuple=True)[0]
+    image_count = image_positions.numel()
+    kept_count = round(image_count * keep_ratio)
+    kept = torch.linspace(
+        0, image_count - 1, kept_count, dtype=torch.float64, device=image_mask.device
+    )
+    kept_positions = image_positions[kept.round().long()]
+    if kept_count < image_count:
+        keep = torch.cat((text_positions, kept_positions)).sort().values
+        for layer in past_key_values:
+            for cache in layer:
+                cache.copy(keep.to(cache.data.device), 0)
+    bytes_per_position = sum(
+        cache.data.shape[0]
+        * cache.data.shape[1]
+        * cache.data.shape[3]
+        * cache.data.element_size()
+        for layer in past_key_values
+        for cache in layer
+    )
+    return {
+        "prompt_positions": image_mask.shape[1],
+        "image_positions": image_count,
+        "kept_image_positions": kept_count,
+        "removed_positions": image_count - kept_count,
+        "bytes_per_position": bytes_per_position,
+    }
+
+
 def initialize_past_key_values(model):
     """
     Initialize past key and value states for a given transformer model.

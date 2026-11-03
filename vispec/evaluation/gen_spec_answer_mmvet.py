@@ -178,7 +178,8 @@ def get_model_answers(
 
         output_ids, new_token, idx = model.specgenerate(
             **model_inputs, temperature=temperature, log=True,
-            max_new_tokens=args.max_new_token
+            max_new_tokens=args.max_new_token,
+            **({"kv_keep_ratio": args.kv_keep_ratio} if args.use_ours else {}),
         )
         torch.cuda.synchronize()
         total_time = time.time() - start_time
@@ -232,6 +233,7 @@ def get_model_answers(
                         "on_first_token": first_token_timer.mark,
                         "generation_stats": generation_stats,
                         "return_decode_time": True,
+                        "kv_keep_ratio": args.kv_keep_ratio,
                     }
                     if args.use_ours else {}
                 ),
@@ -402,6 +404,12 @@ if __name__ == "__main__":
     parser.add_argument("--image-fc", type=bool, default=False)
     parser.add_argument("--use-ours", type=bool, default=False)
     parser.add_argument("--num-q", type=int, default=2)
+    parser.add_argument(
+        "--kv-keep-ratio",
+        type=float,
+        default=1.0,
+        help="Fraction of image positions kept in the target KV cache after prefill.",
+    )
     parser.add_argument("--use-medusa", type=bool, default=False)
 
     args = parser.parse_args()

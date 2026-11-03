@@ -11,7 +11,7 @@ from transformers import AutoConfig, AutoTokenizer
 
 from .cnets_ours import Model
 from .configs import EConfig
-from .kv_cache import initialize_past_key_values
+from .kv_cache import initialize_past_key_values, prune_image_positions
 from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 from .modeling_llava_kv import (
     CustomLlavaForConditionalGeneration as KVLlavaForConditionalGeneration,
@@ -259,6 +259,7 @@ class SpecModel(nn.Module):
         return_decode_time=False,
         on_first_token=None,
         generation_stats=None,
+        kv_keep_ratio=1.0,
         **kwargs,
     ):
         if (input_ids is None) ^ (inputs_embeds is not None):
@@ -270,6 +271,8 @@ class SpecModel(nn.Module):
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
+        if not 0.0 <= kv_keep_ratio <= 1.0:
+            raise ValueError("kv_keep_ratio must be between 0.0 and 1.0")
         max_length = max_length - self.spec_layer.total_tokens - 10
 
         if temperature > 1e-5:
@@ -477,6 +480,16 @@ class SpecModel(nn.Module):
             on_first_token=on_first_token,
             **kwargs,
         )
+        # Prefill and the first token saw the full image; verification sees what is kept.
+        self.pruned_kv_positions = 0
+        kv_pruning = None
+        if special_image_mask is not None:
+            kv_pruning = prune_image_positions(
+                past_key_values, special_image_mask, kv_keep_ratio
+            )
+            self.pruned_kv_positions = kv_pruning["removed_positions"]
+        elif kv_keep_ratio < 1.0:
+            raise ValueError("kv_keep_ratio below 1.0 needs an image in the prompt")
         new_token = 0
 
         if return_acceptance_len:
@@ -577,6 +590,7 @@ class SpecModel(nn.Module):
                     "iteration_limit": max_length,
                     "max_new_tokens": max_new_tokens,
                 },
+                kv_pruning=kv_pruning,
             )
         outputs = (input_ids,)
         if log:

@@ -70,6 +70,7 @@ class GenerationMeasurement(FirstTokenTimer):
             else None,
             "generation_limits": stop.get("generation_limits"),
             "iterations": stop.get("iterations"),
+            "kv_pruning": stop.get("kv_pruning"),
             "gpu_memory": memory,
         }
 
