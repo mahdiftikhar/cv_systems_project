@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Use the prepared project .venv on a cluster compute node.
+# Usage: bash prepare.sh [--check-only] [--suite llava|qwen|qwen7b|reverse]
+# The qwen7b suite verifies the pinned Qwen2.5-VL-7B target and the ViSpec and HiViS 7B drafts.
+# It needs the qwen suite's data manifest, and downloads a checkpoint only if it is missing.
 set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # sbatch executes a copy of this file from its spool directory.

@@ -31,6 +31,23 @@ QWEN_MODELS = {
         "ViSpec-Qwen2.5-VL-3B-Instruct",
     ),
 }
+QWEN7B_MODELS = {
+    "base": (
+        "Qwen/Qwen2.5-VL-7B-Instruct",
+        "Qwen2.5-VL-7B-Instruct",
+        "cc594898137f460bfe9f0759e9844b3ce807cfb5",
+    ),
+    "vispec_draft": (
+        "JLKang/ViSpec-Qwen2.5-VL-7B-Instruct",
+        "ViSpec-Qwen2.5-VL-7B-Instruct",
+        "e06635b54327df78a5eb82361791f2ccec9f41ab",
+    ),
+    "hivis_draft": (
+        "Irisssme/HiViS-Qwen2.5-VL-7B-Instruct",
+        "HiViS-Qwen2.5-VL-7B-Instruct",
+        "6dd8717d912a5626d6ad4e81b124c54bb8a08ef2",
+    ),
+}
 REVERSE_DEFAULT_DIR = "/home/aeternum/Research/Comic/M3/reverse_plus"
 BERT_REPO = "bert-base-uncased"
 BERT_REVISION = "86b5e0934494bd15c9632b12f734a8a67f723594"
@@ -585,6 +602,135 @@ def run_qwen(root, check_only):
     print("Qwen preparation complete. All assets are under:", root, flush=True)
 
 
+def qwen7b_metadata(path):
+    """Return {file name: (revision, etag)} from the Hub download records of a model folder."""
+    records = {}
+    for item in sorted((path / ".cache/huggingface/download").glob("*.metadata")):
+        lines = item.read_text().splitlines()
+        records[item.name[: -len(".metadata")]] = (
+            lines[0].strip() if lines else "",
+            lines[1].strip().strip('"') if len(lines) > 1 else "",
+        )
+    return records
+
+
+def qwen7b_revision_matches(path, revision):
+    records = qwen7b_metadata(path)
+    return bool(records) and all(found == revision for found, _ in records.values())
+
+
+def prepare_qwen7b_models(root, models):
+    """Download only folders that are missing or not at the pinned revision; hash every weight file."""
+    from huggingface_hub import snapshot_download
+
+    for key, (repo_id, directory, revision) in QWEN7B_MODELS.items():
+        path = root / "models" / directory
+        present = False
+        if path.is_dir():
+            try:
+                validate_model(path, require_processor=key == "base")
+                present = qwen7b_revision_matches(path, revision)
+            except (OSError, ValueError):
+                present = False
+        if present:
+            print(f"{key} model present at {revision}: {path}", flush=True)
+        else:
+            print(f"Downloading {repo_id} @ {revision} into {path}", flush=True)
+            snapshot_download(repo_id, revision=revision, local_dir=str(path))
+        validate_model(path, require_processor=key == "base")
+        if not qwen7b_revision_matches(path, revision):
+            raise ValueError(f"{path} is not at the pinned revision {revision}")
+        records = qwen7b_metadata(path)
+        files = {}
+        for weight in sorted(path.glob("*.safetensors")):
+            digest = file_sha256(weight)
+            etag = records.get(weight.name, ("", ""))[1]
+            if digest != etag:
+                raise ValueError(
+                    f"SHA-256 of {weight} is {digest}; the Hub record says {etag or 'nothing'}"
+                )
+            files[weight.name] = {"bytes": weight.stat().st_size, "sha256": digest}
+            print(f"  {key}: {weight.name} sha256 matches the Hub record", flush=True)
+        models[key] = {
+            "repo_id": repo_id,
+            "revision": revision,
+            "path": str(path.relative_to(root)),
+            "files": files,
+        }
+        print(f"{key} model ready: {path} @ {revision}", flush=True)
+
+
+def check_qwen7b_models(root, manifest, state_path):
+    """Offline: folders validate, revisions equal the pins, weight sizes equal the manifest."""
+    for key, (repo_id, directory, revision) in QWEN7B_MODELS.items():
+        path = root / "models" / directory
+        entry = manifest.get("models", {}).get(key, {})
+        if entry.get("repo_id") != repo_id or entry.get("revision") != revision:
+            raise ValueError(f"Manifest {state_path} has a different {key} repository or revision")
+        validate_model(path, require_processor=key == "base")
+        if not qwen7b_revision_matches(path, revision):
+            raise ValueError(f"{path} is not at the pinned revision {revision}")
+        recorded = entry.get("files") or {}
+        found = {item.name: item for item in sorted(path.glob("*.safetensors"))}
+        if set(recorded) != set(found) or not found:
+            raise ValueError(
+                f"Weight files in {path} differ from the manifest {state_path}: "
+                f"{sorted(found)} against {sorted(recorded)}"
+            )
+        for name, item in found.items():
+            if item.stat().st_size != recorded[name]["bytes"]:
+                raise ValueError(
+                    f"Size of {item} is {item.stat().st_size}, "
+                    f"the manifest says {recorded[name]['bytes']}"
+                )
+
+
+def run_qwen7b(root, check_only):
+    state_path = root / ".preparation/assets_qwen7b.json"
+    data_path = root / ".preparation/assets_qwen.json"
+    if not data_path.exists():
+        raise ValueError(f"Missing manifest {data_path}; run bash prepare.sh --suite qwen first")
+    data_state = json.loads(data_path.read_text())
+    if not data_state.get("ready"):
+        raise ValueError(f"Manifest {data_path} is not ready; run bash prepare.sh --suite qwen first")
+    if check_only:
+        if not state_path.exists():
+            raise ValueError(
+                f"Missing manifest {state_path}; run bash prepare.sh --suite qwen7b first"
+            )
+        manifest = json.loads(state_path.read_text())
+        if not manifest.get("ready"):
+            raise ValueError(f"Manifest {state_path} is not ready; rerun preparation")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+        check_qwen7b_models(root, manifest, state_path)
+    else:
+        for key in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
+            os.environ.pop(key, None)
+        try:
+            importlib.import_module("huggingface_hub")
+        except ModuleNotFoundError as error:
+            raise RuntimeError("Missing preparation dependency huggingface_hub") from error
+        models = {}
+        prepare_qwen7b_models(root, models)
+        manifest = {"schema_version": 1, "suite": "qwen7b", "models": models}
+    # The 7B runs reuse the 3B suite's TextVQA and COCO files; they are checked, never rewritten.
+    textvqa_rows = validate_textvqa(root)
+    coco_images = validate_coco(root, data_state.get("coco", {}))
+    manifest.update(
+        ready=True,
+        data_manifest={
+            "path": str(data_path.relative_to(root)),
+            "finished_utc": data_state.get("finished_utc"),
+        },
+        finished_utc=datetime.now(UTC).isoformat(),
+    )
+    if not check_only:
+        atomic_json(state_path, manifest)
+    print(f"Data files ready: {textvqa_rows} TextVQA rows, {coco_images} COCO images", flush=True)
+    print("Qwen 7B preparation complete. All assets are under:", root, flush=True)
+
+
 def reverse_dir():
     return Path(os.environ.get("REVERSE_PLUS_DIR") or REVERSE_DEFAULT_DIR)
 
@@ -775,7 +921,7 @@ def main():
         action="store_true",
         help="Validate existing assets without downloads or installations",
     )
-    parser.add_argument("--suite", choices=("llava", "qwen", "reverse"), default="llava")
+    parser.add_argument("--suite", choices=("llava", "qwen", "qwen7b", "reverse"), default="llava")
     args = parser.parse_args()
     root = args.repo_dir.resolve()
     configure(root)
@@ -797,6 +943,9 @@ def main():
             ) from error
         if args.suite == "qwen":
             run_qwen(root, args.check_only)
+            return
+        if args.suite == "qwen7b":
+            run_qwen7b(root, args.check_only)
             return
         if args.suite == "reverse":
             run_reverse(root, args.check_only)
