@@ -89,7 +89,7 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Week 1 measured, 400/400 completed. Output equivalence unresolved (all divergences are bf16 near-ties) |
 | [04: Qwen decode profile](04_qwen_decode_profile/README.md) | Where AR and ViSpec decode time goes (`torch.profiler`) | Measured (job 393060), `long`, 3 samples per benchmark. Decode is inferred to be host-bound |
 | [05: Qwen draft pruning](05_qwen_draft_pruning/README.md) | ViSpec with a pruned draft image-adaptor input, vs the same arm at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398884, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Acceptance and latency stay at the 1.0 level. Week 2's one unexplained case was traced by 07 (bf16 noise). Diagnosis of the 10 Week 3 draft-only arms: Pending: GPU job 402165 |
-| [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398883, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Live KV falls with the budget, decode peak moves 0.3% or less. fp32 offset oracle: Pending: GPU job 402165 |
+| [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398883, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Live KV (arithmetic) falls with the budget, decode peak moves about 0.3%. fp32 offset oracle: Pending: GPU job 402165 |
 | [07: Qwen decode drift](07_qwen_decode_drift/README.md) | Fork cached AR decode vs stock HF cached and full-recompute decoding (Week 2 case 35537:162) | Measured (job 398844), `long` TextVQA, 100 questions. Fork and stock HF greedy agree on 19/100, and 80 of 81 first mismatches are bf16 near-ties. At 35537:162 the fork ties 13 and 95518 exactly, while stock incremental decoding prefers 95518 by 0.375. **Both plan stop conditions hold**, so the stop rule fired on one exact-tie case; judged bf16 implementation noise (known limitation). The mechanism is not isolated |
 | [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Week 3 measured (jobs 398885, 398923), diagonal arms, 100/100 per benchmark. Identity gate passed. Combined arms track the matching 06 arm. fp32 offset oracle: Pending: GPU job 402165 |
 | [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (about 7 to 8k tokens), `long` style, same-job references | Pending, no run yet |
@@ -217,7 +217,7 @@ What the measurements show:
   outputs got longer. Long-style outputs diverge heavily from the 1.0 arm. In `short`, the spatial arms lost 1.6 to 2.6 VQA points on TextVQA and 2.61 to 4.91 CIDEr-D on COCO. The
   ViSpec attention arm lost 8.85 CIDEr-D on COCO and nothing on TextVQA.
 - **Week 3** swept retention 0.25 and 0.75 and the combined arms; see the next section. The Week 2
-  fp32 confirmation of the draft-arm divergences is now Pending: GPU job 402165.
+  fp32 confirmation of the draft-arm divergences is replaced by job 402165, which diagnoses only the Week 3 draft-only arms with fp32 on the first 50 cases per arm, as in Week 2 (the extension beyond 50 cases was not carried out). Pending: GPU job 402165.
 
 Full tables, memory, hardware and the predictions scored against the measurements are in the
 [05 README](05_qwen_draft_pruning/README.md#results) and [06 README](06_qwen_kv_eviction/README.md#results).
@@ -295,18 +295,18 @@ agreement column counts identical token IDs in bf16, so near-ties count as disag
 
 - **Draft pruning (05)** left acceptance and latency at the 1.0 level and changed no memory. In `long` the outputs
   diverge from the reference on 23 to 60 of 100 samples (40 to 77 agree), and in `short` on at most 1.
-- **KV eviction (06)** cut live KV with the budget and moved the decode peak by 0.3% or less. TTFT did not change.
+- **KV eviction (06)** cut live KV (arithmetic) with the budget and moved the decode peak by about 0.3%. TTFT did not change.
   End-to-end latency followed output length: long TextVQA answers got longer under eviction (277.70 tokens at 1.0, 300.60 to 325.93
   at 0.5 and 0.25) and long COCO answers shorter at 0.25 (100.15 and 107.38 against 109.89).
-- **Both (08)** track the matching 06 arm: live KV within 0.005, agreement within 1 of 100, `short` quality within
+- **Both (08)** track the matching 06 arm: live KV (arithmetic) within 0.005, agreement within 1 of 100, `short` quality within
   0.58 CIDEr-D points.
 - **Quality (`short`).** At 0.25, the spatial policy lost 9.2 VQA points and 14.70 CIDEr-D against the reference,
-  and the attention policy lost none (within the noise of 100 samples).
+  and the attention policy lost none at 0.25 (within the noise of 100 samples). At 0.5 the attention policy lost 8.85 CIDEr-D on COCO in 06.
 
 **Why the latency effects are small.** This is the explanation for the small effects, not a new method. On this
 model the KV cache costs 36,864 bytes per token (36 layers x 2 x 2 KV heads x 128 x 2 bytes), while every decode
-step reads about 6.99 GiB of weights. The cache is therefore 0.5% of the weight read at 1,000 tokens and 3.4% at
-7,000 tokens, and the two are equal only at about 204,000 tokens. Decode is also host-bound (the Week 2 profile,
+step reads about 5.75 GiB of language-model weights (measured from the checkpoint files; the 1.25 GiB vision encoder is not read in decode steps). The cache is therefore 0.6% of the per-step weight read at 1,000 tokens and 4.2% at
+7,000 tokens, and the two are equal only at about 167,000 tokens. Decode is also host-bound (the Week 2 profile,
 experiment 04: the GPU is busy 36 to 50% of each step), and eviction runs after prefill, so it cannot cut time to
 first token. The host-bound reading is an inference from the profile, not tested by these runs.
 
@@ -320,12 +320,12 @@ is +0.02 to +0.10, against +0.11 to +0.18 on the full sample. The cause of the r
 **Which Week 2 predictions held.** Draft pruning costs acceptance at most slightly: held. Pruning barely moves
 latency: held. The target still verifies every draft, so greedy output matches up to bf16 near-ties: held for `short`,
 partly for `long`, pending the classification of the divergences. Eviction lowers live KV: held. Eviction lowers the
-decode peak: partly held (0.3% or less). Eviction barely moves latency: held for TTFT and per-iteration time, partly
+decode peak: partly held (about 0.3%). Eviction barely moves latency: held for TTFT and per-iteration time, partly
 end to end. Eviction can change the output: held, strongly. Combined arms track the 06 arm: held. Each README scores
 these against the numbers.
 
 **Pending.** The identity gate passed on all 12 1.0 arms (100/100 on both benchmarks). Pending: GPU job 402165. It
-diagnoses the 10 draft-only arms (`short` 0.75, 0.5 and 0.25 and `long` 0.5 and 0.25, both policies) and runs the fp32
+diagnoses the 10 draft-only arms (`short` 0.75, 0.5 and 0.25 and `long` 0.5 and 0.25, both policies; fp32 on the first 50 cases per arm, bf16 only beyond that for the two `long` TextVQA arms with 60 and 52 cases) and runs the fp32
 offset oracle on 5 samples at kv 0.25 spatial, kv 0.75 spatial and combined 0.25 spatial. Full tables, ratios
 that run against the trend, memory and the predictions are in the [05](05_qwen_draft_pruning/README.md#week-3-results-retention-sweep),
 [06](06_qwen_kv_eviction/README.md#week-3-results-retention-sweep) and

@@ -626,10 +626,10 @@ not a 2-D pool. In each image span it keeps `round(linspace(0, n - 1, k))`, so t
 tokens are evenly spaced in row-major order. At 0.5 it keeps every other token in raster
 order: every other column when the merged grid width is even, and a checkerboard when it
 is odd. Rounding absorbs the remainder in a few steps that are one token longer, which
-shifts the pattern by a column there. The counts of one such step per image at 0.5 and
-three at 0.25 hold only when the number of image tokens n is divisible by 4 (for example
-n = 100). For other n the count differs: at 0.5, n = 101 has two and n = 103 has none, and at 0.25,
-n = 102 has one and n = 103 has two. This is the Week 2
+shifts the pattern by a column there. At 0.5 the count of one such step per image holds for every
+even number of image tokens n (checked for n = 6 to 798). At 0.25 the count of three holds when n
+is divisible by 4 (checked for n = 20 to 796). For other n the count differs: at 0.5, n = 101 has
+two and n = 103 has none, and at 0.25, n = 102 has one and n = 103 has two. This is the Week 2
 selector. Week 3 keeps it unchanged so that Week 2 and Week 3 arms stay comparable.
 
 Per-question fields written by the eviction and draft-pruning arms (all counts of
