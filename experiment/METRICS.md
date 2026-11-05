@@ -430,9 +430,11 @@ for large `kv_offset` values. Greedy ViSpec commits only tokens that the target 
 picks in tree verification, so an autoregressive run and a ViSpec run with the same
 target-side eviction must return the same tokens, whatever the draft proposes. Draft-side
 pruning changes only the proposals, so the agreement must also hold in a combined arm. In
-bf16 a different kernel shape can flip a near-tied argmax. In fp32 with TF32 off those
-flips go away (Week 2: 5/5 at 0.5 spatial), so an fp32 mismatch points at the cache
-bookkeeping: the offset, the decode positions or the kept rows.
+bf16 a different kernel shape can flip a near-tied argmax. In fp32 those flips go away
+(Week 2: 5/5 at 0.5 spatial), so an fp32 mismatch points at the cache bookkeeping: the
+offset, the decode positions or the kept rows. The Week 2 fp32 runs had TF32 off for matrix
+multiplications but on for cuDNN (the vision patch embedding), so they were not fully
+TF32-free. The current script turns both off, and its output records both flags.
 
 ```bash
 python -m vispec.evaluation.offset_check --kv-retention 0.25 --kv-policy spatial \
@@ -623,8 +625,11 @@ The `spatial` policy (both sides) is a 1-D raster stride over each image's merge
 not a 2-D pool. In each image span it keeps `round(linspace(0, n - 1, k))`, so the kept
 tokens are evenly spaced in row-major order. At 0.5 it keeps every other token in raster
 order: every other column when the merged grid width is even, and a checkerboard when it
-is odd. Rounding absorbs the remainder in a few steps that are one token longer (one per
-image at 0.5, three at 0.25), which shifts the pattern by a column there. This is the Week 2
+is odd. Rounding absorbs the remainder in a few steps that are one token longer, which
+shifts the pattern by a column there. The counts of one such step per image at 0.5 and
+three at 0.25 hold only when the number of image tokens n is divisible by 4 (for example
+n = 100). For other n the count differs: at 0.5, n = 101 has two and n = 103 has none, and at 0.25,
+n = 102 has one and n = 103 has two. This is the Week 2
 selector. Week 3 keeps it unchanged so that Week 2 and Week 3 arms stay comparable.
 
 Per-question fields written by the eviction and draft-pruning arms (all counts of

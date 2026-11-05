@@ -13,11 +13,7 @@ latency. It can change the output, because later tokens attend to fewer image po
 agreement and quality against the reference are measured rather than assumed. The
 [Results](#predictions-against-the-measurements) section scores each prediction.
 
-Status: **measured for Week 2** at retention 1.0 and 0.5 (jobs 393336 and 393337, both exit 0, 100/100
-samples per benchmark). The 1.0 identity gate passed on every arm, and the AR-versus-ViSpec bookkeeping check at 0.5
-passed (long COCO exactly at the 10.0-point limit). Live KV fell to 0.65 to 0.67 of the 1.0 arm in `long` and 0.53 to
-0.58 in `short`, and the decode peak moved by about 0.2% or less. Long-style outputs diverge heavily from the 1.0
-arm, and short-style quality dropped for the spatial arms. Retention 0.25 and 0.75 and the combined arms are Week 3, pending.
+Status: **measured for Weeks 2 and 3.** Week 3 swept the retention budgets at commit `c3a36ac25f95` in jobs 398883 (`long`) and 398923 (`short`), both policies, ViSpec arms only, 100/100 samples per benchmark, all runs exit 0 (the `long` style ran 1.0, 0.5 and 0.25, the `short` style also 0.75). In those jobs ViSpec ran 2.200 (TextVQA) and 2.294 (COCO) times faster than autoregressive decoding in the `long` style, at 2.141 and 2.284 accepted draft tokens per iteration, and 0.981 and 1.485 times in the `short` style (job 398923). Eviction cut live KV (arithmetic) to 0.468 to 0.671 of the 1.0 arm in `long` and 0.298 to 0.791 in `short`, and moved the decode peak by 0.3% or less. The cache is too small next to the weights for that to change latency: 0.5% of the weight read per step at 1,000 tokens and 3.4% at 7,000 tokens. TTFT did not change. Accepted tokens per iteration rose under eviction, which we infer accounts for part of the small per-token gain. Long-style outputs diverge from the 1.0 arm in nearly every sample, and short-style quality dropped for the spatial policy at 0.25 (TextVQA 70.0 to 60.8, COCO CIDEr-D 119.68 to 104.98) and not for the attention policy. The 1.0 identity gate passed on every arm in both weeks. Week 2 also passed its AR-versus-ViSpec bookkeeping check at 0.5 (`long` COCO exactly at the 10.0-point limit), but Week 3 ran no autoregressive eviction arms, so that check was not repeated. Pending: GPU job 402165. It runs the fp32 offset oracle for this experiment.
 
 ## Changes from the reference
 
@@ -63,6 +59,19 @@ Shared code is in [`../qwen_arm_runner.sh`](../qwen_arm_runner.sh).
 
 A failed arm is recorded and the remaining arms still run, but a failed benchmark stops that arm's remaining benchmarks; the runner exits 1 if any arm failed, and `run_sequence.sbatch` still continues to the next experiment.
 
+## Cluster prerequisites
+
+1. Follow the [Ampere setup guide](../AMPERE_SETUP.md). Jobs run on the pinned 48 GB
+   `NVIDIA RTX A6000` nodes and fail with status 3 on any other GPU model. That check lives only in
+   `run_sequence.sbatch`, so results of record must be submitted through `submit_ampere.sh`.
+2. Prepare assets once with `bash prepare.sh --suite qwen` inside a Slurm allocation. The runner
+   repeats the offline check after the device capture and stops before any model loads if an asset is
+   missing.
+3. Commit code before launching, so the run records a clean commit.
+4. Submit the 02 and 03 references with `KV_LAYOUT=compact` in the same job, so the allocation
+   matches. `CLUSTER_PARTITION=preempt` reaches the same pinned nodes; a requeued job reruns the
+   runner into fresh run folders.
+
 ## How to run
 
 References first, then arms, in one job so the allocation matches:
@@ -78,6 +87,8 @@ The Week 2 jobs ran 02, 03, 06 and 05 in one allocation per style, with `--cpus-
 6 h (`long`) or 2 h (`short`) limit. The arm list is recorded as `arm_list` in each run's `metadata.txt`:
 `1.0:spatial 1.0:attention 0.5:spatial 0.5:attention 1.0:spatial:autoregressive 0.5:spatial:autoregressive`.
 
+The Week 3 jobs ran 02, 03 and the arm experiments with `--cpus-per-task=4 --mem=22G --time=04:00:00`. The `long` style ran one job per experiment (06 in job 398883), and the `short` style ran 02, 03, 06, 05 and 08 together in job 398923. The arms were ViSpec only (no `:autoregressive` suffix). The `long` arm list is `1.0:spatial 1.0:attention 0.5:spatial 0.5:attention 0.25:spatial 0.25:attention`, and the `short` list adds `0.75:spatial 0.75:attention` after the 1.0 arms (`arm_list` in each `metadata.txt`). The 0.75 budget was dropped from `long` to save GPU time.
+
 Compare an arm with the same method's reference:
 
 ```bash
@@ -88,7 +99,7 @@ python -m vispec.evaluation.compare_metrics --mode sparsity --original <referenc
 
 All figures come from one run per arm per prompt style: job 393336 for `long` and job 393337 for `short`, each ran 02, 03, 06 and 05 in one allocation at commit `66f492a5dc65` with a clean tree. Every arm used greedy decoding (temperature 0.0), bf16, batch size 1, at most 1,024 new tokens, depth 3, top-k 8, total-token 30, `num_q` 2, slim prefill on and the compact KV layout. Every run exited 0 and scored 100/100 samples on both benchmarks. Per-benchmark results are listed first, and no cross-benchmark aggregate is computed. Each arm's reference is the same decoding method at retention 1.0 from the same job.
 
-Retention 0.25, retention 0.75 and the combined draft-plus-KV arms are **Week 3, pending**. Only 1.0 and 0.5 were run.
+This section is the Week 2 record (retention 1.0 and 0.5, jobs 393336 and 393337). The Week 3 sweep, with retention 0.25 and 0.75 and different jobs, follows in [Week 3 results](#week-3-results-retention-sweep).
 
 ### Hardware
 
@@ -314,11 +325,276 @@ The reason latency did not move is an inference, not a measurement. The [04 prof
 
 The score window is the fixed 6-token chat-template tail after the image, because the question comes before the image in these prompts. `kv_score_window` is 6 in every record of the 0.5 attention arms (400 records), so the attention policy ranks image tokens by how much that template tail attends to them. We infer from this that the ranking cannot depend on the question. The attention-selected and spatial-selected halves overlapped at a Jaccard of 0.32 to 0.34 in a smoke run on 5 `long` TextVQA samples, which is about the 1/3 that two unrelated half-subsets give. So the attention policy is not a disguised stride pattern. The selected indices are not saved with the Week 2 runs, so the overlap was not re-measured there. Attention scoring also runs at retention 1.0, so the 1.0 attention arm carries that overhead, which is why the same-policy 1.0 arm is the primary latency reference.
 
-### Week 3 (pending)
+## Week 3 results (retention sweep)
 
-- Retention 0.25 and 0.75.
-- Combined draft-plus-KV arms.
-- fp32 confirmation of the draft-arm divergences (see [05](../05_qwen_draft_pruning/README.md#draft-only-divergence-diagnosis)).
+### Summary
+
+Speculative decoding comes first. In these jobs ViSpec completed Qwen2.5-VL-3B answers 2.2 to 2.3 times faster than autoregressive (AR) decoding in the `long` style, and about as fast as AR or 1.5 times faster in the `short` style. The table gives the same-job references, which every arm below is compared with.
+
+| Style | Job | Benchmark | AR latency (s) | ViSpec latency (s) | ViSpec speedup vs AR | ViSpec accepted draft tokens per iteration | Exact agreement, ViSpec vs AR | Quality, AR / ViSpec |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| long | 398883 | TextVQA | 12.353 | 5.615 | 2.200 | 2.141 | 22/100 | near zero (not meaningful) |
+| long | 398883 | COCO Captions | 4.544 | 1.981 | 2.294 | 2.284 | 28/100 | near zero (not meaningful) |
+| short | 398923 | TextVQA | 1.100 | 1.122 | 0.981 | 0.690 | 96/100 | 71.0 / 70.0 |
+| short | 398923 | COCO Captions | 0.784 | 0.528 | 1.485 | 1.746 | 88/100 | 121.40 / 119.68 |
+
+In `long`, the speedup comes with 2.141 (TextVQA) and 2.284 (COCO) accepted draft tokens per iteration. In `short` the answers are 5 and 15 tokens long and prefill dominates: TTFT is 0.940 s of the 1.122 s ViSpec latency on TextVQA, so ViSpec shows no speedup there (0.981). ViSpec and AR outputs differ in token IDs on `long` (22/100 and 28/100 agree exactly) and nearly agree on `short` (96/100 and 88/100). In bf16 the batched tree verification and one-token decoding use different kernel shapes, so near-tied logits can flip; the Week 1 diagnosis found every divergence to be a near-tie ([03 README](../03_qwen_vispec/README.md#results)).
+
+Sparsity comes second, and its effect on latency is small for a reason that can be computed. Eviction, measured here against the same ViSpec method at retention 1.0:
+
+- **Memory.** Live KV (arithmetic, `kv_tokens` times 36,864 bytes) fell to 0.468 to 0.671 of the 1.0 arm on `long` and 0.298 to 0.791 on `short`. The decode peak moved by 0.3% or less (ratio 0.997 to 1.000), and the post-compaction peak the same.
+- **Latency.** TTFT did not change (ratios 0.991 to 1.014), because eviction runs after prefill. End-to-end latency ratios ran from 0.875 to 1.106, and each of those that leaves the 0.97 to 1.03 band comes with a change in output length (see [Ratios that run against the trend](#ratios-that-run-against-the-trend)).
+- **Acceptance.** Accepted draft tokens per iteration rose under eviction, from 2.141 to 2.255 through 2.324 on `long` TextVQA and from 2.284 to as much as 2.379 on COCO. Part of the TextVQA rise comes from more capped answers (see [Acceptance rises under eviction](#acceptance-rises-under-eviction)).
+- **Output and quality.** Long-style outputs diverge from the 1.0 arm in nearly every sample (0 to 6 of 100 agree on TextVQA, 0 to 2 on COCO). On `short` the spatial policy lost quality at the lowest budget (TextVQA 70.0 to 60.8, COCO CIDEr-D 119.68 to 104.98), and the attention policy kept it (70.7 and 122.86), within the noise of 100 samples.
+
+### Why the latency effect is small
+
+This is the explanation for small effects, not a new method. On this model the KV cache costs 36,864 bytes per token (36 layers x 2 x 2 KV heads x 128 x 2 bytes), while every decode step reads about 6.99 GiB of weights. The cache is therefore 0.5% of the weight read at 1,000 tokens and 3.4% at 7,000 tokens, and the two are equal only at about 204,000 tokens. Evicting a share of a 1,000-token cache cannot save more than a fraction of a percent of the bytes a step reads. Decode is also host-bound: the [04 profile](../04_qwen_decode_profile/README.md) found the GPU busy for 36 to 50% of each step (profiled 0.20 to 0.30, estimated unprofiled 0.36 to 0.50), so time saved on the GPU mostly falls off the critical path. Eviction runs once after prefill, so it cannot lower TTFT either. The measured memory and latency effects below are consistent with this arithmetic. The host-bound reading is an inference from the Week 2 profile and is not tested by these runs.
+
+### Setup
+
+Four Slurm jobs, all at commit `c3a36ac25f95` with a clean tree, greedy decoding (temperature 0.0), bf16, batch size 1, at most 1,024 new tokens, depth 3, top-k 8, total-token 30, `num_q` 2, slim prefill on and the compact KV layout. Every run exited 0 and scored 100/100 samples on both benchmarks. This README uses job 398883 (`long`) and job 398923 (`short`). The other `long` jobs belong to [05](../05_qwen_draft_pruning/README.md#week-3-results-retention-sweep) (398884) and [08](../08_qwen_combined_sparsity/README.md#week-3-results-retention-sweep) (398885).
+
+**The budgets differ by style.** The `long` style ran retention 1.0, 0.5 and 0.25. The 0.75 budget was dropped from `long` to save GPU time. The `short` style ran all four (1.0, 0.75, 0.5 and 0.25). Both policies (`spatial`, `attention`) ran at every budget. Only ViSpec arms ran in Week 3: there are no autoregressive eviction arms, so the AR-versus-ViSpec bookkeeping check of Week 2 was not repeated.
+
+Each arm is compared with the same method at retention 1.0 and the same policy from the same job (the primary reading, because the 1.0 arm runs the same mask and score-capture code). The unpruned 03 ViSpec reference of the same job is the second reading. The job's 1.0 arms against that reference give the overhead and noise floor.
+
+### Week 3 hardware
+
+Each job ran on one physical card, so an arm and its references share hardware. The two `long` jobs that carry 05 and 08 ran on a different card, and the `long` KV job (this one) ran on `GPU-8d51152c`, the card that carried the Week 2 `long` job. **Absolute times are compared only within a job, never across jobs.** All ratios below stay inside one job.
+
+| Style | Job / partition (complete attempt) | Node and host CPU | GPU | UUID | Driver | Allocation | Device report (one per job; every run folder has its own, listed below) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| long | 398883 / `preempt`, restart 0, 2026-10-31, 16:56 to 19:08 UTC, 4 h limit | `c1-8`, Intel Xeon Silver 4116 @ 2.10 GHz | NVIDIA RTX A6000 (49,140 MiB total) | `GPU-8d51152c-22f1-372d-aef5-063afee0d488` | 615.71.09 | 1 GPU, 4 CPUs (affinity 0, 18, 24, 42), 22,528 MB | [06 1.0:spatial device.txt](runs/20261031T174037Z_c3a36ac25f95_long_r1.0_spatial_1d932G/device.txt) |
+| short | 398923 / `preempt`, restart 0, 2026-11-01, 12:19 to 14:06 UTC, 4 h limit | `c1-8`, Intel Xeon Silver 4116 @ 2.10 GHz | NVIDIA RTX A6000 (49,140 MiB total) | `GPU-eb032c66-7f3f-d1b6-96cf-c9db5600d457` | 615.71.09 | 1 GPU, 4 CPUs (affinity 2, 18, 26, 42), 22,528 MB | [06 1.0:spatial device.txt](runs/20261101T122933Z_c3a36ac25f95_short_r1.0_spatial_Yppgjg/device.txt) |
+
+The links point at generated run folders, which Git ignores and which are preserved on project storage, so they resolve only in a checkout that has them. Device reports are launch snapshots and do not measure runtime peaks. The job command is recorded in each run's `metadata.txt`. A requeued job reruns the runner into new folders, and only the complete attempt of each job is used; interrupted attempts are excluded.
+
+#### Week 3 run folders and device reports
+
+| Style | Job | Run | Arm | Run folder (preserved on project storage) | Device report |
+| --- | --- | --- | --- | --- | --- |
+| long | 398883 | 02 | reference | [`20261031T165619Z_c3a36ac25f95_long_sQw0be`](../02_qwen_autoregressive/runs/20261031T165619Z_c3a36ac25f95_long_sQw0be/) | [device.txt](../02_qwen_autoregressive/runs/20261031T165619Z_c3a36ac25f95_long_sQw0be/device.txt) |
+| long | 398883 | 03 | reference | [`20261031T172630Z_c3a36ac25f95_long_Z1rgED`](../03_qwen_vispec/runs/20261031T172630Z_c3a36ac25f95_long_Z1rgED/) | [device.txt](../03_qwen_vispec/runs/20261031T172630Z_c3a36ac25f95_long_Z1rgED/device.txt) |
+| long | 398883 | 06 | 1.0:attention | [`20261031T175442Z_c3a36ac25f95_long_r1.0_attention_7mIeai`](runs/20261031T175442Z_c3a36ac25f95_long_r1.0_attention_7mIeai/) | [device.txt](runs/20261031T175442Z_c3a36ac25f95_long_r1.0_attention_7mIeai/device.txt) |
+| long | 398883 | 06 | 1.0:spatial | [`20261031T174037Z_c3a36ac25f95_long_r1.0_spatial_1d932G`](runs/20261031T174037Z_c3a36ac25f95_long_r1.0_spatial_1d932G/) | [device.txt](runs/20261031T174037Z_c3a36ac25f95_long_r1.0_spatial_1d932G/device.txt) |
+| long | 398883 | 06 | 0.5:attention | [`20261031T182438Z_c3a36ac25f95_long_r0.5_attention_30dMpp`](runs/20261031T182438Z_c3a36ac25f95_long_r0.5_attention_30dMpp/) | [device.txt](runs/20261031T182438Z_c3a36ac25f95_long_r0.5_attention_30dMpp/device.txt) |
+| long | 398883 | 06 | 0.5:spatial | [`20261031T180850Z_c3a36ac25f95_long_r0.5_spatial_sLxadm`](runs/20261031T180850Z_c3a36ac25f95_long_r0.5_spatial_sLxadm/) | [device.txt](runs/20261031T180850Z_c3a36ac25f95_long_r0.5_spatial_sLxadm/device.txt) |
+| long | 398883 | 06 | 0.25:attention | [`20261031T185434Z_c3a36ac25f95_long_r0.25_attention_YRKcfi`](runs/20261031T185434Z_c3a36ac25f95_long_r0.25_attention_YRKcfi/) | [device.txt](runs/20261031T185434Z_c3a36ac25f95_long_r0.25_attention_YRKcfi/device.txt) |
+| long | 398883 | 06 | 0.25:spatial | [`20261031T183927Z_c3a36ac25f95_long_r0.25_spatial_qsqZuG`](runs/20261031T183927Z_c3a36ac25f95_long_r0.25_spatial_qsqZuG/) | [device.txt](runs/20261031T183927Z_c3a36ac25f95_long_r0.25_spatial_qsqZuG/device.txt) |
+| short | 398923 | 02 | reference | [`20261101T121923Z_c3a36ac25f95_short_J5AdE5`](../02_qwen_autoregressive/runs/20261101T121923Z_c3a36ac25f95_short_J5AdE5/) | [device.txt](../02_qwen_autoregressive/runs/20261101T121923Z_c3a36ac25f95_short_J5AdE5/device.txt) |
+| short | 398923 | 03 | reference | [`20261101T122530Z_c3a36ac25f95_short_ePf9XE`](../03_qwen_vispec/runs/20261101T122530Z_c3a36ac25f95_short_ePf9XE/) | [device.txt](../03_qwen_vispec/runs/20261101T122530Z_c3a36ac25f95_short_ePf9XE/device.txt) |
+| short | 398923 | 06 | 1.0:attention | [`20261101T123335Z_c3a36ac25f95_short_r1.0_attention_a3ZqIS`](runs/20261101T123335Z_c3a36ac25f95_short_r1.0_attention_a3ZqIS/) | [device.txt](runs/20261101T123335Z_c3a36ac25f95_short_r1.0_attention_a3ZqIS/device.txt) |
+| short | 398923 | 06 | 1.0:spatial | [`20261101T122933Z_c3a36ac25f95_short_r1.0_spatial_Yppgjg`](runs/20261101T122933Z_c3a36ac25f95_short_r1.0_spatial_Yppgjg/) | [device.txt](runs/20261101T122933Z_c3a36ac25f95_short_r1.0_spatial_Yppgjg/device.txt) |
+| short | 398923 | 06 | 0.75:attention | [`20261101T124144Z_c3a36ac25f95_short_r0.75_attention_BiUB4f`](runs/20261101T124144Z_c3a36ac25f95_short_r0.75_attention_BiUB4f/) | [device.txt](runs/20261101T124144Z_c3a36ac25f95_short_r0.75_attention_BiUB4f/device.txt) |
+| short | 398923 | 06 | 0.75:spatial | [`20261101T123741Z_c3a36ac25f95_short_r0.75_spatial_6YsPuz`](runs/20261101T123741Z_c3a36ac25f95_short_r0.75_spatial_6YsPuz/) | [device.txt](runs/20261101T123741Z_c3a36ac25f95_short_r0.75_spatial_6YsPuz/device.txt) |
+| short | 398923 | 06 | 0.5:attention | [`20261101T124957Z_c3a36ac25f95_short_r0.5_attention_42wdgL`](runs/20261101T124957Z_c3a36ac25f95_short_r0.5_attention_42wdgL/) | [device.txt](runs/20261101T124957Z_c3a36ac25f95_short_r0.5_attention_42wdgL/device.txt) |
+| short | 398923 | 06 | 0.5:spatial | [`20261101T124550Z_c3a36ac25f95_short_r0.5_spatial_34ruij`](runs/20261101T124550Z_c3a36ac25f95_short_r0.5_spatial_34ruij/) | [device.txt](runs/20261101T124550Z_c3a36ac25f95_short_r0.5_spatial_34ruij/device.txt) |
+| short | 398923 | 06 | 0.25:attention | [`20261101T125806Z_c3a36ac25f95_short_r0.25_attention_n1aKQq`](runs/20261101T125806Z_c3a36ac25f95_short_r0.25_attention_n1aKQq/) | [device.txt](runs/20261101T125806Z_c3a36ac25f95_short_r0.25_attention_n1aKQq/device.txt) |
+| short | 398923 | 06 | 0.25:spatial | [`20261101T125402Z_c3a36ac25f95_short_r0.25_spatial_Uqezcc`](runs/20261101T125402Z_c3a36ac25f95_short_r0.25_spatial_Uqezcc/) | [device.txt](runs/20261101T125402Z_c3a36ac25f95_short_r0.25_spatial_Uqezcc/device.txt) |
+
+### Reading the Week 3 tables
+
+Units follow the [03 README](../03_qwen_vispec/README.md#reading-these-results) and the [metrics guide](../METRICS.md). Latency and TTFT are seconds per question, TPOT is milliseconds, and mean output tokens count EOS (in parentheses, the answers that hit the 1,024-token cap). Decode ms per iteration is the mean decode time over the run's iterations (mean decode time per question times 100, divided by the iteration count). It is computed from each run's `summary.json`. Quality is TextVQA consensus accuracy in percent or COCO CIDEr-D x 100 (inverse document frequency from the 100-image subset, so a subset measurement).
+
+- **Direction of ratios.** `Speedup vs AR` and both latency ratios are reference over arm, so a value above 1 means the arm was faster. Memory ratios are arm over reference, so a value above 1 means more memory.
+- **Two latency readings, shown side by side.** The column against the same-policy 1.0 arm and the column against the unpruned ViSpec reference are both given and neither is preferred after the fact. A 1.0 arm has no same-policy reference, so its row shows only the reference reading, which measures overhead plus run-to-run noise.
+- **Agreement and bf16.** Exact agreement is token-ID equality through the first EOS over 100 samples. Greedy decoding in bf16 flips near-tied logits when kernel shapes differ, so agreement reflects near-ties as well as the method effect, and it is a count out of 100 without a confidence interval. Agreement with AR is the secondary column.
+- **Live KV is arithmetic.** `kv_tokens` times 36,864 bytes, not an allocator measurement. It includes the output tokens, so a ratio is larger than the retention budget, and an arm with longer or shorter outputs shifts its ratio. Compare with the output-token column before reading a live-KV ratio.
+- **Steady-state decode memory.** The decode peak includes transient allocations at the phase boundary. The post-compaction peak (taken after the cache compaction) is the figure for steady-state decode memory, and its ratio is given beside the decode-peak ratio.
+- **Long style.** Long answers are paragraphs, so strict VQA accuracy and CIDEr-D are near zero and not meaningful there. The `long` tables give agreement with the reference and output length instead of quality. Quality numbers come from the `short` style.
+
+### Week 3 identity gate at retention 1.0
+
+The gate passed: all 12 1.0 arms of the Week 3 jobs of 05, 06 and 08 (both policies, both styles) reproduce their same-job ViSpec reference token for token, 100/100 on TextVQA and 100/100 on COCO. The 06 arms are the `Exact agreement with ViSpec reference` entries of 100/100 on the 1.0 rows below. The comparison files are in each arm's `comparisons/20261105T192451Z_identity_vs_03-ref/`.
+
+### Style `long`, Week 3 (speed and agreement measurement)
+
+| Benchmark | Arm | Latency (s) | TTFT (s) | Mean output tokens (capped) | TPOT (ms) | Speedup vs AR | Latency ratio vs same-policy 1.0 | Latency ratio vs unpruned ViSpec ref |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| TextVQA | 02 reference (AR) | 12.353 | 0.940 | 283.31 (4) | 40.4 | 1.000 | n/a | n/a |
+| TextVQA | 03 reference (ViSpec) | 5.615 | 0.939 | 277.70 (3) | 18.0 | 2.200 | n/a | n/a |
+| TextVQA | 06 ViSpec 1.0:attention | 5.588 | 0.943 | 277.70 (3) | 17.9 | 2.211 | 1.000 | 1.005 |
+| TextVQA | 06 ViSpec 1.0:spatial | 5.555 | 0.939 | 277.70 (3) | 17.8 | 2.224 | 1.000 | 1.011 |
+| TextVQA | 06 ViSpec 0.5:attention | 5.999 | 0.943 | 312.26 (6) | 17.5 | 2.059 | 0.932 | 0.936 |
+| TextVQA | 06 ViSpec 0.5:spatial | 6.351 | 0.944 | 325.93 (6) | 17.5 | 1.945 | 0.875 | 0.884 |
+| TextVQA | 06 ViSpec 0.25:attention | 5.686 | 0.940 | 300.60 (5) | 17.4 | 2.173 | 0.983 | 0.987 |
+| TextVQA | 06 ViSpec 0.25:spatial | 6.193 | 0.942 | 319.22 (5) | 17.2 | 1.995 | 0.897 | 0.907 |
+| COCO Captions | 02 reference (AR) | 4.544 | 0.223 | 109.96 (0) | 39.7 | 1.000 | n/a | n/a |
+| COCO Captions | 03 reference (ViSpec) | 1.981 | 0.221 | 109.89 (0) | 16.2 | 2.294 | n/a | n/a |
+| COCO Captions | 06 ViSpec 1.0:attention | 2.038 | 0.233 | 109.89 (0) | 16.6 | 2.229 | 1.000 | 0.972 |
+| COCO Captions | 06 ViSpec 1.0:spatial | 2.040 | 0.225 | 109.89 (0) | 16.8 | 2.227 | 1.000 | 0.971 |
+| COCO Captions | 06 ViSpec 0.5:attention | 1.958 | 0.235 | 105.61 (0) | 16.7 | 2.320 | 1.041 | 1.011 |
+| COCO Captions | 06 ViSpec 0.5:spatial | 2.046 | 0.224 | 110.19 (0) | 16.8 | 2.221 | 0.997 | 0.968 |
+| COCO Captions | 06 ViSpec 0.25:attention | 1.842 | 0.233 | 100.15 (0) | 16.4 | 2.466 | 1.106 | 1.075 |
+| COCO Captions | 06 ViSpec 0.25:spatial | 1.892 | 0.223 | 107.38 (0) | 15.8 | 2.402 | 1.078 | 1.047 |
+
+*Exact agreement counts identical token IDs in bf16, where near-tied logits can flip with kernel shape, so it reflects near-ties as well as any method effect.*
+
+| Benchmark | Arm | Accepted draft tokens per iteration (iterations) | Decode ms per iteration | Exact agreement with ViSpec reference | Exact agreement with AR (secondary) |
+| --- | --- | --- | ---: | ---: | ---: |
+| TextVQA | 02 reference (AR) | n/a (AR) | n/a | 22/100 | n/a |
+| TextVQA | 03 reference (ViSpec) | 2.141 (8841) | 52.7 | n/a | 22/100 |
+| TextVQA | 06 ViSpec 1.0:attention | 2.141 (8841) | 52.4 | 100/100 | 22/100 |
+| TextVQA | 06 ViSpec 1.0:spatial | 2.141 (8841) | 52.1 | 100/100 | 22/100 |
+| TextVQA | 06 ViSpec 0.5:attention | 2.255 (9594) | 52.6 | 6/100 | 5/100 |
+| TextVQA | 06 ViSpec 0.5:spatial | 2.265 (9983) | 54.0 | 0/100 | 0/100 |
+| TextVQA | 06 ViSpec 0.25:attention | 2.324 (9044) | 52.3 | 2/100 | 2/100 |
+| TextVQA | 06 ViSpec 0.25:spatial | 2.286 (9715) | 53.9 | 0/100 | 0/100 |
+| COCO Captions | 02 reference (AR) | n/a (AR) | n/a | 28/100 | n/a |
+| COCO Captions | 03 reference (ViSpec) | 2.284 (3346) | 52.2 | n/a | 28/100 |
+| COCO Captions | 06 ViSpec 1.0:attention | 2.284 (3346) | 53.6 | 100/100 | 28/100 |
+| COCO Captions | 06 ViSpec 1.0:spatial | 2.284 (3346) | 53.9 | 100/100 | 28/100 |
+| COCO Captions | 06 ViSpec 0.5:attention | 2.352 (3151) | 54.3 | 1/100 | 0/100 |
+| COCO Captions | 06 ViSpec 0.5:spatial | 2.291 (3348) | 54.0 | 2/100 | 2/100 |
+| COCO Captions | 06 ViSpec 0.25:attention | 2.360 (2981) | 53.6 | 1/100 | 1/100 |
+| COCO Captions | 06 ViSpec 0.25:spatial | 2.379 (3178) | 52.2 | 0/100 | 0/100 |
+
+*Live KV is arithmetic (`kv_tokens` times 36,864 bytes, output tokens included), so its ratio shifts with output length. The post-compaction peak is the steady-state decode figure.*
+
+| Benchmark | Arm | Smallest kept count per image | Live KV mean (MiB, arithmetic) | Live KV ratio vs same-policy 1.0 | Decode peak mean / max (GiB) | Decode peak ratio vs same-policy 1.0 | Post-compaction peak ratio vs same-policy 1.0 |
+| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |
+| TextVQA | 02 reference (AR) | n/a | 47.3 | n/a | 7.945 / 7.970 | n/a | n/a |
+| TextVQA | 03 reference (ViSpec) | n/a | 47.1 | n/a | 7.993 / 8.015 | n/a | n/a |
+| TextVQA | 06 ViSpec 1.0:attention | 729 | 47.1 | 1.000 | 7.993 / 8.015 | 1.000 | 1.000 |
+| TextVQA | 06 ViSpec 1.0:spatial | 729 | 47.1 | 1.000 | 7.993 / 8.015 | 1.000 | 1.000 |
+| TextVQA | 06 ViSpec 0.5:attention | 364 | 31.1 | 0.661 | 7.976 / 7.993 | 0.998 | 0.998 |
+| TextVQA | 06 ViSpec 0.5:spatial | 364 | 31.6 | 0.671 | 7.977 / 7.996 | 0.998 | 0.998 |
+| TextVQA | 06 ViSpec 0.25:attention | 182 | 22.1 | 0.470 | 7.968 / 7.986 | 0.997 | 0.997 |
+| TextVQA | 06 ViSpec 0.25:spatial | 182 | 22.8 | 0.484 | 7.968 / 7.983 | 0.997 | 0.997 |
+| COCO Captions | 02 reference (AR) | n/a | 18.1 | n/a | 7.878 / 7.893 | n/a | n/a |
+| COCO Captions | 03 reference (ViSpec) | n/a | 18.1 | n/a | 7.934 / 7.946 | n/a | n/a |
+| COCO Captions | 06 ViSpec 1.0:attention | 264 | 18.1 | 1.000 | 7.934 / 7.946 | 1.000 | 1.000 |
+| COCO Captions | 06 ViSpec 1.0:spatial | 264 | 18.1 | 1.000 | 7.934 / 7.946 | 1.000 | 1.000 |
+| COCO Captions | 06 ViSpec 0.5:attention | 132 | 11.8 | 0.650 | 7.929 / 7.938 | 0.999 | 0.999 |
+| COCO Captions | 06 ViSpec 0.5:spatial | 132 | 11.9 | 0.659 | 7.928 / 7.935 | 0.999 | 0.999 |
+| COCO Captions | 06 ViSpec 0.25:attention | 66 | 8.5 | 0.468 | 7.925 / 7.936 | 0.999 | 0.999 |
+| COCO Captions | 06 ViSpec 0.25:spatial | 66 | 8.7 | 0.482 | 7.925 / 7.934 | 0.999 | 0.999 |
+
+Retention 0.75 was not run in `long`. Kept image tokens follow the budget: the smallest image keeps 182 of 729 tokens at 0.25 and 364 at 0.5 on TextVQA, and 66 of 264 and 132 on COCO.
+
+### Style `short`, Week 3 (quality measurement)
+
+| Benchmark | Arm | Latency (s) | TTFT (s) | Mean output tokens (capped) | TPOT (ms) | Speedup vs AR | Latency ratio vs same-policy 1.0 | Latency ratio vs unpruned ViSpec ref |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| TextVQA | 02 reference (AR) | 1.100 | 0.934 | 5.03 (0) | 41.6 | 1.000 | n/a | n/a |
+| TextVQA | 03 reference (ViSpec) | 1.122 | 0.940 | 5.24 (0) | 69.2 | 0.981 | n/a | n/a |
+| TextVQA | 06 ViSpec 1.0:attention | 1.124 | 0.943 | 5.24 (0) | 69.3 | 0.978 | 1.000 | 0.998 |
+| TextVQA | 06 ViSpec 1.0:spatial | 1.121 | 0.938 | 5.24 (0) | 69.5 | 0.981 | 1.000 | 1.001 |
+| TextVQA | 06 ViSpec 0.75:attention | 1.123 | 0.941 | 5.31 (0) | 70.2 | 0.980 | 1.002 | 0.999 |
+| TextVQA | 06 ViSpec 0.75:spatial | 1.127 | 0.938 | 5.69 (0) | 69.0 | 0.976 | 0.995 | 0.996 |
+| TextVQA | 06 ViSpec 0.5:attention | 1.126 | 0.941 | 5.31 (0) | 70.1 | 0.977 | 0.999 | 0.996 |
+| TextVQA | 06 ViSpec 0.5:spatial | 1.173 | 0.939 | 8.03 (0) | 70.4 | 0.937 | 0.955 | 0.956 |
+| TextVQA | 06 ViSpec 0.25:attention | 1.126 | 0.941 | 5.43 (0) | 70.0 | 0.977 | 0.998 | 0.996 |
+| TextVQA | 06 ViSpec 0.25:spatial | 1.125 | 0.939 | 5.41 (0) | 69.4 | 0.978 | 0.996 | 0.997 |
+| COCO Captions | 02 reference (AR) | 0.784 | 0.222 | 14.76 (0) | 40.9 | 1.000 | n/a | n/a |
+| COCO Captions | 03 reference (ViSpec) | 0.528 | 0.222 | 15.05 (0) | 22.2 | 1.485 | n/a | n/a |
+| COCO Captions | 06 ViSpec 1.0:attention | 0.544 | 0.232 | 15.05 (0) | 22.6 | 1.441 | 1.000 | 0.971 |
+| COCO Captions | 06 ViSpec 1.0:spatial | 0.527 | 0.222 | 15.05 (0) | 22.1 | 1.488 | 1.000 | 1.003 |
+| COCO Captions | 06 ViSpec 0.75:attention | 0.538 | 0.231 | 14.83 (0) | 22.5 | 1.458 | 1.011 | 0.982 |
+| COCO Captions | 06 ViSpec 0.75:spatial | 0.533 | 0.222 | 15.16 (0) | 22.3 | 1.472 | 0.989 | 0.992 |
+| COCO Captions | 06 ViSpec 0.5:attention | 0.545 | 0.231 | 15.13 (0) | 22.6 | 1.439 | 0.998 | 0.969 |
+| COCO Captions | 06 ViSpec 0.5:spatial | 0.520 | 0.225 | 14.48 (0) | 22.3 | 1.508 | 1.013 | 1.016 |
+| COCO Captions | 06 ViSpec 0.25:attention | 0.526 | 0.231 | 14.51 (0) | 22.1 | 1.490 | 1.034 | 1.004 |
+| COCO Captions | 06 ViSpec 0.25:spatial | 0.535 | 0.222 | 15.27 (0) | 22.2 | 1.466 | 0.985 | 0.988 |
+
+*Exact agreement counts identical token IDs in bf16, where near-tied logits can flip with kernel shape, so it reflects near-ties as well as any method effect.*
+
+| Benchmark | Arm | Accepted draft tokens per iteration (iterations) | Decode ms per iteration | Exact agreement with ViSpec reference | Exact agreement with AR (secondary) | Quality | Change vs ViSpec reference |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| TextVQA | 02 reference (AR) | n/a (AR) | n/a | 96/100 | n/a | 71.0 | n/a |
+| TextVQA | 03 reference (ViSpec) | 0.690 (310) | 54.6 | n/a | 96/100 | 70.0 | n/a |
+| TextVQA | 06 ViSpec 1.0:attention | 0.690 (310) | 54.6 | 100/100 | 96/100 | 70.0 | +0.0 |
+| TextVQA | 06 ViSpec 1.0:spatial | 0.690 (310) | 54.9 | 100/100 | 96/100 | 70.0 | +0.0 |
+| TextVQA | 06 ViSpec 0.75:attention | 0.718 (309) | 54.8 | 95/100 | 95/100 | 71.0 | +1.0 |
+| TextVQA | 06 ViSpec 0.75:spatial | 0.745 (326) | 54.1 | 89/100 | 87/100 | 69.6 | -0.4 |
+| TextVQA | 06 ViSpec 0.5:attention | 0.696 (313) | 55.0 | 96/100 | 94/100 | 70.0 | +0.0 |
+| TextVQA | 06 ViSpec 0.5:spatial | 0.983 (405) | 54.6 | 83/100 | 83/100 | 68.4 | -1.6 |
+| TextVQA | 06 ViSpec 0.25:attention | 0.718 (316) | 54.9 | 93/100 | 92/100 | 70.7 | +0.7 |
+| TextVQA | 06 ViSpec 0.25:spatial | 0.717 (315) | 55.2 | 69/100 | 70/100 | 60.8 | -9.2 |
+| COCO Captions | 02 reference (AR) | n/a (AR) | n/a | 88/100 | n/a | 121.40 | n/a |
+| COCO Captions | 03 reference (ViSpec) | 1.746 (548) | 53.7 | n/a | 88/100 | 119.68 | n/a |
+| COCO Captions | 06 ViSpec 1.0:attention | 1.746 (548) | 54.8 | 100/100 | 88/100 | 119.68 | +0.00 |
+| COCO Captions | 06 ViSpec 1.0:spatial | 1.746 (548) | 53.6 | 100/100 | 88/100 | 119.68 | +0.00 |
+| COCO Captions | 06 ViSpec 0.75:attention | 1.746 (540) | 54.6 | 77/100 | 76/100 | 121.84 | +2.16 |
+| COCO Captions | 06 ViSpec 0.75:spatial | 1.727 (556) | 53.8 | 49/100 | 49/100 | 120.75 | +1.07 |
+| COCO Captions | 06 ViSpec 0.5:attention | 1.736 (553) | 54.6 | 43/100 | 42/100 | 110.84 | -8.85 |
+| COCO Captions | 06 ViSpec 0.5:spatial | 1.774 (522) | 54.3 | 38/100 | 41/100 | 117.07 | -2.61 |
+| COCO Captions | 06 ViSpec 0.25:attention | 1.790 (520) | 54.5 | 22/100 | 21/100 | 122.86 | +3.18 |
+| COCO Captions | 06 ViSpec 0.25:spatial | 1.756 (554) | 54.3 | 10/100 | 9/100 | 104.98 | -14.70 |
+
+*Live KV is arithmetic (`kv_tokens` times 36,864 bytes, output tokens included), so its ratio shifts with output length. The post-compaction peak is the steady-state decode figure.*
+
+| Benchmark | Arm | Smallest kept count per image | Live KV mean (MiB, arithmetic) | Live KV ratio vs same-policy 1.0 | Decode peak mean / max (GiB) | Decode peak ratio vs same-policy 1.0 | Post-compaction peak ratio vs same-policy 1.0 |
+| --- | --- | ---: | ---: | ---: | --- | ---: | ---: |
+| TextVQA | 02 reference (AR) | n/a | 36.7 | n/a | 7.944 / 7.968 | n/a | n/a |
+| TextVQA | 03 reference (ViSpec) | n/a | 36.7 | n/a | 7.982 / 8.005 | n/a | n/a |
+| TextVQA | 06 ViSpec 1.0:attention | 729 | 36.7 | 1.000 | 7.982 / 8.005 | 1.000 | 1.000 |
+| TextVQA | 06 ViSpec 1.0:spatial | 729 | 36.7 | 1.000 | 7.982 / 8.005 | 1.000 | 1.000 |
+| TextVQA | 06 ViSpec 0.75:attention | 547 | 28.1 | 0.766 | 7.973 / 7.991 | 0.999 | 0.999 |
+| TextVQA | 06 ViSpec 0.75:spatial | 547 | 28.2 | 0.766 | 7.973 / 7.992 | 0.999 | 0.999 |
+| TextVQA | 06 ViSpec 0.5:attention | 364 | 19.5 | 0.532 | 7.965 / 7.984 | 0.998 | 0.998 |
+| TextVQA | 06 ViSpec 0.5:spatial | 364 | 19.6 | 0.535 | 7.965 / 7.981 | 0.998 | 0.998 |
+| TextVQA | 06 ViSpec 0.25:attention | 182 | 10.9 | 0.298 | 7.957 / 7.974 | 0.997 | 0.997 |
+| TextVQA | 06 ViSpec 0.25:spatial | 182 | 10.9 | 0.298 | 7.957 / 7.972 | 0.997 | 0.997 |
+| COCO Captions | 02 reference (AR) | n/a | 14.8 | n/a | 7.878 / 7.893 | n/a | n/a |
+| COCO Captions | 03 reference (ViSpec) | n/a | 14.8 | n/a | 7.930 / 7.948 | n/a | n/a |
+| COCO Captions | 06 ViSpec 1.0:attention | 264 | 14.8 | 1.000 | 7.930 / 7.948 | 1.000 | 1.000 |
+| COCO Captions | 06 ViSpec 1.0:spatial | 264 | 14.8 | 1.000 | 7.930 / 7.948 | 1.000 | 1.000 |
+| COCO Captions | 06 ViSpec 0.75:attention | 198 | 11.7 | 0.791 | 7.927 / 7.944 | 1.000 | 1.000 |
+| COCO Captions | 06 ViSpec 0.75:spatial | 198 | 11.7 | 0.791 | 7.927 / 7.944 | 1.000 | 1.000 |
+| COCO Captions | 06 ViSpec 0.5:attention | 132 | 8.6 | 0.582 | 7.924 / 7.936 | 0.999 | 0.999 |
+| COCO Captions | 06 ViSpec 0.5:spatial | 132 | 8.6 | 0.581 | 7.923 / 7.936 | 0.999 | 0.999 |
+| COCO Captions | 06 ViSpec 0.25:attention | 66 | 5.5 | 0.371 | 7.921 / 7.933 | 0.999 | 0.999 |
+| COCO Captions | 06 ViSpec 0.25:spatial | 66 | 5.5 | 0.373 | 7.921 / 7.933 | 0.999 | 0.999 |
+
+What the `short` tables show:
+
+- **Quality at the lowest budget depends on the policy.** At 0.25, TextVQA accuracy is 60.8 for `spatial` and 70.7 for `attention` against 70.0 for the reference. COCO CIDEr-D is 104.98 and 122.86 against 119.68. Agreement shows the same order: 69/100 against 93/100 on TextVQA, and 10/100 against 22/100 on COCO.
+- **Quality is not monotone in the budget.** The COCO `attention` arm scores 121.84, 110.84 and 122.86 at 0.75, 0.5 and 0.25. With 100 images, a spread of this size is within the noise of CIDEr-D, so no ordering of the budgets is claimed. A caption that differs from the reference can score as well as the reference, so agreement and CIDEr-D can move apart.
+- **Memory follows the budget.** Live KV ratios are 0.766, 0.532 to 0.535 and 0.298 on TextVQA, and 0.791, 0.581 to 0.582 and 0.371 to 0.373 on COCO, at 0.75, 0.5 and 0.25.
+
+### Memory
+
+Live KV in the `long` job fell from 47.1 MiB to 22.1 MiB on TextVQA at 0.25:attention (a saving of 25.0 MiB, arithmetic) and from 18.1 to 8.5 MiB on COCO. The same saving appears in the decode peak, which falls by 16.5 to 25.3 MiB on TextVQA and 5.9 to 9.2 MiB on COCO. Against a decode peak of about 7.99 GiB that is 0.3% at most, so the peak ratio is 0.997 to 0.998 (TextVQA) and 0.999 (COCO), and the post-compaction peak ratio is identical. The saving is the whole cache difference and nothing more, which fits the weight-dominated peak described above. Prefill peaks are not affected, because eviction follows prefill.
+
+### Acceptance rises under eviction
+
+Accepted draft tokens per iteration rose under eviction. In the `long` job on TextVQA the 2.141 of the reference and the 1.0 arms became 2.255 (attention) and 2.265 (spatial) at 0.5, and 2.324 (attention) and 2.286 (spatial) at 0.25. On COCO the 2.284 became 2.352 and 2.291 at 0.5, and 2.360 and 2.379 at 0.25. The combined [08 arms](../08_qwen_combined_sparsity/README.md#acceptance-and-the-06-arms) show the same rise.
+
+We infer that part of the small per-token gain comes from this rise and not from cheaper steps. Decode time per iteration stays between 52.1 and 54.3 ms in every ViSpec run of this job, the references and 1.0 arms included, while output tokens per iteration rose from 3.141 to 3.255 through 3.324 on TextVQA. Mean TPOT fell from 17.8 and 17.9 ms (the 1.0 arms) to 17.2 through 17.5 ms in the eviction arms. That is a drop of 2 to 3%, and the extra 4 to 6% of tokens per iteration at an unchanged step time is the size of it.
+
+This is an inference with limits.
+
+- **Different text.** The accepted tokens are counted over different text in each arm (agreement is 0 to 6 of 100).
+- **Capped answers inflate the TextVQA rise.** Eviction arms have more answers at the 1,024-token cap (5 or 6 against 3), and those long answers pull the arm means up. Computed from each run's `samples.jsonl`, over the 93 TextVQA questions that are below the cap in the reference and in the arm, the reference mean is 2.082 to 2.105 and the arms are 2.118 (0.5:spatial), 2.122 (0.5:attention), 2.135 (0.25:attention) and 2.192 (0.25:spatial). The rise is then +0.02 to +0.10, smaller than the full-sample +0.11 to +0.18. COCO has no capped answers in this job, so its rise (+0.007 to +0.095) is the full-sample one.
+- **One run.** The values are means over iterations from one run per arm, and the references and 1.0 arms alone already span 52.1 to 53.9 ms per iteration.
+
+The cause of the rise is not tested, and the evidence is suggestive rather than conclusive.
+
+### Ratios that run against the trend
+
+Most eviction latency ratios are near 1 or follow the output length. Those that do not:
+
+- **Long TextVQA, all four arms slower (0.875 to 0.983).** Higher acceptance and equal or lower TPOT would suggest faster arms. The arms are slower because their answers are longer: 312.26 and 325.93 tokens at 0.5 and 300.60 and 319.22 at 0.25, against 277.70 for the 1.0 arms, and more answers reach the 1,024-token cap (5 or 6 against 3). The arm with the smallest length increase (0.25:attention, +8.2%) has the smallest slowdown (0.983). It is a longer-answer effect, not a per-token slowdown.
+- **Long COCO, faster with shorter answers (1.041, 1.078, 1.106).** The arms with ratios above 1.04 (0.5:attention, 0.25:spatial, 0.25:attention) have shorter answers than the 1.0 arms (105.61, 107.38 and 100.15 tokens against 109.89) and a higher acceptance. Decode time per iteration did not drop for 0.5:attention and 0.25:attention (54.3 and 53.6 ms against 53.6). The same-policy and unpruned-reference readings differ by about 3% here (for example 1.106 against 1.075), because both COCO 1.0 arms ran slower than the job's reference (ratios 0.972 and 0.971, TTFT 0.233 and 0.225 s against 0.221 s). The size of that gap is the noise floor of a single run per arm.
+- **Short TextVQA 0.5:spatial (0.955) and its acceptance of 0.983.** The mean answer grew from 5.24 to 8.03 tokens (no answer capped), so the slowdown and the high acceptance both describe different, longer text. TTFT is 0.939 s, as in the other arms.
+- **Short COCO 0.25:attention (1.034) and 0.5:spatial (1.013).** Mean answers are shorter than the 1.0 arm's 15.05 tokens (14.51 and 14.48).
+
+### Predictions against the Week 3 measurements
+
+The predictions are those recorded before Week 2 (see [Purpose and hypothesis](#purpose-and-hypothesis)).
+
+| Prediction (written before the runs) | Outcome | Evidence |
+| --- | --- | --- |
+| Eviction lowers live KV | **Held** | Live KV ratio 0.468 to 0.671 on `long` and 0.298 to 0.791 on `short`, with the smallest image keeping 25% to 75% of its image tokens. |
+| Eviction lowers decode peak memory | **Partly held** | The peak falls in every arm, but by 0.3% or less (ratio 0.997 to 1.000), the size of the live-KV drop and under 1% of the peak. |
+| Eviction barely moves latency | **Held for TTFT and per-iteration time, partly held end to end** | TTFT ratios 0.991 to 1.014. Decode time per iteration 52.1 to 54.3 ms in every ViSpec run of the long job. End-to-end ratios 0.875 to 1.106 follow output length and acceptance (see above). |
+| Eviction can change the output | **Held, strongly** | `long` agreement 0 to 6 of 100 (TextVQA) and 0 to 2 (COCO). `short` agreement 69 to 96 of 100 (TextVQA) and 10 to 77 (COCO). |
+
+### Pending: fp32 offset oracle
+
+Pending: GPU job 402165. It runs `offset_check` in fp32 on 5 samples at kv 0.25 spatial and kv 0.75 spatial for this experiment. `diagnose_divergence` refuses eviction arms, so this is the only oracle for the large cache offsets. The result will be filled in here.
 
 ## Limits
 
@@ -328,4 +604,6 @@ The score window is the fixed 6-token chat-template tail after the image, becaus
 - `kv_live_bytes` is a whole-model figure and is arithmetic (`kv_tokens` times the bytes per token), not an allocator measurement. The AR decode-phase peak is the compaction transient and not steady-state decoding.
 - The 0.5 arms often produce longer outputs, so end-to-end latency ratios mix per-token speed with output length. Read TPOT and TTFT alongside them.
 - The attention-policy overlap comes from a 5-sample smoke run and was not re-measured in these runs.
-- Only retention 1.0 and 0.5 were run. Retention 0.25 and 0.75 and combined arms are Week 3 and pending.
+- Week 3 has one run per arm and style as well. The `long` style did not run the 0.75 budget (dropped to save GPU time), and its three jobs ran on two cards at different times, so no absolute time is compared across jobs. Week 3 ran ViSpec arms only, so the AR-versus-ViSpec bookkeeping check was not repeated.
+- The TextVQA acceptance rise is partly an effect of more answers at the token cap (see the Week 3 section). The inference that the rise accounts for part of the per-token gain is not tested.
+- The fp32 offset oracle for this experiment: Pending: GPU job 402165.
