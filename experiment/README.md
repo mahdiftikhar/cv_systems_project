@@ -88,10 +88,10 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [02: Qwen autoregressive](02_qwen_autoregressive/README.md) | Qwen2.5-VL-3B reference decoding | Week 1 measured, `long` and `short`, 400/400 completed |
 | [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Week 1 measured, 400/400 completed. Output equivalence unresolved (all divergences are bf16 near-ties) |
 | [04: Qwen decode profile](04_qwen_decode_profile/README.md) | Where AR and ViSpec decode time goes (`torch.profiler`) | Measured (job 393060), `long`, 3 samples per benchmark. Decode is inferred to be host-bound |
-| [05: Qwen draft pruning](05_qwen_draft_pruning/README.md) | ViSpec with a pruned draft image-adaptor input, vs the same arm at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398884, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Acceptance and latency stay at the 1.0 level. Week 2's one unexplained case was traced by 07 (bf16 noise). Diagnosis of the 10 Week 3 draft-only arms: Pending: GPU job 402165 |
-| [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398883, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Live KV (arithmetic) falls with the budget, decode peak moves about 0.3%. fp32 offset oracle: Pending: GPU job 402165 |
+| [05: Qwen draft pruning](05_qwen_draft_pruning/README.md) | ViSpec with a pruned draft image-adaptor input, vs the same arm at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398884, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Acceptance and latency stay at the 1.0 level. Week 2's one unexplained case was traced by 07 (bf16 noise). Diagnosis of the 10 Week 3 draft-only arms (job 402165): 9 pass with every case a near-tie, `long` 0.5:attention fails on the known case (07) |
+| [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398883, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Live KV (arithmetic) falls with the budget, decode peak moves about 0.3%. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at kv 0.25 and 0.75 spatial |
 | [07: Qwen decode drift](07_qwen_decode_drift/README.md) | Fork cached AR decode vs stock HF cached and full-recompute decoding (Week 2 case 35537:162) | Measured (job 398844), `long` TextVQA, 100 questions. Fork and stock HF greedy agree on 19/100, and 80 of 81 first mismatches are bf16 near-ties. At 35537:162 the fork ties 13 and 95518 exactly, while stock incremental decoding prefers 95518 by 0.375. **Both plan stop conditions hold**, so the stop rule fired on one exact-tie case; judged bf16 implementation noise (known limitation). The mechanism is not isolated |
-| [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Week 3 measured (jobs 398885, 398923), diagonal arms, 100/100 per benchmark. Identity gate passed. Combined arms track the matching 06 arm. fp32 offset oracle: Pending: GPU job 402165 |
+| [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Week 3 measured (jobs 398885, 398923), diagonal arms, 100/100 per benchmark. Identity gate passed. Combined arms track the matching 06 arm. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at combined 0.25 spatial |
 | [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (about 7 to 8k tokens), `long` style, same-job references | Pending, no run yet |
 
 Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
@@ -217,7 +217,7 @@ What the measurements show:
   outputs got longer. Long-style outputs diverge heavily from the 1.0 arm. In `short`, the spatial arms lost 1.6 to 2.6 VQA points on TextVQA and 2.61 to 4.91 CIDEr-D on COCO. The
   ViSpec attention arm lost 8.85 CIDEr-D on COCO and nothing on TextVQA.
 - **Week 3** swept retention 0.25 and 0.75 and the combined arms; see the next section. The Week 2
-  fp32 confirmation of the draft-arm divergences is replaced by job 402165, which diagnoses only the Week 3 draft-only arms with fp32 on the first 50 cases per arm, as in Week 2 (the extension beyond 50 cases was not carried out). Pending: GPU job 402165.
+  fp32 confirmation of the draft-arm divergences became job 402165, which diagnosed only the Week 3 draft-only arms with fp32 on the first 50 cases per arm, as in Week 2 (the extension beyond 50 cases was not carried out). Its results are below.
 
 Full tables, memory, hardware and the predictions scored against the measurements are in the
 [05 README](05_qwen_draft_pruning/README.md#results) and [06 README](06_qwen_kv_eviction/README.md#results).
@@ -319,14 +319,22 @@ is +0.02 to +0.10, against +0.11 to +0.18 on the full sample. The cause of the r
 
 **Which Week 2 predictions held.** Draft pruning costs acceptance at most slightly: held. Pruning barely moves
 latency: held. The target still verifies every draft, so greedy output matches up to bf16 near-ties: held for `short`,
-partly for `long`, pending the classification of the divergences. Eviction lowers live KV: held. Eviction lowers the
+held for `long` apart from one known case, because the diagnosis finds the `long` divergences to be bf16 near-ties. Eviction lowers live KV: held. Eviction lowers the
 decode peak: partly held (about 0.3%). Eviction barely moves latency: held for TTFT and per-iteration time, partly
 end to end. Eviction can change the output: held, strongly. Combined arms track the 06 arm: held. Each README scores
 these against the numbers.
 
-**Pending.** The identity gate passed on all 12 1.0 arms (100/100 on both benchmarks). Pending: GPU job 402165. It
-diagnoses the 10 draft-only arms (`short` 0.75, 0.5 and 0.25 and `long` 0.5 and 0.25, both policies; fp32 on the first 50 cases per arm, bf16 only beyond that for the two `long` TextVQA arms with 60 and 52 cases) and runs the fp32
-offset oracle on 5 samples at kv 0.25 spatial, kv 0.75 spatial and combined 0.25 spatial. Full tables, ratios
+**Diagnosis and exactness check (GPU job 402165, node `c4-3`, card `GPU-786d8051-7e60-0cbf-22b0-defdaae84a18`, a check and
+not a timed result).** The identity gate passed on all 12 1.0 arms (100/100 on both benchmarks). The divergence diagnosis ran
+on the 10 draft-only arms (`short` 0.75, 0.5 and 0.25 and `long` 0.5 and 0.25, both policies). Nine pass with every case a
+bf16 near-tie: `long` has 102 cases for 0.25:attention, 72 for 0.25:spatial and 67 for 0.5:spatial, and `short` has 1 case each
+for 0.25:attention and 0.75:spatial (the other four `short` arms have none). `long` 0.5:attention fails with 79 near-ties and
+1 unexplained case of 80, the known TextVQA question 35537 at output index 162 (stock bf16 margin 0.625, fp32 0.724). Experiment
+07 traced it to an exact tie in the fork's own cached bf16 logits and it was judged bf16 implementation noise, a known
+limitation; the threshold stays at 0.5 logits. fp32 covered the first 50 cases per arm, so 52, 22, 30 and 17 cases (`long`
+0.25:attention, 0.25:spatial, 0.5:attention, 0.5:spatial) are classified by bf16 margin only. The fp32 offset oracle, on 5
+`long` TextVQA questions per setting, found AR equal to ViSpec on 5 of 5 at kv 0.25 spatial, kv 0.75 spatial and combined 0.25
+spatial, with matching KV counts and kv_offset from 231 to 944. Full tables, ratios
 that run against the trend, memory and the predictions are in the [05](05_qwen_draft_pruning/README.md#week-3-results-retention-sweep),
 [06](06_qwen_kv_eviction/README.md#week-3-results-retention-sweep) and
 [08](08_qwen_combined_sparsity/README.md#week-3-results-retention-sweep) READMEs.

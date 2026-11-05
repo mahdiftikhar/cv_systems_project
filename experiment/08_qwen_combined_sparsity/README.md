@@ -33,7 +33,7 @@ was high on `short` (100/100) and mixed on `long` (48 to 77 of 100). We therefor
 
 The [Week 3 results](#week-3-results-retention-sweep) score each prediction against the measurements.
 
-Status: **measured for Week 3** at commit `c3a36ac25f95` in jobs 398885 (`long`) and 398923 (`short`), diagonal arms with both policies, 100/100 samples per benchmark, all runs exit 0 (the `long` style ran 1.0, 0.5 and 0.25, the `short` style also 0.75). In those jobs ViSpec ran 2.158 (TextVQA) and 2.315 (COCO) times faster than autoregressive decoding in the `long` style, at 2.141 and 2.284 accepted draft tokens per iteration, and 0.981 and 1.485 times in the `short` style (job 398923). A combined arm tracks the matching [06](../06_qwen_kv_eviction/README.md) eviction-only arm closely: live KV (arithmetic) within 0.005 of it, exact agreement within 1 of 100 samples, and `short` quality within 0.58 CIDEr-D points. Draft pruning adds almost nothing to eviction. We infer this is because the draft's adaptor already compresses each image to `num_q` = 2 queries, so pruning its input leaves little to change; this was not tested separately. The 1.0 identity gate passed on every arm. Pending: GPU job 402165. It runs the fp32 offset oracle for the combined 0.25 spatial arm.
+Status: **measured for Week 3** at commit `c3a36ac25f95` in jobs 398885 (`long`) and 398923 (`short`), diagonal arms with both policies, 100/100 samples per benchmark, all runs exit 0 (the `long` style ran 1.0, 0.5 and 0.25, the `short` style also 0.75). In those jobs ViSpec ran 2.158 (TextVQA) and 2.315 (COCO) times faster than autoregressive decoding in the `long` style, at 2.141 and 2.284 accepted draft tokens per iteration, and 0.981 and 1.485 times in the `short` style (job 398923). A combined arm tracks the matching [06](../06_qwen_kv_eviction/README.md) eviction-only arm closely: live KV (arithmetic) within 0.005 of it, exact agreement within 1 of 100 samples, and `short` quality within 0.58 CIDEr-D points. Draft pruning adds almost nothing to eviction. We infer this is because the draft's adaptor already compresses each image to `num_q` = 2 queries, so pruning its input leaves little to change; this was not tested separately. The 1.0 identity gate passed on every arm. In the fp32 offset oracle, AR equalled ViSpec token for token on 5 of 5 long TextVQA questions at combined 0.25 spatial (GPU job 402165, kv_offset 694 to 944, KV counts match).
 
 ## Changes from the reference
 
@@ -406,9 +406,15 @@ The predictions are those recorded before the runs (see [Purpose and hypothesis]
 | Draft pruning adds little on top of eviction: acceptance and latency stay within the spread that separates the 06 arm from its 1.0 arm | **Held in aggregate, with four arm pairs at the noise floor** | Acceptance differs from the 06 arm by 0.045 (`long`) and 0.024 (`short`) at most, against 06 arm rises of up to +0.18 (`long`) and +0.29 (`short`, TextVQA 0.5:spatial, a longer-text case). Latency ratios differ by 0.047 (`long`, TextVQA 0.25:spatial, 0.944 against 0.897) and 0.007 (`short`) at most, against a gap of up to 0.125 between a 06 arm and its 1.0 arm. Per arm, 4 of the 20 pairs differ by more than the 06 arm's own gap from its 1.0 arm: `long` COCO 0.5:spatial (acceptance 0.016 against 0.007, latency 0.004 against 0.003), `short` COCO 0.5:attention (0.024 against 0.010, 0.004 against 0.002), `short` COCO 0.75:attention (acceptance 0.010 against 0.000) and `short` COCO 0.25:spatial (acceptance 0.010 against 0.010, a tie). All four are at the noise floor. The `long` comparison crosses two jobs and with one run per arm cannot be separated from run-to-run spread. |
 | Latency barely moves, for the reason given in 05 and 06; TPOT and TTFT are read alongside | **Held for TTFT and per-iteration time, partly held end to end** | TTFT ratios (1.0 arm over arm) 0.989 to 1.013. Decode time per iteration 52.2 to 54.2 ms in every ViSpec run of the long job. End-to-end ratios 0.902 to 1.130 follow output length and acceptance. |
 
-### Pending: fp32 offset oracle
+### fp32 offset oracle (exactness check)
 
-Pending: GPU job 402165. It runs `offset_check` in fp32 on 5 samples at combined 0.25 spatial, with the draft retention and policy set as well. The result will be filled in here.
+`diagnose_divergence` refuses combined arms, so `offset_check` is the check for the large cache offsets. Draft-side pruning changes only the proposals, so AR and ViSpec with the same target eviction must still return the same tokens. In fp32 (matmul and cuDNN TF32 both off, recorded in the file) near-tie flips go away, so a mismatch would point at the cache bookkeeping. GPU job 402165 ran it on the first 5 `long` TextVQA questions with kv and draft retention both 0.25 and policy `spatial`, on node `c4-3` and card `GPU-786d8051-7e60-0cbf-22b0-defdaae84a18` at commit `c3a36ac25f95`; it is a check and not a timed result.
+
+| Setting | Questions | AR equals ViSpec | KV counts match | kv_offset (evicted tokens) min to max | First mismatches |
+| --- | ---: | ---: | --- | --- | --- |
+| combined 0.25 spatial | 5 | 5/5 | yes | 694 to 944 | none |
+
+The files are `experiment/sweeps/week3_offset_oracle/combined0.25_spatial/` (`offset_check.json` and `offset_check.md`). The result matches the kv 0.25 spatial setting of [06](../06_qwen_kv_eviction/README.md#fp32-offset-oracle-exactness-check). Five questions at one budget is a small sample, and the check says that AR and ViSpec agree under the same eviction. It does not say that the combination preserves answers.
 
 ## Limits
 
@@ -420,4 +426,4 @@ Pending: GPU job 402165. It runs `offset_check` in fp32 on 5 samples at combined
   without the matching 05 and 06 arms.
 - The `long` style did not run the 0.75 budget (dropped to save GPU time). The `long` 08 job and the `short` job ran at different times, and the three `long` jobs ran on two cards, so no absolute time is compared across jobs.
 - The 08 and 06 `long` arms come from different jobs, so their comparison uses ratios only. The TextVQA acceptance rise is partly an effect of more answers at the token cap (see the Week 3 section).
-- The fp32 offset oracle for the combined arm: Pending: GPU job 402165.
+- The fp32 offset oracle covers 5 `long` TextVQA questions at combined 0.25 spatial only, and tests AR-versus-ViSpec equality, not answer quality.

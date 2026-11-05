@@ -13,7 +13,7 @@ latency. It can change the output, because later tokens attend to fewer image po
 agreement and quality against the reference are measured rather than assumed. The
 [Results](#predictions-against-the-measurements) section scores each prediction.
 
-Status: **measured for Weeks 2 and 3.** Week 3 swept the retention budgets at commit `c3a36ac25f95` in jobs 398883 (`long`) and 398923 (`short`), both policies, ViSpec arms only, 100/100 samples per benchmark, all runs exit 0 (the `long` style ran 1.0, 0.5 and 0.25, the `short` style also 0.75). In those jobs ViSpec ran 2.200 (TextVQA) and 2.294 (COCO) times faster than autoregressive decoding in the `long` style, at 2.141 and 2.284 accepted draft tokens per iteration, and 0.981 and 1.485 times in the `short` style (job 398923). Eviction cut live KV (arithmetic) to 0.468 to 0.671 of the 1.0 arm in `long` and 0.298 to 0.791 in `short`, and moved the decode peak by about 0.3%. The cache is too small next to the language-model weights for that to change per-step time: 0.6% of the per-step weight read at 1,000 tokens and 4.2% at 7,000 tokens. TTFT did not change. Accepted tokens per iteration rose under eviction, which we infer accounts for part of the small per-token gain. Long-style outputs diverge from the 1.0 arm in nearly every sample, and short-style quality dropped for the spatial policy at 0.25 (TextVQA 70.0 to 60.8, COCO CIDEr-D 119.68 to 104.98) and not for the attention policy at 0.25 (it lost 8.85 CIDEr-D on COCO at 0.5). The 1.0 identity gate passed on every arm in both weeks. Week 2 also passed its AR-versus-ViSpec bookkeeping check at 0.5 (`long` COCO exactly at the 10.0-point limit), but Week 3 ran no autoregressive eviction arms, so that check was not repeated. Pending: GPU job 402165. It runs the fp32 offset oracle for this experiment.
+Status: **measured for Weeks 2 and 3.** Week 3 swept the retention budgets at commit `c3a36ac25f95` in jobs 398883 (`long`) and 398923 (`short`), both policies, ViSpec arms only, 100/100 samples per benchmark, all runs exit 0 (the `long` style ran 1.0, 0.5 and 0.25, the `short` style also 0.75). In those jobs ViSpec ran 2.200 (TextVQA) and 2.294 (COCO) times faster than autoregressive decoding in the `long` style, at 2.141 and 2.284 accepted draft tokens per iteration, and 0.981 and 1.485 times in the `short` style (job 398923). Eviction cut live KV (arithmetic) to 0.468 to 0.671 of the 1.0 arm in `long` and 0.298 to 0.791 in `short`, and moved the decode peak by about 0.3%. The cache is too small next to the language-model weights for that to change per-step time: 0.6% of the per-step weight read at 1,000 tokens and 4.2% at 7,000 tokens. TTFT did not change. Accepted tokens per iteration rose under eviction, which we infer accounts for part of the small per-token gain. Long-style outputs diverge from the 1.0 arm in nearly every sample, and short-style quality dropped for the spatial policy at 0.25 (TextVQA 70.0 to 60.8, COCO CIDEr-D 119.68 to 104.98) and not for the attention policy at 0.25 (it lost 8.85 CIDEr-D on COCO at 0.5). The 1.0 identity gate passed on every arm in both weeks. Week 2 also passed its AR-versus-ViSpec bookkeeping check at 0.5 (`long` COCO exactly at the 10.0-point limit), but Week 3 ran no autoregressive eviction arms, so that check was not repeated. In the fp32 offset oracle, AR equalled ViSpec token for token on 5 of 5 long TextVQA questions at kv 0.25 spatial and at kv 0.75 spatial (GPU job 402165), so the cache bookkeeping showed no error there.
 
 ## Changes from the reference
 
@@ -592,9 +592,16 @@ The predictions are those recorded before Week 2 (see [Purpose and hypothesis](#
 | Eviction barely moves latency | **Held for TTFT and per-iteration time, partly held end to end** | TTFT ratios (1.0 arm over arm) 0.986 to 1.009. Decode time per iteration 52.1 to 54.3 ms in every ViSpec run of the long job. End-to-end ratios 0.875 to 1.106 follow output length and acceptance (see above). |
 | Eviction can change the output | **Held, strongly** | `long` agreement 0 to 6 of 100 (TextVQA) and 0 to 2 (COCO). `short` agreement 69 to 96 of 100 (TextVQA) and 10 to 77 (COCO). |
 
-### Pending: fp32 offset oracle
+### fp32 offset oracle (exactness check)
 
-Pending: GPU job 402165. It runs `offset_check` in fp32 on 5 samples at kv 0.25 spatial and kv 0.75 spatial for this experiment. `diagnose_divergence` refuses eviction arms, so this is the only oracle for the large cache offsets. The result will be filled in here.
+`diagnose_divergence` refuses eviction arms, so `offset_check` is the check for the large cache offsets. Greedy ViSpec commits only tokens that the target itself picks, so AR and ViSpec with the same eviction must return the same tokens. In fp32 (matmul and cuDNN TF32 both off, recorded in the file) near-tie flips go away, so a mismatch would point at the cache bookkeeping. GPU job 402165 ran it on the first 5 `long` TextVQA questions at each setting, on node `c4-3` and card `GPU-786d8051-7e60-0cbf-22b0-defdaae84a18` at commit `c3a36ac25f95`; it is a check and not a timed result.
+
+| Setting | Questions | AR equals ViSpec | KV counts match | kv_offset (evicted tokens) min to max | First mismatches |
+| --- | ---: | ---: | --- | --- | --- |
+| kv 0.25 spatial | 5 | 5/5 | yes | 694 to 944 | none |
+| kv 0.75 spatial | 5 | 5/5 | yes | 231 to 314 | none |
+
+The combined 0.25 spatial setting is in [08](../08_qwen_combined_sparsity/README.md#fp32-offset-oracle-exactness-check). The files are `experiment/sweeps/week3_offset_oracle/kv0.25_spatial/` and `kv0.75_spatial/` (`offset_check.json` and `offset_check.md`). Five questions at two budgets is a small sample, and the check says that AR and ViSpec agree under the same eviction. It does not say that eviction preserves answers.
 
 ## Limits
 
@@ -606,4 +613,4 @@ Pending: GPU job 402165. It runs `offset_check` in fp32 on 5 samples at kv 0.25 
 - The attention-policy overlap comes from a 5-sample smoke run and was not re-measured in these runs.
 - Week 3 has one run per arm and style as well. The `long` style did not run the 0.75 budget (dropped to save GPU time), and its three jobs ran on two cards at different times, so no absolute time is compared across jobs. Week 3 ran ViSpec arms only, so the AR-versus-ViSpec bookkeeping check was not repeated.
 - The TextVQA acceptance rise is partly an effect of more answers at the token cap (see the Week 3 section). The inference that the rise accounts for part of the per-token gain is not tested.
-- The fp32 offset oracle for this experiment: Pending: GPU job 402165.
+- The fp32 offset oracle covers 5 `long` TextVQA questions at kv 0.25 and 0.75 spatial only, and tests AR-versus-ViSpec equality under eviction, not answer quality.
