@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Shared by experiment/05_qwen_draft_pruning, 06_qwen_kv_eviction and 08_qwen_combined_sparsity run.sh.
-# Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (reference|draft|kv|combined),
+# Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (reference|draft|kv|combined|methods),
 # arms (space-separated <retention>:<policy>[:<method>]; reference sweeps take `ar` and `vispec`), prompt_style, and has done
 # `set -euo pipefail` and `cd "$repo_dir"`.
+# The methods sweep (experiment 10) takes arms `<method>[:<tree>][:<order>]`; see qwen_validate_method_arms.
 # Each arm gets its own run folder with the full launch evidence and its own EXIT report.
 # Failure: a failed arm records a failure and the remaining arms still run; a failed benchmark stops that
 # arm's remaining benchmarks; the runner exits 1 if any arm failed; run_sequence.sbatch then continues
@@ -31,6 +32,56 @@ qwen_validate_ref_arms() {
         case "$spec" in ar|vispec) ;; *)
             echo "Invalid reference arm '$spec': must be ar or vispec." >&2; exit 2 ;;
         esac
+    done
+}
+
+# Split a methods-sweep arm `<method>[:<tree>][:<order>]` into globals arm_method, arm_tree and arm_order, with the
+# defaults filled in, and set arm_tree_given=1 when the tree was written out. Return 1 with a message on any
+# invalid arm. Fields are told apart by value, so each may appear once. Usage: qwen_parse_method_arm <arm>
+qwen_parse_method_arm() {
+    local spec="$1" field
+    local -a fields
+    arm_method=""; arm_tree="30-3-8"; arm_order="image-last"; arm_tree_given=0
+    local tree_seen=0 order_seen=0
+    IFS=: read -r -a fields <<< "$spec"
+    if [[ "$spec" == *: || ${#fields[@]} -eq 0 ]]; then
+        echo "Invalid arm '$spec': empty field." >&2; return 1
+    fi
+    case "${fields[0]}" in ar|vispec|hivis) arm_method="${fields[0]}" ;; *)
+        echo "Invalid arm '$spec': method must be ar, vispec or hivis." >&2; return 1 ;;
+    esac
+    for field in "${fields[@]:1}"; do
+        case "$field" in
+            30-3-8|60-5-10)
+                if [[ $tree_seen -eq 1 ]]; then echo "Invalid arm '$spec': tree given twice." >&2; return 1; fi
+                tree_seen=1; arm_tree="$field"; arm_tree_given=1 ;;
+            image-last|image-first)
+                if [[ $order_seen -eq 1 ]]; then echo "Invalid arm '$spec': prompt order given twice." >&2; return 1; fi
+                order_seen=1; arm_order="$field" ;;
+            *) echo "Invalid arm '$spec': '$field' is not a tree (30-3-8 or 60-5-10) or a prompt order (image-last or image-first)." >&2; return 1 ;;
+        esac
+    done
+    if [[ "$arm_method" == "ar" && $tree_seen -eq 1 ]]; then
+        echo "Invalid arm '$spec': ar takes no tree." >&2; return 1
+    fi
+    [[ "$arm_method" == "ar" ]] && arm_tree="none"
+    return 0
+}
+
+# Validate the arms of a methods sweep before any run folder exists, including duplicates once the defaults are
+# filled in. Usage: qwen_validate_method_arms <arms>
+qwen_validate_method_arms() {
+    local list="$1" spec seen=" "
+    if [[ -z "${list// /}" ]]; then
+        echo "The arm list is empty." >&2
+        exit 2
+    fi
+    for spec in $list; do
+        qwen_parse_method_arm "$spec" || exit 2
+        if [[ "$seen" == *" ${arm_method}/${arm_tree}/${arm_order} "* ]]; then
+            echo "Invalid arm '$spec': duplicates an earlier arm (${arm_method}, tree ${arm_tree}, ${arm_order})." >&2; exit 2
+        fi
+        seen+="${arm_method}/${arm_tree}/${arm_order} "
     done
 }
 
@@ -78,11 +129,26 @@ qwen_run_arms() {
 # One arm = one run folder. Mirrors the 03 runner steps 03-11.
 qwen_run_arm() {
     set +e
-    local spec="$1" ret policy method_field
-    IFS=: read -r ret policy method_field <<< "$spec"
-    local method="${method_field:-vispec}" suffix=""
-    [[ -n "$method_field" ]] && suffix="_${method_field}"
-    local folder_arm="r${ret}_${policy}${suffix}"
+    local spec="$1" ret="" policy="" method_field="" method suffix="" folder_arm
+    local arm_method arm_tree arm_order arm_tree_given
+    local m_depth="" m_top_k="" m_total="" draft_method="none"
+    if [[ "$sweep" == "methods" ]]; then
+        qwen_parse_method_arm "$spec" || return 2
+        folder_arm="${arm_method}"
+        [[ $arm_tree_given -eq 1 ]] && folder_arm+="_t${arm_tree}"
+        folder_arm+="_${arm_order}"
+        case "$arm_method" in
+            ar) method="autoregressive" ;;
+            vispec) method="vispec"; draft_method="vispec" ;;
+            hivis) method="hivis"; draft_method="hivis" ;;
+        esac
+        [[ "$arm_method" != "ar" ]] && IFS=- read -r m_total m_depth m_top_k <<< "$arm_tree"
+    else
+        IFS=: read -r ret policy method_field <<< "$spec"
+        method="${method_field:-vispec}"
+        [[ -n "$method_field" ]] && suffix="_${method_field}"
+        folder_arm="r${ret}_${policy}${suffix}"
+    fi
     if [[ "$sweep" == "reference" ]]; then
         # A reference arm is `ar` or `vispec`: no sparsity flags, folder name ..._ref_<ar|vispec>_XXXXXX.
         case "$spec" in
@@ -102,28 +168,37 @@ qwen_run_arm() {
     export PYTHONNOUSERSITE=1
     local base_model="${BASE_MODEL_PATH:-$repo_dir/models/Qwen2.5-VL-3B-Instruct}"
     local spec_dir="${SPEC_DIR:-$repo_dir/models/ViSpec-Qwen2.5-VL-3B-Instruct}"
+    local asset_suite="${QWEN_ASSET_SUITE:-qwen}"
+    if [[ "$method" == "hivis" ]]; then
+        spec_dir="${HIVIS_DIR:-$repo_dir/models/HiViS-Qwen2.5-VL-7B-Instruct}"
+    fi
     local bench_dir="${BENCH_DIR:-$repo_dir/bench_data}"
     local temperature="0.0" max_new_tokens=1024 num_samples=100 kv_capacity=16384
     local python_bin="${PYTHON_BIN:-/home/aeternum/anaconda3/envs/vipsec/bin/python}"
     local depth="${DEPTH:-3}" top_k="${TOP_K:-8}" total_token="${TOTAL_TOKEN:-30}" num_q="${NUM_Q:-2}"
+    if [[ "$sweep" == "methods" && -n "$m_total" ]]; then
+        depth="$m_depth"; top_k="$m_top_k"; total_token="$m_total"
+    fi
     local qwen_benchmarks="${QWEN_BENCHMARKS:-textvqa coco_caption}" benchmarks=()
     read -r -a benchmarks <<< "$qwen_benchmarks"
     local method_dir meta_method
     if [[ "$method" == "autoregressive" ]]; then
         method_dir="autoregressive_qwen"; meta_method="autoregressive"
+    elif [[ "$method" == "hivis" ]]; then
+        method_dir="hivis_qwen"; meta_method="hivis_speculative"
     else
         method_dir="vispec_qwen"; meta_method="vispec_speculative"
     fi
     # Sparsity settings this arm applies; "none" in metadata means the flag is omitted.
     local kv_retention="none" kv_policy="none" draft_retention="none" draft_policy="none"
     case "$sweep" in
-        reference) ;;
+        reference|methods) ;;
         draft) draft_retention="$ret"; draft_policy="$policy" ;;
         kv) kv_retention="$ret"; kv_policy="$policy" ;;
         combined)
             kv_retention="$ret"; kv_policy="$policy"
             draft_retention="$ret"; draft_policy="$policy" ;;
-        *) echo "Unknown sweep type '$sweep' (expected reference, draft, kv or combined)." >&2; exit 2 ;;
+        *) echo "Unknown sweep type '$sweep' (expected reference, draft, kv, combined or methods)." >&2; exit 2 ;;
     esac
 
     command -v "$python_bin" >/dev/null || return 1
@@ -142,8 +217,8 @@ qwen_run_arm() {
     cp "$repo_dir/experiment/qwen_arm_runner.sh" "$run_dir/qwen_arm_runner.sh"
     cp "$repo_dir/experiment/capture_device.sh" "$run_dir/capture_device.sh"
     cp "$repo_dir/experiment/check_cuda.sh" "$run_dir/check_cuda.sh"
-    if [[ -f "$repo_dir/.preparation/assets_qwen.json" ]]; then
-        cp "$repo_dir/.preparation/assets_qwen.json" "$run_dir/prepared-assets.json"
+    if [[ -f "$repo_dir/.preparation/assets_${asset_suite}.json" ]]; then
+        cp "$repo_dir/.preparation/assets_${asset_suite}.json" "$run_dir/prepared-assets.json"
     fi
 
     # Use a pipeline so logging also works on systems that restrict /dev/fd.
@@ -190,8 +265,13 @@ qwen_run_arm() {
         printf 'submit_command=%s\nsbatch_extra=%s\n' "$submit_command" "$sbatch_extra"
         if [[ "$method" == "autoregressive" ]]; then
             printf 'method=%s\n' "$meta_method"
+        elif [[ "$sweep" == "methods" && "$method" == "hivis" ]]; then
+            printf 'method=%s\ndepth=%s\ntop_k=%s\ntotal_token=%s\n' "$meta_method" "$depth" "$top_k" "$total_token"
         else
             printf 'method=%s\ndepth=%s\ntop_k=%s\ntotal_token=%s\nnum_q=%s\n' "$meta_method" "$depth" "$top_k" "$total_token" "$num_q"
+        fi
+        if [[ "$sweep" == "methods" ]]; then
+            printf 'prompt_order=%s\ndraft_method=%s\nasset_suite=%s\n' "$arm_order" "$draft_method" "$asset_suite"
         fi
         printf 'prompt_style=%s\nslim_prefill=true\nkv_capacity=%s\nnum_samples=%s\n' "$prompt_style" "$kv_capacity" "$num_samples"
         printf 'max_new_tokens=%s\n' "$max_new_tokens"
@@ -211,7 +291,7 @@ qwen_run_arm() {
     "$python_bin" "$repo_dir/experiment/capture_packages.py" > "$run_dir/packages.txt"
     bash "$run_dir/capture_device.sh" "$python_bin" > "$run_dir/device.txt" 2>&1
     echo "Launch device report: $run_dir/device.txt"
-    "$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite qwen
+    "$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite "$asset_suite"
     bash "$run_dir/check_cuda.sh" "$python_bin"
     export PYTHONUNBUFFERED=1
 
@@ -233,15 +313,20 @@ qwen_run_arm() {
             --temperature "$temperature")
         if [[ "$method" == "vispec" ]]; then
             cmd+=(--depth "$depth" --top-k "$top_k" --total-token "$total_token" --num-q "$num_q")
+        elif [[ "$method" == "hivis" ]]; then
+            cmd+=(--depth "$depth" --top-k "$top_k" --total-token "$total_token")
+        fi
+        if [[ "$sweep" == "methods" ]]; then
+            cmd+=(--prompt-order "$arm_order")
         fi
         cmd+=(--kv-capacity "$kv_capacity" --kv-layout compact)
         case "$sweep" in
-            reference) ;;
+            reference|methods) ;;
             draft) cmd+=(--draft-retention "$ret" --draft-policy "$policy") ;;
             kv) cmd+=(--kv-retention "$ret" --kv-policy "$policy") ;;
             combined) cmd+=(--kv-retention "$ret" --kv-policy "$policy"
                 --draft-retention "$ret" --draft-policy "$policy") ;;
-            *) echo "Unknown sweep type '$sweep' (expected reference, draft, kv or combined)." >&2; exit 2 ;;
+            *) echo "Unknown sweep type '$sweep' (expected reference, draft, kv, combined or methods)." >&2; exit 2 ;;
         esac
         printf '\nRunning:'
         printf ' %q' "${cmd[@]}"

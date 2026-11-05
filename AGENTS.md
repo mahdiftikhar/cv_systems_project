@@ -43,6 +43,11 @@
 - The LLaVA baseline suite (experiments 00 and 01) is TextVQA (priority, run first),
   GQA, and MM-Vet. Keep future LLaVA comparisons on this same suite unless the user
   changes it; do not restore all eight upstream benchmarks by default.
+- Experiment 10 (`experiment/10_qwen7b_methods`) compares autoregressive decoding, ViSpec and HiViS on
+  `Qwen/Qwen2.5-VL-7B-Instruct` with the 7B drafts `JLKang/ViSpec-Qwen2.5-VL-7B-Instruct` and
+  `Irisssme/HiViS-Qwen2.5-VL-7B-Instruct`, on the same TextVQA and COCO Captions subsets, in both prompt
+  styles. This extends the scope to a 7B Qwen model by the user's decision of 2026-11-05. Experiments 02
+  to 09 stay on the 3B model.
 - The Qwen experiments (02 to 09, including the 04 profile, the 05 and 06 sparsity experiments, the 07 drift probe, the 08 combined sparsity experiment and the 09 Re:Verse long-context experiment) use `Qwen/Qwen2.5-VL-3B-Instruct` and
   `JLKang/ViSpec-Qwen2.5-VL-3B-Instruct` on TextVQA and COCO Captions in both the
   `long` and `short` prompt styles, with Re:Verse page windows added later. They run
