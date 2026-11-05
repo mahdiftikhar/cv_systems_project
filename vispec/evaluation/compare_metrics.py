@@ -19,7 +19,9 @@ RUNTIME_GUARDED_SETTINGS = ("slim_prefill", "kv_capacity")
 # from any explicit value.
 SPARSITY_SETTINGS = ("kv_retention", "kv_policy", "draft_retention", "draft_policy")
 LAYOUT_SETTINGS = ("kv_layout",) + SPARSITY_SETTINGS
-METHODS = ("autoregressive", "vispec_speculative")
+METHODS = ("autoregressive", "vispec_speculative", "hivis_speculative")
+SPECULATIVE_METHODS = ("vispec_speculative", "hivis_speculative")
+DEFAULT_PROMPT_ORDER = "image-last"
 MODES = ("method", "sparsity")
 
 
@@ -31,6 +33,11 @@ def require_same(values, label):
             f"Cannot compare different {label} values: "
             + ", ".join(repr(value) for value in sorted(distinct, key=repr))
         )
+
+
+def prompt_order_of(report, benchmark):
+    """A report's prompt order for one benchmark; an absent value counts as image-last."""
+    return generation_setting(report, benchmark, "prompt_order") or DEFAULT_PROMPT_ORDER
 
 
 def generation_setting(report, benchmark, key):
@@ -238,10 +245,15 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
     if len(set(run_paths)) != len(run_paths):
         raise ValueError("Multiple reports from one run are not independent repeats")
     if mode == "method":
-        group_methods = [(original, "autoregressive"), (draft, "vispec_speculative")]
+        draft_methods = {r["summary"]["metadata"].get("method") for r in draft}
+        draft_method = (
+            "hivis_speculative" if draft_methods == {"hivis_speculative"}
+            else "vispec_speculative"
+        )
+        group_methods = [(original, "autoregressive"), (draft, draft_method)]
     else:
         methods = {r["summary"]["metadata"].get("method") for r in all_reports}
-        if len(methods) != 1 or not methods <= set(METHODS):
+        if len(methods) != 1 or not methods <= {"autoregressive", "vispec_speculative"}:
             raise ValueError(
                 "Sparsity mode needs both groups to share one method "
                 f"(autoregressive or vispec_speculative); got {sorted(methods, key=repr)}"
@@ -262,7 +274,15 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
             values = {r["summary"]["metadata"].get(setting) for r in all_reports}
             if len(values) > 1:
                 raise ValueError(f"Cannot compare different {setting} settings")
+    hivis = mode == "method" and group_methods[1][1] == "hivis_speculative"
     for setting in ("base_model", "spec_model", "temperature"):
+        if setting == "spec_model" and hivis:
+            # The autoregressive reports record the ViSpec draft they load and do not use,
+            # so each group shares one draft path of its own.
+            for group in (original, draft):
+                if len({r["summary"]["metadata"].get(setting) for r in group}) > 1:
+                    raise ValueError(f"Cannot compare different {setting} settings")
+            continue
         values = {report["summary"]["metadata"].get(setting) for report in all_reports}
         if len(values) > 1:
             raise ValueError(f"Cannot compare different {setting} settings")
@@ -306,6 +326,11 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
                 [runtime.get(setting) for runtime in runtimes if runtime],
                 f"{benchmark} {setting} (runtime)",
             )
+        require_same(
+            [prompt_order_of(r, benchmark) for r in all_reports
+             if r["summary"].get("runtime", {}).get(benchmark)],
+            f"{benchmark} prompt_order (runtime)",
+        )
         result["sparsity"][benchmark] = check_sparsity_settings(
             original, draft, benchmark, mode
         )
@@ -543,7 +568,7 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
         json.dumps(result, indent=2, allow_nan=False) + "\n"
     )
     lines = [
-        "# Original vs ViSpec" if mode == "method"
+        ("# Original vs HiViS" if hivis else "# Original vs ViSpec") if mode == "method"
         else "# Reference (100% retention) vs sparsity arm",
         "",
         *(
@@ -627,14 +652,14 @@ def main():
         nargs="+",
         required=True,
         type=Path,
-        help="Report directories from independent ViSpec runs",
+        help="Report directories from independent ViSpec or HiViS runs",
     )
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument(
         "--mode",
         choices=MODES,
         default="method",
-        help="method: autoregressive vs ViSpec; sparsity: a sparsity arm vs the same "
+        help="method: autoregressive vs ViSpec or HiViS; sparsity: a sparsity arm vs the same "
         "method at 100%% retention",
     )
     args = parser.parse_args()
