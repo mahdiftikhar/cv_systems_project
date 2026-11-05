@@ -1,6 +1,6 @@
-"""Unified Qwen2.5-VL evaluator for standard (autoregressive) decoding and ViSpec.
+"""Unified Qwen2.5-VL evaluator for standard (autoregressive) decoding, ViSpec and HiViS.
 
-One ``spec_model_ours.SpecModel`` is loaded for either method, so both share weights, the
+One ``spec_model_ours.SpecModel`` is loaded for any method, so all share weights, the
 KV-cache fork and the preallocated KV buffer. Answer records use the schema written by
 ``gen_spec_answer_textvqa.get_model_answers``, so ``report_metrics`` and ``compare_metrics``
 read them unchanged.
@@ -27,8 +27,10 @@ from ..model.sparsity import POLICIES, RETENTIONS, SparsityConfig
 from ..model.spec_model_ours import SpecModel, check_draft_sparsity, check_kv_sparsity
 from .benchmarks import (
     BENCHMARK_NAMES,
+    PROMPT_ORDERS,
     PROMPT_STYLES,
     build_inputs,
+    check_prompt_order,
     check_prompt_style,
     draft_position_budget,
     load_processor,
@@ -44,26 +46,49 @@ from .measurement import (
     write_runtime,
 )
 
-METHODS = ("autoregressive", "vispec")
+METHODS = ("autoregressive", "vispec", "hivis")
 WARMUPS = 3
 REPO_DIR = Path(__file__).resolve().parents[2]
 QWEN_ASSET_MANIFEST = REPO_DIR / ".preparation/assets_qwen.json"
+QWEN7B_ASSET_MANIFEST = REPO_DIR / ".preparation/assets_qwen7b.json"
+# Manifest lookups search the 3B manifest first, then the 7B one.
+ASSET_MANIFESTS = (QWEN_ASSET_MANIFEST, QWEN7B_ASSET_MANIFEST)
+BASE_KEYS = ("base",)
+SPEC_KEYS = ("draft", "vispec_draft", "hivis_draft")
+
+
+def prepared_entry(model_path, keys):
+    """(revision, manifest path) of the prepared model at ``model_path``, else (None, None).
+
+    A local checkpoint folder carries no Hugging Face commit hash, so the runtime file
+    falls back to the revision that preparation resolved and recorded. Each manifest in
+    ``ASSET_MANIFESTS`` is searched for an entry under ``keys`` whose resolved path equals
+    ``model_path``.
+    """
+    wanted = Path(model_path).resolve()
+    for manifest in ASSET_MANIFESTS:
+        try:
+            models = json.loads(manifest.read_text())["models"]
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        for key in keys:
+            try:
+                entry = models[key]
+                if (REPO_DIR / entry["path"]).resolve() == wanted:
+                    return entry.get("revision"), manifest
+            except (KeyError, TypeError):
+                continue
+    return None, None
 
 
 def prepared_base_revision(base_model_path):
-    """Pinned target revision from the Qwen asset manifest, if it describes this path.
+    """Pinned target revision from a Qwen asset manifest, if one describes this path."""
+    return prepared_entry(base_model_path, BASE_KEYS)[0]
 
-    A local checkpoint folder carries no Hugging Face commit hash, so the runtime file
-    falls back to the revision that preparation resolved and recorded.
-    """
-    try:
-        base = json.loads(QWEN_ASSET_MANIFEST.read_text())["models"]["base"]
-        prepared = (REPO_DIR / base["path"]).resolve()
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    if prepared != Path(base_model_path).resolve():
-        return None
-    return base.get("revision")
+
+def prepared_spec_revision(spec_model_path):
+    """Pinned draft revision from a Qwen asset manifest, if one describes this path."""
+    return prepared_entry(spec_model_path, SPEC_KEYS)[0]
 
 
 def add_model_arguments(parser):
@@ -150,6 +175,15 @@ def add_generation_arguments(parser):
         "stride) or 'attention' (top attention from the adaptor's own learned queries). "
         "Default spatial once pruning is on. --method vispec only.",
     )
+    # Added last, so the earlier keys of vars(args) keep their order.
+    parser.add_argument(
+        "--prompt-order",
+        choices=PROMPT_ORDERS,
+        default="image-last",
+        help="Where the image sits in the user message: 'image-last' (the default, our "
+        "prompts) or 'image-first' (image, then question and instruction). Single-image "
+        "benchmarks only.",
+    )
 
 
 def kv_sparsity_config(args):
@@ -171,10 +205,15 @@ def draft_sparsity_config(args):
     """The ``SparsityConfig`` for draft-side visual pruning, or None when neither flag is given.
 
     Raises ValueError when either flag is given with ``--method autoregressive`` (also at
-    1.0), which has no draft.
+    1.0), which has no draft, or with ``--method hivis``, whose draft sees no image tokens.
     """
     if args.draft_retention is None and args.draft_policy is None:
         return None
+    if args.method == "hivis":
+        raise ValueError(
+            "--draft-retention/--draft-policy prune the image tokens the draft sees; "
+            "--method hivis has a draft that sees no image tokens"
+        )
     if args.method != "vispec":
         raise ValueError(
             f"--draft-retention/--draft-policy prune the ViSpec draft; --method {args.method} "
@@ -197,19 +236,26 @@ def check_arguments(parser, args):
         check_prompt_style(args.benchmark, args.prompt_style)
     except ValueError as error:
         parser.error(str(error))
+    try:
+        check_prompt_order(args.benchmark, args.prompt_order)
+    except ValueError as error:
+        parser.error(str(error))
     # Both sparsity settings fail before any model loads, and they combine (target eviction
     # plus draft pruning). generation_args then records the effective settings.
     config = kv_sparsity_config(args)
     if config is not None:
         args.kv_retention, args.kv_policy = config.retention, config.policy
-    draft = draft_sparsity_config(args)
+    try:
+        draft = draft_sparsity_config(args)
+    except ValueError as error:
+        parser.error(str(error))
     if draft is not None:
         args.draft_retention, args.draft_policy = draft.retention, draft.policy
 
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
-        description="Evaluate Qwen2.5-VL with autoregressive or ViSpec decoding."
+        description="Evaluate Qwen2.5-VL with autoregressive, ViSpec or HiViS decoding."
     )
     add_model_arguments(parser)
     parser.add_argument("--answer-file", required=True)
@@ -241,7 +287,7 @@ def generate(
     """
     kv_sparsity = kv_sparsity_config(args)
     draft_sparsity = draft_sparsity_config(args)
-    if args.method == "vispec":
+    if args.method in ("vispec", "hivis"):
         return model.specgenerate(
             **model_inputs,
             temperature=args.temperature,
@@ -286,6 +332,8 @@ def load_model(args, processor=None):
         slim_prefill=not args.no_slim_prefill,
         kv_capacity=args.kv_capacity,
         kv_layout=args.kv_layout,
+        # AR keeps the ViSpec draft: its total_tokens sets the compact layout's slack.
+        draft_method="hivis" if args.method == "hivis" else "vispec",
         torch_dtype="auto",
         low_cpu_mem_usage=True,
         device_map="auto",
@@ -313,6 +361,7 @@ def write_run_runtime(answer_file, model, args):
         slim_prefill=model.slim_prefill,
         kv_capacity=model.kv_capacity,
         method=args.method,
+        draft_method="hivis" if args.method == "hivis" else "vispec",
         benchmark=args.benchmark,
         generation_args=vars(args),
         attn_implementation=getattr(
@@ -320,13 +369,18 @@ def write_run_runtime(answer_file, model, args):
         ),
     )
     if runtime.get("base_model_revision") is None:
-        revision = prepared_base_revision(args.base_model_path)
+        revision, manifest = prepared_entry(args.base_model_path, BASE_KEYS)
         runtime["base_model_revision"] = revision
         runtime["base_model_revision_source"] = (
-            str(QWEN_ASSET_MANIFEST) if revision is not None else None
+            str(manifest) if revision is not None else None
         )
     else:
         runtime["base_model_revision_source"] = "config._commit_hash"
+    spec_revision, spec_manifest = prepared_entry(args.spec_model_path, SPEC_KEYS)
+    runtime["spec_model_revision"] = spec_revision
+    runtime["spec_model_revision_source"] = (
+        str(spec_manifest) if spec_revision is not None else None
+    )
     runtime_path.write_text(json.dumps(runtime, indent=2) + "\n")
 
 
@@ -386,7 +440,12 @@ def run(args):
     )
 
     warmup_inputs = build_inputs(
-        processor, args.benchmark, samples[0], args.prompt_style, device=device
+        processor,
+        args.benchmark,
+        samples[0],
+        args.prompt_style,
+        device=device,
+        prompt_order=args.prompt_order,
     )
     warm_up(model, args, warmup_inputs)
     print("Warmup done")
@@ -394,7 +453,12 @@ def run(args):
     for sample in tqdm(samples):
         # Image decoding and tokenization stay outside the timed region.
         model_inputs = build_inputs(
-            processor, args.benchmark, sample, args.prompt_style, device=device
+            processor,
+            args.benchmark,
+            sample,
+            args.prompt_style,
+            device=device,
+            prompt_order=args.prompt_order,
         )
         input_len = model_inputs["input_ids"].shape[1]
         torch.manual_seed(0)

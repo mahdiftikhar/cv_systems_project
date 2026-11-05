@@ -80,6 +80,9 @@ class Sample:
     image_tokens: tuple[int, ...] | None = None
 
 
+PROMPT_ORDERS = ("image-last", "image-first")
+
+
 def check_prompt_style(benchmark: str, prompt_style: str) -> None:
     """Raise ValueError unless ``benchmark`` has an instruction for ``prompt_style``."""
     if benchmark not in BENCHMARK_NAMES:
@@ -90,6 +93,17 @@ def check_prompt_style(benchmark: str, prompt_style: str) -> None:
         styles = [style for name, style in INSTRUCTIONS if name == benchmark]
         raise ValueError(
             f"{benchmark} has no {prompt_style!r} prompt; it supports {styles}"
+        )
+
+
+def check_prompt_order(benchmark: str, prompt_order: str) -> None:
+    """Raise ValueError unless ``prompt_order`` is known and ``benchmark`` supports it."""
+    if prompt_order not in PROMPT_ORDERS:
+        raise ValueError(f"unknown prompt order {prompt_order!r}")
+    if prompt_order == "image-first" and benchmark == "reverse_summary":
+        raise ValueError(
+            "reverse_summary keeps its fixed pages-first layout; --prompt-order selects a "
+            "single-image layout and supports only image-last there"
         )
 
 
@@ -253,14 +267,18 @@ def reverse_references(data_dir: Path) -> dict[str, str]:
     return {spec["question_id"]: spec["reference"] for spec in reverse_window_specs(data_dir)}
 
 
-def prompt_layout(processor, benchmark: str, sample: Sample, prompt_style: str):
+def prompt_layout(
+    processor, benchmark: str, sample: Sample, prompt_style: str, prompt_order: str = "image-last"
+):
     """(positions, image tokens per image) of the exact prompt, built on CPU.
 
     Positions is the prompt's token count, text plus image tokens: the index the ViSpec
     draft gives the next token. Image tokens come from ``image_grid_thw``; the count is
     checked against the image-pad tokens in ``input_ids``.
     """
-    inputs = build_inputs(processor, benchmark, sample, prompt_style, device="cpu")
+    inputs = build_inputs(
+        processor, benchmark, sample, prompt_style, device="cpu", prompt_order=prompt_order
+    )
     merge = processor.image_processor.merge_size
     grid = inputs["image_grid_thw"].tolist()
     image_tokens = tuple(int(t * h * w) // merge**2 for t, h, w in grid)
@@ -408,8 +426,11 @@ def stored_references(benchmark: str, sample: Sample) -> list[str]:
     return [] if benchmark == "reverse_summary" else list(sample.references)
 
 
-def build_messages(benchmark: str, sample: Sample, prompt_style: str) -> list[dict]:
+def build_messages(
+    benchmark: str, sample: Sample, prompt_style: str, prompt_order: str = "image-last"
+) -> list[dict]:
     check_prompt_style(benchmark, prompt_style)
+    check_prompt_order(benchmark, prompt_order)
     instruction = {"type": "text", "text": INSTRUCTIONS[(benchmark, prompt_style)]}
     if benchmark == "reverse_summary":
         # Multi-image: every page in reading order, then the instruction.
@@ -419,10 +440,13 @@ def build_messages(benchmark: str, sample: Sample, prompt_style: str) -> list[di
             {"role": "user", "content": content},
         ]
     content = []
+    if prompt_order == "image-first":
+        content.append({"type": "image"})
     if benchmark == "textvqa":
         content.append({"type": "text", "text": sample.question})
     content.append(instruction)
-    content.append({"type": "image"})
+    if prompt_order == "image-last":
+        content.append({"type": "image"})
     return [
         {"role": "system", "content": [{"type": "text", "text": SYSTEM_TEXT}]},
         {"role": "user", "content": content},
@@ -440,14 +464,21 @@ def load_processor(model_path: str):
     )
 
 
-def build_inputs(processor, benchmark: str, sample: Sample, prompt_style: str, device: str = "cuda:0"):
+def build_inputs(
+    processor,
+    benchmark: str,
+    sample: Sample,
+    prompt_style: str,
+    device: str = "cuda:0",
+    prompt_order: str = "image-last",
+):
     from PIL import Image
 
     images = []
     for p in sample.image_paths:
         with Image.open(p) as im:
             images.append(im.convert("RGB"))
-    messages = build_messages(benchmark, sample, prompt_style)
+    messages = build_messages(benchmark, sample, prompt_style, prompt_order)
     text = processor.apply_chat_template(messages, add_generation_prompt=True)
     # Only reverse_summary overrides the processor's Week 1 pixel limits (PIXEL_LIMITS).
     return processor(

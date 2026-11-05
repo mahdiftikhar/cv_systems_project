@@ -40,8 +40,10 @@ from ..model.sparsity import POLICIES, RETENTIONS, SparsityConfig
 from ..model.spec_model_ours import SpecModel
 from .benchmarks import (
     BENCHMARK_NAMES,
+    PROMPT_ORDERS,
     PROMPT_STYLES,
     build_inputs,
+    check_prompt_order,
     check_prompt_style,
     draft_position_budget,
     load_processor,
@@ -59,6 +61,11 @@ KV_FIELDS = (
     "kv_image_tokens",
     "kv_min_kept_per_image",
 )
+
+
+def method_label(draft_method):
+    """Name of the speculative method in the report text."""
+    return "HiViS" if draft_method == "hivis" else "ViSpec"
 
 
 def parse_args(argv=None):
@@ -79,6 +86,14 @@ def parse_args(argv=None):
         default=None,
         help="Draft pruning policy (default spatial once --draft-retention is given).",
     )
+    parser.add_argument(
+        "--draft-method",
+        choices=("vispec", "hivis"),
+        default="vispec",
+        help="Which draft the speculative side uses (default vispec). hivis refuses the "
+        "draft-pruning flags and needs --spec-model-path to point at a HiViS checkpoint.",
+    )
+    parser.add_argument("--prompt-order", choices=PROMPT_ORDERS, default="image-last")
     parser.add_argument("--num-samples", type=int, default=5)
     parser.add_argument("--dtype", choices=tuple(DTYPES), default="float32")
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -110,6 +125,17 @@ def parse_args(argv=None):
         check_prompt_style(args.benchmark, args.prompt_style)
     except ValueError as error:
         parser.error(str(error))
+    try:
+        check_prompt_order(args.benchmark, args.prompt_order)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.draft_method == "hivis" and (
+        args.draft_retention is not None or args.draft_policy is not None
+    ):
+        parser.error(
+            "--draft-retention/--draft-policy prune the image tokens the draft sees; "
+            "--draft-method hivis has a draft that sees no image tokens"
+        )
     if args.output_dir.exists():
         parser.error(f"--output-dir {args.output_dir} already exists; use a new folder")
     return args
@@ -139,6 +165,7 @@ def load_model(args):
         slim_prefill=True,
         kv_capacity=args.kv_capacity,
         kv_layout="compact",
+        draft_method=args.draft_method,
         torch_dtype=DTYPES[args.dtype],
         low_cpu_mem_usage=True,
         device_map="auto",
@@ -239,8 +266,9 @@ def environment():
 def write_markdown(path, result):
     settings, summary = result["settings"], result["summary"]
     draft = settings["draft_sparsity"]
+    label = method_label(settings["draft_method"])
     lines = [
-        "# Offset check: AR vs ViSpec under one eviction setting",
+        f"# Offset check: AR vs {label} under one eviction setting",
         "",
         f"- dtype: `{settings['dtype']}`; KV eviction: {settings['kv_sparsity']['retention']} "
         f"`{settings['kv_sparsity']['policy']}`; draft pruning: "
@@ -249,9 +277,10 @@ def write_markdown(path, result):
         f"`max_new_tokens` {settings['max_new_tokens']}, compact layout",
         f"- Host `{result['environment']['hostname']}`, job `{result['environment']['slurm_job_id']}`, "
         f"GPU {result['environment']['gpu']['name']} `{result['environment']['gpu']['uuid']}`",
-        f"- **AR == ViSpec: {summary['exact']}/{summary['questions']}**",
+        f"- draft method: {label}; prompt order: `{settings['prompt_order']}`",
+        f"- **AR == {label}: {summary['exact']}/{summary['questions']}**",
         "",
-        "| Question | Input | Image tokens | Kept prompt | kv_offset | Min kept/image | Draft min kept/image | AR tokens | ViSpec tokens | Exact | First mismatch | KV counts match |",
+        f"| Question | Input | Image tokens | Kept prompt | kv_offset | Min kept/image | Draft min kept/image | AR tokens | {label} tokens | Exact | First mismatch | KV counts match |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |",
     ]
     for row in result["questions"]:
@@ -306,7 +335,12 @@ def run(args):
     rows = []
     for number, sample in enumerate(samples, 1):
         inputs = build_inputs(
-            processor, args.benchmark, sample, args.prompt_style, device=device
+            processor,
+            args.benchmark,
+            sample,
+            args.prompt_style,
+            device=device,
+            prompt_order=args.prompt_order,
         )
         row = {"question_id": sample.question_id}
         row.update(check_sample(model, inputs, args.max_new_token, kv, draft))
@@ -337,6 +371,8 @@ def run(args):
             "dtype": args.dtype,
             "kv_layout": "compact",
             "kv_sparsity": {"retention": kv.retention, "policy": kv.policy},
+            "draft_method": args.draft_method,
+            "prompt_order": args.prompt_order,
             "draft_sparsity": (
                 None if draft is None else {"retention": draft.retention, "policy": draft.policy}
             ),
@@ -357,12 +393,12 @@ def run(args):
         },
         "environment": environment(),
         "definitions": {
-            "exact": "AR and ViSpec raw output token IDs are equal, through EOS",
+            "exact": f"AR and {method_label(args.draft_method)} raw output token IDs are equal, through EOS",
             "first_mismatch_index": "zero-based output index of the first differing token; "
             "the shorter length when one output is a prefix of the other",
             "kv_offset": "prompt tokens evicted from the target KV cache (token count minus "
             "physical cache length during decoding)",
-            "kv_counts_match": "AR and ViSpec report the same eviction counts for the prompt",
+            "kv_counts_match": f"AR and {method_label(args.draft_method)} report the same eviction counts for the prompt",
         },
         "summary": summary,
         "questions": rows,
@@ -372,7 +408,7 @@ def run(args):
     )
     write_markdown(args.output_dir / "offset_check.md", result)
     print(
-        f"AR == ViSpec on {summary['exact']}/{summary['questions']}; first mismatches "
+        f"AR == {method_label(args.draft_method)} on {summary['exact']}/{summary['questions']}; first mismatches "
         f"{summary['first_mismatches']}; kv_offset {summary['kv_offset_min']}.."
         f"{summary['kv_offset_max']}; wrote {args.output_dir / 'offset_check.md'}",
         flush=True,
