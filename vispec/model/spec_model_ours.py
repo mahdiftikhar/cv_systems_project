@@ -1,7 +1,10 @@
+import contextlib
 import copy
 import json
+import math
 import os
 import time
+import warnings
 from typing import Optional
 
 import torch
@@ -11,7 +14,13 @@ from transformers import AutoConfig, AutoTokenizer
 
 from .cnets_ours import Model
 from .configs import EConfig
-from .kv_cache import initialize_past_key_values
+from .kv_cache import (
+    KV_LAYOUTS,
+    allocate_past_key_values,
+    compact_for_decode,
+    expected_kv_capacity,
+    initialize_past_key_values,
+)
 from .modeling_llama_kv import LlamaForCausalLM as KVLlamaForCausalLM
 from .modeling_llava_kv import (
     CustomLlavaForConditionalGeneration as KVLlavaForConditionalGeneration,
@@ -23,8 +32,147 @@ from .modeling_mixtral_kv import MixtralForCausalLM as KVMixtralForCausalLM
 from .modeling_qwen2_5_vl_kv import (
     Qwen2_5_VLForConditionalGeneration as KVQwen2_5_VLForConditionalGeneration,
 )
+from .modeling_qwen2_5_vl_kv import capture_kv_scores
 from .modeling_qwen2_kv import LlamaForCausalLM as KVQwen2ForCausalLM
+from .sparsity import SparsityConfig, keep_positions
 from .utils import *
+
+QWEN2_5_VL = "Qwen2_5_VLForConditionalGeneration"
+
+
+def check_kv_layout(kv_layout, architecture):
+    """Raise ValueError unless ``kv_layout`` is known and supported for ``architecture``.
+
+    Only the Qwen2.5-VL fork takes explicit M-RoPE positions on every decode path, which the
+    compact layout needs once the cache length can differ from the token count.
+    """
+    if kv_layout not in KV_LAYOUTS:
+        raise ValueError(f"kv_layout must be one of {KV_LAYOUTS}, got {kv_layout!r}")
+    if kv_layout == "compact" and architecture != QWEN2_5_VL:
+        raise ValueError(
+            f"kv_layout='compact' is only supported for {QWEN2_5_VL}, not {architecture}"
+        )
+
+
+def check_kv_sparsity(kv_sparsity, kv_layout):
+    """Raise ValueError unless ``kv_sparsity`` (None or a SparsityConfig) fits ``kv_layout``.
+
+    Eviction needs the compact layout. A SparsityConfig with the fixed layout is refused even
+    at retention 1.0, so a fixed-layout run is never an eviction arm.
+    """
+    if kv_sparsity is None:
+        return
+    if not isinstance(kv_sparsity, SparsityConfig):
+        raise ValueError(f"kv_sparsity must be a SparsityConfig or None, got {kv_sparsity!r}")
+    if kv_layout != "compact":
+        raise ValueError(
+            f"kv_sparsity needs kv_layout='compact', got kv_layout={kv_layout!r} "
+            f"(retention {kv_sparsity.retention}, policy {kv_sparsity.policy!r})"
+        )
+
+
+def check_draft_sparsity(draft_sparsity):
+    """Raise ValueError unless ``draft_sparsity`` is None or a SparsityConfig.
+
+    Draft-side pruning needs no particular KV layout and composes with ``kv_sparsity``.
+    """
+    if draft_sparsity is not None and not isinstance(draft_sparsity, SparsityConfig):
+        raise ValueError(
+            f"draft_sparsity must be a SparsityConfig or None, got {draft_sparsity!r}"
+        )
+
+
+@contextlib.contextmanager
+def draft_pruning(spec_layer, config):
+    """Prune the draft's image-adaptor input with ``config`` inside the block.
+
+    Sets ``spec_layer.draft_sparsity`` to ``config`` and ``spec_layer.draft_image_counts`` to
+    a fresh count dict, and sets both back to None on exit, also after an error. Yields the
+    dict: ``draft_image_tokens`` and ``draft_kept_image_tokens``, summed over the images that
+    the draft's image branch (its prefill forward) adapted in the block. ``None`` yields None
+    and changes nothing.
+    """
+    if config is None:
+        yield None
+        return
+    counts = {"draft_image_tokens": 0, "draft_kept_image_tokens": 0}
+    spec_layer.draft_sparsity = config
+    spec_layer.draft_image_counts = counts
+    try:
+        yield counts
+    finally:
+        spec_layer.draft_sparsity = None
+        spec_layer.draft_image_counts = None
+
+
+class TargetKVEviction:
+    """Target-side visual KV eviction for one generation (compact layout, Qwen2.5-VL).
+
+    Built from the prompt before the target prefill. The image mask is
+    ``input_ids[0] == image_token_id``; each contiguous run of image tokens is one image.
+    The score window is the prompt tokens after the last image token (the chat-template
+    tail). ``prefill_capture()`` wraps the prefill: for the ``attention`` policy, every
+    language-model layer adds the attention that the window queries pay to each prompt
+    position to one shared score tensor. ``keep()`` then picks one set of prompt positions,
+    applied to every layer: all text positions plus the selected tokens of each image.
+    """
+
+    def __init__(self, model, input_ids, config):
+        if not isinstance(config, SparsityConfig):
+            raise ValueError(f"kv_sparsity must be a SparsityConfig, got {config!r}")
+        self.config = config
+        self.text_model = model.base_model.model
+        self.image_mask = input_ids[0] == model.base_model.config.image_token_id
+        self.prompt_tokens = int(self.image_mask.numel())
+        image_positions = self.image_mask.nonzero().flatten()
+        self.image_tokens = int(image_positions.numel())
+        self.window = (
+            self.prompt_tokens - 1 - int(image_positions[-1]) if self.image_tokens else 0
+        )
+        if config.policy == "attention" and self.image_tokens and self.window < 1:
+            raise ValueError(
+                "the attention policy needs at least one prompt token after the last image token"
+            )
+        self.scores = None
+
+    @contextlib.contextmanager
+    def prefill_capture(self):
+        """Wrap the target prefill; collects ``self.scores`` for the attention policy only."""
+        if self.config.policy != "attention" or not self.image_tokens:
+            yield
+            return
+        with capture_kv_scores(self.text_model, self.window, self.prompt_tokens) as scores:
+            yield
+        self.scores = scores
+
+    def keep(self, device):
+        """Ascending prompt positions to keep, on ``device`` (the KV buffer's)."""
+        if not self.image_tokens:
+            return torch.arange(self.prompt_tokens, device=device)
+        if self.scores is not None:
+            # Each layer adds one softmax row (sum 1) per head and window query.
+            layers = len(self.text_model.layers)
+            heads = self.text_model.layers[0].self_attn.num_heads
+            expected = layers * heads * self.window
+            total = float(self.scores.sum())
+            if not math.isclose(total, expected, rel_tol=1e-3):
+                raise RuntimeError(
+                    f"captured KV scores sum to {total}, expected {expected} "
+                    f"({layers} layers x {heads} heads x {self.window} window queries)"
+                )
+        elif self.config.policy == "attention" and self.config.retention < 1.0:
+            raise RuntimeError("the attention policy found no captured prefill scores")
+        return keep_positions(self.image_mask, self.config, self.scores).to(device)
+
+    def stats(self, kept):
+        """The measurement fields for this generation, given the kept prompt length."""
+        kept = int(kept)
+        return {
+            "kv_prompt_tokens": self.prompt_tokens,
+            "kv_kept_prompt_tokens": kept,
+            "kv_evicted_tokens": self.prompt_tokens - kept,
+            "kv_score_window": self.window,
+        }
 
 
 class SpecModel(nn.Module):
@@ -39,11 +187,36 @@ class SpecModel(nn.Module):
         threshold,
         spec_layer_state_dict,
         num_q: int = 2,
+        slim_prefill: bool = False,
+        kv_capacity: int | None = None,
+        kv_layout: str = "fixed",
     ):
 
         super().__init__()
         self.base_model = base_model
         self.config = base_model.config
+        # The compact layout needs the Qwen2.5-VL KV fork itself, not only its name.
+        architecture = (
+            QWEN2_5_VL
+            if isinstance(base_model, KVQwen2_5_VLForConditionalGeneration)
+            else type(base_model).__name__
+        )
+        check_kv_layout(kv_layout, architecture)
+        self.kv_layout = kv_layout
+        # Only the Qwen2.5-VL KV fork accepts last_hidden_only/logits_to_keep; every other
+        # architecture (the LLaVA forks included) keeps the original forward call.
+        if slim_prefill and not isinstance(
+            base_model, KVQwen2_5_VLForConditionalGeneration
+        ):
+            warnings.warn(
+                "slim_prefill is only supported for Qwen2_5_VLForConditionalGeneration; "
+                f"disabled for {type(base_model).__name__}"
+            )
+            slim_prefill = False
+        self.slim_prefill = bool(slim_prefill)
+        if kv_capacity is not None and int(kv_capacity) < 1:
+            raise ValueError(f"KV capacity must be positive, got {kv_capacity}")
+        self.kv_capacity = None if kv_capacity is None else int(kv_capacity)
 
         if hasattr(base_model, "language_model"):
             base_model = base_model.language_model
@@ -116,10 +289,15 @@ class SpecModel(nn.Module):
         top_k=8,
         threshold=1.0,
         num_q: int = 2,
+        slim_prefill: bool = False,
+        kv_capacity: int | None = None,
+        kv_layout: str = "fixed",
         **kwargs,
     ):
         # assert Type=="LLaMA" or "Mixtral"
         Type = AutoConfig.from_pretrained(base_model_path).architectures[0]
+        # Fail before any weights load.
+        check_kv_layout(kv_layout, Type)
         if Type == "LlamaForCausalLM":
             base_model = KVLlamaForCausalLM.from_pretrained(base_model_path, **kwargs)
         elif Type == "Qwen2ForCausalLM":
@@ -173,6 +351,9 @@ class SpecModel(nn.Module):
             threshold,
             spec_layer_state_dict,
             num_q=num_q,
+            slim_prefill=slim_prefill,
+            kv_capacity=kv_capacity,
+            kv_layout=kv_layout,
         )
 
         if total_token == -1:
@@ -210,6 +391,7 @@ class SpecModel(nn.Module):
         position_ids=None,
         inputs_embeds=None,
         output_real_hidden=False,
+        logits_to_keep: int = 0,
         **kwargs,
     ):
         if (
@@ -219,6 +401,15 @@ class SpecModel(nn.Module):
         ):
             input_ids = None
             kwargs = {}
+
+        # Slim prefill (Qwen fork only): skip the per-layer hidden-state tuple and, when the
+        # caller asks, project only the last logits_to_keep positions. hidden_states[-1]
+        # stays the final normed hidden state. Other models never see these kwargs.
+        if self.slim_prefill:
+            if not output_real_hidden:
+                kwargs["last_hidden_only"] = True
+            if logits_to_keep:
+                kwargs["logits_to_keep"] = logits_to_keep
 
         with torch.inference_mode():
             # Pass input through the base model
@@ -259,17 +450,47 @@ class SpecModel(nn.Module):
         return_decode_time=False,
         on_first_token=None,
         generation_stats=None,
+        kv_sparsity=None,
+        draft_sparsity=None,
         **kwargs,
     ):
+        """ViSpec generation.
+
+        ``kv_sparsity`` (a ``SparsityConfig``, compact layout only) evicts image positions
+        from the target KV cache once, after ``initialize_tree``: the first token and the
+        first draft tree come from the full prefill. ``None`` evicts nothing.
+
+        ``draft_sparsity`` (a ``SparsityConfig``, any layout) reduces each image's embeddings
+        to the kept tokens before the draft's image adaptor compresses them to ``num_q``
+        rows. Only the draft's prefill forward (in ``initialize_tree``) takes the image
+        branch; later draft calls reuse the draft's own KV. The target is unchanged.
+        ``None`` prunes nothing.
+        """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
                 "You must specify exactly one of input_ids or inputs_embeds"
             )
+        check_kv_sparsity(kv_sparsity, self.kv_layout)
+        check_draft_sparsity(draft_sparsity)
 
         if is_llama3:
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")
         if max_new_tokens < 1:
             raise ValueError("max_new_tokens must be positive")
+        if self.kv_capacity is not None:
+            # Each verification step writes up to total_token tree tokens past the committed
+            # sequence, so the cache must hold prompt + output budget + one tree + margin.
+            prompt_len = (
+                input_ids.shape[1] if input_ids is not None else inputs_embeds.shape[1]
+            )
+            total_token = self.spec_layer.total_tokens + 1
+            if prompt_len + max_new_tokens + total_token + 10 > self.kv_capacity:
+                raise ValueError(
+                    f"KV capacity {self.kv_capacity} is too small: prompt_len={prompt_len} "
+                    f"+ max_new_tokens={max_new_tokens} + total_token={total_token} + 10 "
+                    f"= {prompt_len + max_new_tokens + total_token + 10} > "
+                    f"kv_capacity={self.kv_capacity}"
+                )
         max_length = max_length - self.spec_layer.total_tokens - 10
 
         if temperature > 1e-5:
@@ -285,8 +506,24 @@ class SpecModel(nn.Module):
         input_ids = input_ids.clone()
         self.spec_layer.reset_kv()
 
-        # Initialize the past key and value states
-        if hasattr(self, "past_key_values"):
+        compact = self.kv_layout == "compact"
+        # Tree tokens one verification step writes past the committed sequence.
+        tree_slots = self.spec_layer.total_tokens + 1
+        # Initialize the past key and value states. The compact layout sizes a fresh buffer
+        # for the prefill (prompt + one tree + margin) and resizes it after initialize_tree;
+        # allocate_past_key_values frees the previous sample's buffer first. The fixed layout
+        # reuses the stored buffer only if it has the requested capacity (as
+        # autoregressive_generate checks); a buffer left from a different kv_capacity is
+        # reallocated.
+        if compact:
+            allocate_past_key_values(self, input_ids.shape[1] + tree_slots + 10)
+            past_key_values = self.past_key_values
+            past_key_values_data = self.past_key_values_data
+            current_length_data = self.current_length_data
+        elif (
+            hasattr(self, "past_key_values")
+            and self.past_key_values_data[0].shape[3] == expected_kv_capacity(self)
+        ):
             past_key_values = self.past_key_values
             past_key_values_data = self.past_key_values_data
             current_length_data = self.current_length_data
@@ -298,13 +535,17 @@ class SpecModel(nn.Module):
                     past_key_values,
                     past_key_values_data,
                     current_length_data,
-                ) = initialize_past_key_values(self.base_model)
+                ) = initialize_past_key_values(
+                    self.base_model, max_length=self.kv_capacity
+                )
             except:
                 (
                     past_key_values,
                     past_key_values_data,
                     current_length_data,
-                ) = initialize_past_key_values(self.base_model.language_model)
+                ) = initialize_past_key_values(
+                    self.base_model.language_model, max_length=self.kv_capacity
+                )
             self.past_key_values = past_key_values
             self.past_key_values_data = past_key_values_data
             self.current_length_data = current_length_data
@@ -457,26 +698,39 @@ class SpecModel(nn.Module):
 
         input_len = input_ids.shape[1]
         reset_tree_mode(self)
-
-        (
-            draft_tokens,
-            retrieve_indices,
-            tree_mask,
-            tree_position_ids,
-            logits,
-            hidden_state,
-            sample_token,
-        ) = initialize_tree(
-            input_ids,
-            self,
-            past_key_values,
-            logits_processor,
-            inputs_embeds,
-            embed_weights,
-            image_mask=special_image_mask,
-            on_first_token=on_first_token,
-            **kwargs,
+        eviction = (
+            None if kv_sparsity is None else TargetKVEviction(self, input_ids, kv_sparsity)
         )
+
+        # Score capture (attention policy) is on for this block only. initialize_tree makes
+        # exactly one target call, the prefill; the draft has its own attention modules.
+        # Draft pruning is on for the same block: it holds the draft's prefill forward, the
+        # only draft call that takes the image branch.
+        capture = (
+            eviction.prefill_capture() if eviction is not None else contextlib.nullcontext()
+        )
+        with capture, draft_pruning(self.spec_layer, draft_sparsity) as draft_counts:
+            (
+                draft_tokens,
+                retrieve_indices,
+                tree_mask,
+                tree_position_ids,
+                logits,
+                hidden_state,
+                sample_token,
+            ) = initialize_tree(
+                input_ids,
+                self,
+                past_key_values,
+                logits_processor,
+                inputs_embeds,
+                embed_weights,
+                image_mask=special_image_mask,
+                on_first_token=on_first_token,
+                **kwargs,
+            )
+        if draft_counts is not None and generation_stats is not None:
+            generation_stats["draft_pruning"] = dict(draft_counts)
         new_token = 0
 
         if return_acceptance_len:
@@ -484,6 +738,25 @@ class SpecModel(nn.Module):
         if return_decode_time:
             torch.cuda.synchronize()
             start_time = time.time()
+
+        # Cache length (physical) = token count (logical) - kv_offset. The compaction is the
+        # first step of the decode phase, so decode_time includes it (and the selection of
+        # kept positions) and TTFT does not.
+        kv_offset = 0
+        if compact:
+            # keep=None keeps every position. With kv_sparsity, one set of prompt positions
+            # (all text plus the selected image tokens) is kept in every layer. The helper
+            # derives the kept length from keep and sizes the decode buffer from it; the
+            # offset comes from its result. The draft's own KV is not touched.
+            keep = None if eviction is None else eviction.keep(self.past_key_values_data[0].device)
+            prompt_kept = compact_for_decode(self, keep, max_new_tokens, tree_slots + 10)
+            # Rebind, so no local keeps the prefill-sized buffer alive.
+            past_key_values = self.past_key_values
+            past_key_values_data = self.past_key_values_data
+            current_length_data = self.current_length_data
+            kv_offset = input_len - prompt_kept
+            if eviction is not None and generation_stats is not None:
+                generation_stats["kv_eviction"] = eviction.stats(prompt_kept)
 
         stop_reason = "iteration_limit"
         for idx in range(max_length):
@@ -549,6 +822,7 @@ class SpecModel(nn.Module):
                 # inputs_embeds,
                 # embed_weights,
                 # image_mask=special_image_mask,
+                kv_offset=kv_offset,
             )
 
             if is_llama3:

@@ -31,10 +31,12 @@ from transformers.activations import ACT2FN
 try:
     from .choices import *
     from .configs import EConfig
+    from .sparsity import keep_count, select_in_span
     from .utils_c import *
 except:
     from choices import *
     from configs import EConfig
+    from sparsity import keep_count, select_in_span
     from utils import prepare_logits_processor
     from utils_c import *
 
@@ -660,6 +662,29 @@ class ImgAdaptor(nn.Module):
 
         return attn_output
 
+    def token_scores(self, hidden_states: torch.Tensor):
+        """Attention that each token of one image receives from the learned queries.
+
+        ``hidden_states`` is ``[1, n, hidden]``, the input ``forward`` would get. The keys
+        come from this adaptor's own ``k_proj`` on that input, exactly as ``forward`` computes
+        them, and the queries are ``self.q``, in the same head layout. The logits use SDPA's
+        default ``1/sqrt(head_dim)`` scale and are computed in fp32 with the softmax. Returns
+        an fp32 ``[n]`` tensor: the softmax over the n tokens, summed over the ``num_q``
+        queries and the heads, so it sums to ``num_q * num_heads``. Read-only.
+        """
+        bsz, seq_len, _ = hidden_states.size()
+        if bsz != 1:
+            raise ValueError(f"token_scores takes one image ([1, n, hidden]), got bsz={bsz}")
+        key_states = (
+            self.k_proj(hidden_states)
+            .view(seq_len, self.num_heads, self.head_dim)
+            .transpose(0, 1)
+            .float()
+        )  # [heads, n, head_dim]
+        query_states = self.q.transpose(0, 1).float()  # [heads, num_q, head_dim]
+        logits = query_states @ key_states.transpose(1, 2) / math.sqrt(self.head_dim)
+        return logits.softmax(dim=-1).sum(dim=(0, 1))
+
 
 class Model(nn.Module):
 
@@ -758,6 +783,12 @@ class Model(nn.Module):
 
         self.last_img_hidden = None
 
+        # Draft-side visual pruning, set by SpecModel.specgenerate for one generation (see
+        # spec_model_ours.draft_pruning): a SparsityConfig and the count dict that the image
+        # branch adds to. With None the image branch runs unchanged.
+        self.draft_sparsity = None
+        self.draft_image_counts = None
+
         for param in self.embed_tokens.parameters():
             param.requires_grad = False
 
@@ -777,6 +808,28 @@ class Model(nn.Module):
 
     def reset(self):
         self.tree_mask = None
+
+    def prune_image_embeds(self, img_emd):
+        """The tokens of one image that the adaptor sees under ``self.draft_sparsity``.
+
+        ``img_emd`` is ``[1, n, hidden]``. ``spatial`` keeps a uniform raster stride and
+        ``attention`` keeps the tokens with the highest ``imadpt.token_scores`` (computed at
+        every retention, so a 1.0 arm pays the same scoring cost as a pruned one). When every
+        token is kept (always at retention 1.0), ``img_emd`` itself is returned, so the adaptor
+        output is bit-identical to the unpruned draft. Otherwise the kept rows stay in
+        ascending order. Adds n and the kept count to ``self.draft_image_counts``.
+        """
+        config = self.draft_sparsity
+        n = img_emd.shape[1]
+        k = keep_count(n, config.retention)
+        scores = self.imadpt.token_scores(img_emd) if config.policy == "attention" else None
+        self.draft_image_counts["draft_image_tokens"] += n
+        self.draft_image_counts["draft_kept_image_tokens"] += k
+        if k == n:
+            return img_emd
+        # The spatial indices come back on the CPU, the attention ones on the scores' device.
+        keep = select_in_span(n, k, config.policy, scores).to(img_emd.device)
+        return img_emd[:, keep]
 
     def _prepare_decoder_attention_mask(
         self, attention_mask, input_shape, inputs_embeds, past_key_values_length
@@ -924,6 +977,9 @@ class Model(nn.Module):
                     img_emd = inputs_embeds[b, img_id_start:img_id_end][
                         cur_img_msk
                     ].unsqueeze(0)
+                    if self.draft_sparsity is not None:
+                        # The adaptor still returns num_q rows, so positions are unchanged.
+                        img_emd = self.prune_image_embeds(img_emd)
                     img_adapted = self.imadpt(img_emd).squeeze(0)
                     h_s.append(img_adapted[:-1])
 

@@ -4,11 +4,13 @@ import hashlib
 import importlib.util
 import json
 import math
+import shutil
 from pathlib import Path
 
 TEXTVQA_SOURCE = (
     "https://github.com/haotian-liu/LLaVA/blob/main/llava/eval/m4c_evaluator.py"
 )
+COCO_CIDER_METHOD = "cider_d_pycocoevalcap_1.2"
 MMVET_SOURCE = "https://github.com/yuweihao/MM-Vet/blob/main/mm-vet_evaluator.py"
 
 
@@ -117,6 +119,49 @@ class Scorer:
                 mmvet_graded_predictions
             )
 
+    def score_corpus(self, benchmark, predictions, references):
+        """Corpus-level CIDEr-D for COCO captions; pending (never raising) if unavailable."""
+
+        def pending(reason, scored=0):
+            return {
+                "score": None,
+                "scored": scored,
+                "method": COCO_CIDER_METHOD,
+                "pending_reason": reason,
+                "per_sample": {},
+            }
+
+        if benchmark != "coco_caption":
+            return pending(f"corpus scoring is not defined for {benchmark}")
+        if shutil.which("java") is None:
+            return pending(
+                "pending: java not found on PATH (PTBTokenizer needs Java for CIDEr)"
+            )
+        try:
+            from pycocoevalcap.cider.cider import Cider
+            from pycocoevalcap.tokenizer.ptbtokenizer import PTBTokenizer
+        except ImportError as error:
+            return pending(f"pending: pycocoevalcap is missing ({error})")
+        ids = [key for key in predictions if references.get(key)]
+        if not ids:
+            return pending("pending: no predictions with reference captions")
+        try:
+            tokenizer = PTBTokenizer()
+            gts = tokenizer.tokenize(
+                {key: [{"caption": ref} for ref in references[key]] for key in ids}
+            )
+            res = tokenizer.tokenize({key: [{"caption": predictions[key]}] for key in ids})
+            score, per_sample = Cider().compute_score(gts, res)
+        except Exception as error:  # Java/tokenizer failures must not abort reporting
+            return pending(f"pending: CIDEr scoring failed ({type(error).__name__}: {error})")
+        return {
+            "score": float(score),
+            "scored": len(ids),
+            "method": COCO_CIDER_METHOD,
+            "pending_reason": None,
+            "per_sample": {key: float(value) for key, value in zip(ids, per_sample)},
+        }
+
     def score(self, benchmark, question_id, prediction, embedded_references):
         annotation = self.annotations.get(benchmark, {}).get(question_id)
         refs = (
@@ -171,6 +216,8 @@ class Scorer:
             }
         if benchmark == "gqa":
             return {"rule": "strip/lowercase exact match, v1"}
+        if benchmark == "coco_caption":
+            return {"rule": "CIDEr-D (corpus IDF)", "method": COCO_CIDER_METHOD}
         grade = self.grades.get(question_id, {})
         return {
             "rule": "MM-Vet judge mean",

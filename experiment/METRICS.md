@@ -136,6 +136,21 @@ Peak allocated memory is the highest live PyTorch GPU allocation after warmup, i
 resident model and generation state. It is reported separately for each visible GPU in
 GiB. We measure it to assess the GPU capacity required by each decoding method.
 
+### Phase memory and live KV (`memory` block)
+
+Each benchmark in `summary.json` has a `memory` block with four fields: `prefill_peak_allocated_gib`
+(GiB, bytes / 2**30), `decode_peak_allocated_gib` (GiB), `kv_live_mib` (MiB, bytes / 2**20) and
+`kv_tokens` (tokens). Each field is a distribution over turns (`count`, `mean`, `median`, `p95`,
+`stdev`) plus `max`. The prefill and decode peaks come from the per-device `gpu_memory` entries and
+take the largest value across visible devices for a turn. `kv_live_bytes` and `kv_tokens` are
+whole-model figures repeated on every device entry, so each is counted once per turn. Turns without
+a field (LLaVA runs, older records, or a null phase peak) are excluded and `count` shows how many
+remain. A field with no turns is omitted, so a LLaVA report has an empty `memory` block.
+`gpu_memory_by_visible_device` is unchanged. `comparison.json` adds, per benchmark,
+`memory_ratio_draft_over_original` with `decode_peak_allocated` and `kv_live` entries. Each is the
+draft mean divided by the original mean (per-run means over matched turns, averaged across runs),
+or null when a side has no data.
+
 ### Peak reserved GPU memory
 
 Peak reserved memory is the highest amount held by the PyTorch allocator after warmup,
@@ -318,8 +333,9 @@ python -m vispec.evaluation.compare_metrics \
 ```
 
 The tool requires matching model, temperature, precision, GPU identity, allocation
-and prompt-token fingerprints. Different draft-tree settings are separate
-experiments rather than repeats. Ratios use matching question/choice/turn IDs,
+and prompt-token fingerprints. It also refuses reports whose prompt style or run
+settings differ, as described in the [Qwen section](#qwen-experiments-02-and-03).
+Different draft-tree settings are separate experiments rather than repeats. Ratios use matching question/choice/turn IDs,
 and repeated runs receive equal weight. Quality changes require complete matching
 score coverage and the same scoring protocols and judge settings.
 
@@ -345,3 +361,155 @@ and does not validate a sampling distribution.
 Record verified per-benchmark results in the experiment guides and register,
 with hardware and artifact links. Inspect output counts and quality and repeat
 runs before drawing broader conclusions.
+
+### Sparsity mode
+
+`--mode sparsity` compares a sparsity arm (`--draft`, the candidate) with the same
+decoding method at 100% retention (`--original`, the reference). The default,
+`--mode method`, is the autoregressive vs ViSpec comparison above. The settings
+below are read from each benchmark's `runtime.json` `generation_args`. An absent key
+and an explicit null mean the same thing, "not set", and that value differs from any
+explicit value.
+
+- **Method mode:** `kv_layout`, `kv_retention`, `kv_policy`, `draft_retention` and
+  `draft_policy` must match across every compared report. Week 1 reports have none of
+  these keys, so they still compare. A 1.0 arm does not pair with a no-flag report here.
+- **Sparsity mode:** both groups must have the same `method` (autoregressive or
+  `vispec_speculative`). `kv_layout`, the draft-tree settings, `prompt_style` and all
+  the other guarded settings must match. The four sparsity settings may differ only
+  between the groups, never within one.
+- **Reference rule:** the reference must have `kv_retention` and `draft_retention` each
+  equal to 1.0 or null (null counts as 1.0, since 1.0 arms are token-identical to the
+  no-flag run). The reference may carry an explicit policy, so a 0.5 arm can be
+  compared for latency with the same-policy 1.0 arm. The no-flag reference anchors the
+  token-identity check.
+- **Same Slurm job:** every report in both groups must have a non-empty `slurm_job_id`
+  in its `metadata.txt` (the placeholder `unset` counts as missing), all equal, and equal
+  `slurm_restart_count` values (absent counts as 0). Otherwise `compare_metrics` raises
+  `ValueError`. Latency and memory ratios between arms are only controlled within one
+  allocation: the runtime signature (GPU, affinity, revision) can match across jobs.
+  Method mode does not apply this check, because the LLaVA 00/01 pair spans two jobs.
+- **Output:** `comparison.json` gains a `mode` field and a `sparsity` block with each
+  side's settings per benchmark. Other keys are unchanged. In sparsity mode the
+  `original` columns are the reference and the `draft` columns the candidate.
+
+### Diagnosing divergences
+
+`diagnose_divergence` teacher-forces the stock full-KV Hugging Face model, which
+cannot reproduce target-side KV eviction. It refuses any comparison in which either
+run has a non-null `kv_retention` below 1.0, in both modes, before it loads a model,
+and it labels no divergence. Draft-only arms (`draft_retention` below 1.0 with
+`kv_retention` null or 1.0) stay diagnosable because the target model is unchanged.
+For a sparsity-mode comparison, `--original-run` is the reference and `--draft-run`
+the candidate, and both must share one method; the "ar" and "vispec" labels in the
+output then mean reference and candidate.
+
+## Qwen experiments (02 and 03)
+
+Experiments 02 and 03 use the unified evaluator `vispec.evaluation.evaluate` and
+add the measurements below. The definitions above still apply. These fields are
+saved per question in `results/*/test.jsonl`. `report_metrics` aggregates the phase peaks
+(GiB, largest over devices per question), `kv_tokens` and live KV (MiB) into a per-benchmark
+`memory` block of `summary.json` (distribution plus `max`, over the questions that carry the
+field; `count` shows how many). The KV statements below
+are scoped to the `fixed` layout (experiments 02 and 03) unless they say `compact`.
+
+### CIDEr-D
+
+COCO caption quality is CIDEr-D multiplied by 100, computed with `pycocoevalcap`
+1.2 and its PTB tokenizer, which needs Java. The inverse document frequency comes
+from the references of the evaluated 100-image subset, not the full corpus. The
+score is therefore a subset measurement and is not comparable to published
+full-corpus CIDEr. Without Java the score stays pending.
+
+### Prefill and decode phase peaks
+
+The evaluator splits the allocator peak at the first output token. The
+prefill-phase peak (`prefill_peak_allocated_bytes`) runs from the start of the
+generation call to that token, and the counters are then reset. The decode-phase
+peak (`decode_peak_allocated_bytes`) covers the rest of the call, and
+`peak_allocated_bytes` stays the larger of the two. For ViSpec the first output
+token comes from the target prefill, before the draft prefill and the first
+draft tree, so those count toward the decode-phase peak.
+
+### Live KV (`kv_tokens`, `kv_live_bytes`)
+
+`kv_tokens` is the target KV cache length when generation ends. In the `fixed` layout
+it equals input plus output tokens minus one for the autoregressive arm, because the
+last generated token is never fed back, and input plus output tokens for ViSpec.
+`kv_live_bytes` is `kv_tokens` times the bytes one token occupies across all
+decoder layers (layers x 2 x KV heads x head dimension x dtype bytes). It is
+arithmetic, not an allocator measurement. It is a whole-model figure, so each
+device entry repeats it and it must not be summed across GPUs. In the `fixed` layout
+the preallocated buffer holds 16,384 tokens whatever `kv_tokens` is, so live KV does
+not change the measured peaks.
+
+### Compact KV layout (experiments 05 and 06)
+
+`--kv-layout compact` sizes the target KV buffer per sample, so live KV can change the
+measured peaks. Per sample (`T` = `total_token`; the tree adds `T` slots plus one):
+
+- Prefill buffer: prompt tokens + 10 slots for the autoregressive arm, prompt tokens +
+  `T` + 1 + 10 for ViSpec.
+- After prefill the cache is compacted into a new buffer of capacity kept prompt tokens
+  + `max_new_tokens` + `T` + 1 + 10 slots (`kv_cache.compact_for_decode`). The kept prompt
+  is every prompt token minus the evicted image tokens, so a 1.0 arm keeps the whole
+  prompt. The same slack applies to both arms, so AR and ViSpec buffers match.
+- The `fixed` rule that live KV cannot move the peaks no longer holds.
+
+`kv_tokens` under the compact layout is the physical cache length at the end: kept
+prompt tokens + output tokens (minus 1 for the autoregressive arm), not input + output.
+Eviction lowers it by `kv_evicted_tokens`, so `kv_tokens` = (input + output [- 1]) -
+`kv_evicted_tokens`. For example, long TextVQA ViSpec at 0.5 spatial: 1062.9 - 489.2 +
+325.93 = 899.61 (mean input, mean evicted, mean output; see the 06 README).
+
+The decode-phase peak includes the compaction transient, when the prefill-sized
+buffer and the new buffer exist together. Steady-state decoding holds only the new
+buffer. The transient is most visible for the autoregressive arm, whose decode peak is
+then set by compaction and not by decoding. `decode_time` also includes compaction and
+selection of the kept positions in these arms.
+
+Per-question fields written by the eviction and draft-pruning arms (all counts of
+tokens, no units beyond tokens; absent in other runs):
+
+- `kv_prompt_tokens`: prompt tokens in the target KV cache before eviction (the input
+  length, text and image).
+- `kv_kept_prompt_tokens`: prompt tokens still in the cache after eviction.
+- `kv_evicted_tokens`: `kv_prompt_tokens` - `kv_kept_prompt_tokens`.
+- `kv_score_window`: prompt tokens after the last image token. The attention policy
+  scores image tokens by the attention these tokens pay them; 0 without image tokens.
+- `draft_image_tokens`: image tokens the draft's image adaptor received, summed over
+  the prompt's images, before draft-side pruning.
+- `draft_kept_image_tokens`: image tokens the adaptor saw after pruning, summed the
+  same way. Equal to `draft_image_tokens` at retention 1.0.
+
+### Decode time
+
+The autoregressive `decode_time` runs from the first output token to the end of
+the decoding loop. ViSpec's `decode_time` starts after `initialize_tree` returns,
+while TTFT ends at the first target token inside it. The draft prefill and the
+first draft tree are therefore in neither TTFT nor `decode_time`; in Week 1 that
+window averaged about 12 ms per question. Use latency and TTFT to compare the
+arms. In the compact layout `decode_time` also contains compaction and selection
+(see above).
+
+### Comparison refusals
+
+`compare_metrics` raises `ValueError`, naming the differing values, when the
+compared reports differ in any of these:
+
+- `prompt_style` in the run metadata.
+- `slim_prefill`, `kv_capacity`, `num_samples` or `max_new_tokens` in the run
+  metadata.
+- `slim_prefill` or `kv_capacity` in a benchmark's runtime file, among reports
+  that have one. A missing runtime file is a warning instead.
+- The per-turn `max_new_tokens` generation limit, among turns that record one.
+
+An absent value counts as its own value, so a report that records a setting
+cannot be paired with one that does not. LLaVA reports record only
+`max_new_tokens`, so LLaVA pairs still compare. The hardware check also covers
+`base_model_revision`. From commit `25bf388` on, the evaluator falls back to the
+revision pinned in `.preparation/assets_qwen.json` when the checkpoint is a local
+folder, while the Week 1 runtime files hold `null`. A new run therefore cannot be
+paired with a Week 1 run, which the GPU and allocation checks would usually
+prevent anyway.

@@ -20,6 +20,7 @@
 
 # Modifications are denoted by the symbol: [MODIFIED]
 
+import contextlib
 import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -1069,6 +1070,32 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
     SDPA API.
     """
 
+    # [MODIFIED] Prefill score capture for target-side KV eviction, set and cleared by
+    # capture_kv_scores. While kv_score_window is a positive int, a prefill call (q_len > 1)
+    # adds this layer's window attention to kv_score_sink. The defaults leave forward as is.
+    kv_score_window = None
+    kv_score_sink = None
+
+    def _add_kv_scores(self, query_states, key_states):
+        """Add sum over heads and window queries of softmax(Q_win K^T / sqrt(d)) to the sink.
+
+        Read-only: it works on fp32 copies of the rotary-embedded states that the attention
+        used (key_states already expanded by repeat_kv), with its own causal mask, so the
+        attention output does not change.
+        """
+        q_len, kv_len = query_states.shape[-2], key_states.shape[-2]
+        window = min(int(self.kv_score_window), q_len)
+        query = query_states[:, :, q_len - window :, :].float()
+        logits = torch.matmul(query, key_states.float().transpose(2, 3)) / math.sqrt(
+            self.head_dim
+        )
+        # Window query i sits at cache position kv_len - window + i and sees keys up to it.
+        query_pos = torch.arange(kv_len - window, kv_len, device=logits.device)
+        key_pos = torch.arange(kv_len, device=logits.device)
+        logits = logits.masked_fill(key_pos[None, :] > query_pos[:, None], float("-inf"))
+        scores = torch.softmax(logits, dim=-1).sum(dim=(0, 1, 2))
+        self.kv_score_sink.add_(scores.to(self.kv_score_sink.device))
+
     # Adapted from Qwen2Attention.forward
     def forward(
         self,
@@ -1161,6 +1188,9 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
             dropout_p=self.attention_dropout if self.training else 0.0,
             is_causal=is_causal,
         )
+        # [MODIFIED] Prefill score capture (off unless capture_kv_scores is active).
+        if self.kv_score_window and q_len > 1:
+            self._add_kv_scores(query_states, key_states)
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.view(bsz, q_len, self.hidden_size)
@@ -1168,6 +1198,38 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
         attn_output = self.o_proj(attn_output)
 
         return attn_output, None, past_key_value
+
+
+@contextlib.contextmanager
+def capture_kv_scores(text_model, window: int, prompt_len: int):
+    """[MODIFIED] Capture prefill importance scores for every prompt position.
+
+    Inside the block, each language-model attention layer of ``text_model`` (the
+    ``Qwen2_5_VLModel`` decoder stack, never the vision encoder) adds the attention that its
+    last ``window`` prefill queries pay to each key position to one shared fp32 tensor of
+    shape ``[prompt_len]``, ``text_model.kv_scores``, which is yielded. The flags and the sink
+    are removed on exit, also after an error, so later calls run the unmodified forward.
+    """
+    window, prompt_len = int(window), int(prompt_len)
+    if window < 1 or prompt_len < window:
+        raise ValueError(f"score window must lie in [1, {prompt_len}], got {window}")
+    attentions = [layer.self_attn for layer in text_model.layers]
+    if not all(isinstance(attn, Qwen2_5_VLSdpaAttention) for attn in attentions):
+        raise ValueError("KV score capture needs the SDPA attention (attn_implementation='sdpa')")
+    sink = torch.zeros(
+        prompt_len, dtype=torch.float32, device=attentions[0].q_proj.weight.device
+    )
+    try:
+        text_model.kv_scores = sink
+        for attn in attentions:
+            attn.kv_score_window = window
+            attn.kv_score_sink = sink
+        yield sink
+    finally:
+        for attn in attentions:
+            attn.__dict__.pop("kv_score_window", None)
+            attn.__dict__.pop("kv_score_sink", None)
+        text_model.__dict__.pop("kv_scores", None)
 
 
 QWEN2_5_VL_ATTENTION_CLASSES = {
@@ -2030,6 +2092,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
+        logits_to_keep: int = 0,
+        last_hidden_only: bool = False,
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
         r"""
         Args:
@@ -2037,6 +2101,12 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 Labels for computing the masked language modeling loss. Indices should either be in `[0, ...,
                 config.vocab_size]` or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored
                 (masked), the loss is only computed for the tokens with labels in `[0, ..., config.vocab_size]`.
+            logits_to_keep (`int`, *optional*, defaults to 0):
+                [MODIFIED] When positive, `lm_head` runs only on the last `logits_to_keep` positions. `0` keeps
+                logits for every position (the original behaviour).
+            last_hidden_only (`bool`, *optional*, defaults to `False`):
+                [MODIFIED] When set, the text model does not collect per-layer hidden states, and the output's
+                `hidden_states` is `(final_normed_hidden,)`, so `hidden_states[-1]` is unchanged.
 
         Returns:
 
@@ -2084,6 +2154,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         return_dict = (
             return_dict if return_dict is not None else self.config.use_return_dict
         )
+        if logits_to_keep < 0:
+            raise ValueError(f"logits_to_keep must be >= 0, got {logits_to_keep}")
 
         if inputs_embeds is None:
             inputs_embeds = self.model.embed_tokens(input_ids)
@@ -2177,6 +2249,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
                 position_ids = position_ids.add(delta)
                 position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
 
+        # [MODIFIED] last_hidden_only skips the per-layer hidden-state tuple; the text model
+        # then returns a ModelOutput so the tuple form below can be rebuilt explicitly.
         outputs = self.model(
             input_ids=None,
             position_ids=position_ids,
@@ -2185,13 +2259,21 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             inputs_embeds=inputs_embeds,
             use_cache=use_cache,
             output_attentions=output_attentions,
-            output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
+            output_hidden_states=False if last_hidden_only else output_hidden_states,
+            return_dict=True if last_hidden_only else return_dict,
             cache_position=cache_position,
         )
 
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
+        # [MODIFIED] logits_to_keep > 0 projects only the last positions to the vocabulary.
+        if logits_to_keep > 0:
+            logits = self.lm_head(hidden_states[:, -logits_to_keep:, :])
+        else:
+            logits = self.lm_head(hidden_states)
+        if last_hidden_only:
+            # The text model applies the final norm before returning outputs[0], which is
+            # the same tensor output_hidden_states=True appends as its last entry.
+            all_hidden_states = (hidden_states,)
 
         loss = None
         if labels is not None:
@@ -2209,14 +2291,28 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             loss = loss_fct(shift_logits, shift_labels)
 
         if not return_dict:
-            output = (logits,) + outputs[1:]
+            if last_hidden_only:
+                # Same layout as the text model's tuple: present entries only, in order.
+                output = (logits,) + tuple(
+                    v
+                    for v in (
+                        outputs.past_key_values,
+                        all_hidden_states,
+                        outputs.attentions,
+                    )
+                    if v is not None
+                )
+            else:
+                output = (logits,) + outputs[1:]
             return (loss,) + output if loss is not None else output
 
         return Qwen2_5_VLCausalLMOutputWithPast(
             loss=loss,
             logits=logits,
             past_key_values=outputs.past_key_values,
-            hidden_states=outputs.hidden_states,
+            hidden_states=(
+                all_hidden_states if last_hidden_only else outputs.hidden_states
+            ),
             attentions=outputs.attentions,
             rope_deltas=self.rope_deltas,
         )

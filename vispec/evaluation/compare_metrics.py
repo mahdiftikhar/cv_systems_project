@@ -5,8 +5,99 @@ import json
 import statistics
 from pathlib import Path
 
-from .report_metrics import BENCHMARKS, distribution, fmt
+from .report_metrics import BENCHMARKS, distribution, fmt, memory_summary
 from .scoring import evidence
+
+# Run settings that must match across every compared report. They are read from each
+# report's metadata (written by the runner); slim_prefill and kv_capacity are also read
+# from each benchmark's runtime file (written by the evaluator). Reports without a key
+# (the LLaVA runs record only max_new_tokens) compare equal on that key.
+GUARDED_SETTINGS = ("slim_prefill", "kv_capacity", "num_samples", "max_new_tokens")
+RUNTIME_GUARDED_SETTINGS = ("slim_prefill", "kv_capacity")
+# Sparsity settings and the cache layout are read from each runtime file's
+# generation_args. An absent key and an explicit null both mean "not set", which differs
+# from any explicit value.
+SPARSITY_SETTINGS = ("kv_retention", "kv_policy", "draft_retention", "draft_policy")
+LAYOUT_SETTINGS = ("kv_layout",) + SPARSITY_SETTINGS
+METHODS = ("autoregressive", "vispec_speculative")
+MODES = ("method", "sparsity")
+
+
+def require_same(values, label):
+    """Refuse differing values; an absent value (None) counts as its own value."""
+    distinct = set(values)
+    if len(distinct) > 1:
+        raise ValueError(
+            f"Cannot compare different {label} values: "
+            + ", ".join(repr(value) for value in sorted(distinct, key=repr))
+        )
+
+
+def generation_setting(report, benchmark, key):
+    """A generation_args value of one benchmark's runtime file; absent counts as None."""
+    runtime = report["summary"].get("runtime", {}).get(benchmark) or {}
+    return (runtime.get("generation_args") or {}).get(key)
+
+
+def check_sparsity_settings(original, draft, benchmark, mode):
+    """Guard kv_layout and the sparsity settings; return each side's settings."""
+    groups = {"original": original, "draft": draft}
+    values = {
+        name: [
+            {key: generation_setting(r, benchmark, key) for key in LAYOUT_SETTINGS}
+            for r in group
+            if r["summary"].get("runtime", {}).get(benchmark)
+        ]
+        for name, group in groups.items()
+    }
+    everyone = values["original"] + values["draft"]
+    if mode == "method":
+        for key in LAYOUT_SETTINGS:
+            require_same([v[key] for v in everyone], f"{benchmark} {key} (runtime)")
+    else:
+        require_same([v["kv_layout"] for v in everyone], f"{benchmark} kv_layout (runtime)")
+        for name, group_values in values.items():
+            for key in SPARSITY_SETTINGS:
+                require_same(
+                    [v[key] for v in group_values],
+                    f"{benchmark} {key} within the {name} group (runtime)",
+                )
+        for v in values["original"]:
+            for key in ("kv_retention", "draft_retention"):
+                # Null counts as 1.0: the flags are off and 1.0 arms are token-identical.
+                if v[key] not in (None, 1.0):
+                    raise ValueError(
+                        f"Sparsity mode needs a reference at retention 1.0 (or unset); "
+                        f"{benchmark} reference has {key}={v[key]!r}"
+                    )
+    return {
+        name: group_values[0] if group_values else None
+        for name, group_values in values.items()
+    }
+
+
+def check_same_slurm_job(reports):
+    """Sparsity mode: every report must come from one Slurm job and restart attempt."""
+    jobs, restarts = set(), set()
+    for report in reports:
+        metadata = report["summary"]["metadata"]
+        job = (metadata.get("slurm_job_id") or "").strip()
+        if not job or job == "unset":
+            raise ValueError(
+                f"Sparsity mode needs slurm_job_id in metadata.txt: {report['path']}"
+            )
+        jobs.add(job)
+        restarts.add((metadata.get("slurm_restart_count") or "0").strip())
+    if len(jobs) > 1:
+        raise ValueError(
+            "Sparsity mode compares runs from one Slurm job; got slurm_job_id "
+            + ", ".join(sorted(jobs))
+        )
+    if len(restarts) > 1:
+        raise ValueError(
+            "Sparsity mode compares runs from one restart attempt; got slurm_restart_count "
+            + ", ".join(sorted(restarts))
+        )
 
 
 def load_report(path):
@@ -90,7 +181,9 @@ def token_agreement(original_maps, draft_maps, common):
     }
 
 
-def compare(original_paths, draft_paths, output_dir):
+def compare(original_paths, draft_paths, output_dir, mode="method"):
+    if mode not in MODES:
+        raise ValueError(f"Unknown comparison mode: {mode!r}")
     original = [load_report(path) for path in original_paths]
     draft = [load_report(path) for path in draft_paths]
     all_reports = original + draft
@@ -100,7 +193,17 @@ def compare(original_paths, draft_paths, output_dir):
     run_paths = [report["summary"]["run_dir"] for report in all_reports]
     if len(set(run_paths)) != len(run_paths):
         raise ValueError("Multiple reports from one run are not independent repeats")
-    for group, method in [(original, "autoregressive"), (draft, "vispec_speculative")]:
+    if mode == "method":
+        group_methods = [(original, "autoregressive"), (draft, "vispec_speculative")]
+    else:
+        methods = {r["summary"]["metadata"].get("method") for r in all_reports}
+        if len(methods) != 1 or not methods <= set(METHODS):
+            raise ValueError(
+                "Sparsity mode needs both groups to share one method "
+                f"(autoregressive or vispec_speculative); got {sorted(methods, key=repr)}"
+            )
+        group_methods = [(original, methods.copy().pop()), (draft, methods.copy().pop())]
+    for group, method in group_methods:
         for report in group:
             if report["summary"]["metadata"].get("method") != method:
                 raise ValueError(f"Wrong method for comparison group: {report['path']}")
@@ -108,19 +211,60 @@ def compare(original_paths, draft_paths, output_dir):
             values = {report["summary"]["metadata"].get(setting) for report in group}
             if len(values) > 1:
                 raise ValueError(f"Different {setting} settings are not repeated runs")
+    if mode == "sparsity":
+        check_same_slurm_job(all_reports)
+        # The reference and the candidate must share the decoding configuration.
+        for setting in ("depth", "top_k", "total_token", "num_q"):
+            values = {r["summary"]["metadata"].get(setting) for r in all_reports}
+            if len(values) > 1:
+                raise ValueError(f"Cannot compare different {setting} settings")
     for setting in ("base_model", "spec_model", "temperature"):
         values = {report["summary"]["metadata"].get(setting) for report in all_reports}
         if len(values) > 1:
             raise ValueError(f"Cannot compare different {setting} settings")
+    styles = {report["summary"]["metadata"].get("prompt_style") for report in all_reports}
+    if len(styles) > 1:
+        raise ValueError(
+            "Cannot compare different prompt_style values: "
+            + ", ".join(repr(style) for style in sorted(styles, key=repr))
+        )
+    for setting in GUARDED_SETTINGS:
+        require_same(
+            [report["summary"]["metadata"].get(setting) for report in all_reports],
+            f"{setting} (metadata)",
+        )
     result = {
+        "mode": mode,
         "original_reports": [str(report["path"]) for report in original],
         "draft_reports": [str(report["path"]) for report in draft],
+        "sparsity": {},
         "benchmarks": {},
         "sources": [
             evidence(report["path"] / "summary.json") for report in all_reports
         ],
     }
     for benchmark in BENCHMARKS:
+        # Reports written before a benchmark was added have no entry for it; skip a
+        # benchmark that no compared report knows about.
+        if all(
+            report["summary"]["benchmarks"].get(benchmark) is None
+            for report in all_reports
+        ):
+            continue
+        # A missing runtime file is flagged below as missing hardware evidence, so the
+        # settings guard compares the reports that have one.
+        runtimes = [
+            report["summary"].get("runtime", {}).get(benchmark)
+            for report in all_reports
+        ]
+        for setting in RUNTIME_GUARDED_SETTINGS:
+            require_same(
+                [runtime.get(setting) for runtime in runtimes if runtime],
+                f"{benchmark} {setting} (runtime)",
+            )
+        result["sparsity"][benchmark] = check_sparsity_settings(
+            original, draft, benchmark, mode
+        )
         signatures = [runtime_signature(report, benchmark) for report in all_reports]
         known_signatures = [
             signature for signature in signatures if signature is not None
@@ -153,8 +297,10 @@ def compare(original_paths, draft_paths, output_dir):
             summary = report["summary"]
             if summary.get("evaluation_exit_code") != 0:
                 issues.append("At least one evaluation did not complete successfully")
-            bench = summary["benchmarks"][benchmark]
-            if (
+            bench = summary["benchmarks"].get(benchmark)
+            if bench is None:
+                issues.append("Benchmark absent from at least one report")
+            elif (
                 bench["missing_question_ids"] is None
                 or bench["missing_question_ids"]
                 or bench["unexpected_question_ids"]
@@ -263,6 +409,24 @@ def compare(original_paths, draft_paths, output_dir):
                 else None
             )
 
+        def memory_mean(group_maps, field):
+            # Per-run mean of the field over matched turns, then the mean across runs.
+            run_means = []
+            for rows in group_maps:
+                block = memory_summary([rows[key] for key in common])
+                if field in block:
+                    run_means.append(block[field]["mean"])
+            return statistics.mean(run_means) if run_means else None
+
+        memory_ratio = {}
+        for name, field in (
+            ("decode_peak_allocated", "decode_peak_allocated_gib"),
+            ("kv_live", "kv_live_mib"),
+        ):
+            a = memory_mean(maps[: len(original)], field)
+            b = memory_mean(maps[len(original) :], field)
+            memory_ratio[name] = b / a if a and b is not None else None
+
         agreement = []
         for original_map in maps[: len(original)]:
             for draft_map in maps[len(original) :]:
@@ -282,10 +446,12 @@ def compare(original_paths, draft_paths, output_dir):
         )
         caps = [(row["measurement"].get("generation_limits") or {}).get("max_new_tokens")
                 for row in matched_rows]
+        require_same(
+            [cap for cap in caps if cap is not None],
+            f"{benchmark} max_new_tokens (generation limits)",
+        )
         if not caps or any(cap is None for cap in caps):
             issues.append("Missing output-token limit evidence")
-        elif len(set(caps)) != 1:
-            issues.append("Output-token limits differ across methods or runs")
         if greedy and (tokens["missing_pairs"] or not tokens["checked_pairs"]):
             issues.append("Missing generated token IDs for greedy correctness validation")
         if greedy and tokens["mismatches"]:
@@ -324,6 +490,7 @@ def compare(original_paths, draft_paths, output_dir):
             if not issues
             else None,
             "ttft_ratio_original_over_draft": ratio("run_mean_ttft_s"),
+            "memory_ratio_draft_over_original": memory_ratio,
             "answer_agreement_rate": statistics.mean(agreement) if agreement else None,
             "token_agreement": tokens,
             "greedy_correctness_validated": (
@@ -341,8 +508,13 @@ def compare(original_paths, draft_paths, output_dir):
         json.dumps(result, indent=2, allow_nan=False) + "\n"
     )
     lines = [
-        "# Original vs ViSpec",
+        "# Original vs ViSpec" if mode == "method"
+        else "# Reference (100% retention) vs sparsity arm",
         "",
+        *(
+            ["- Sparsity mode: `original` columns are the reference, `draft` columns the candidate arm."]
+            if mode == "sparsity" else []
+        ),
         "- Ratios compare means of per-run means on matching completed turns.",
         "- Repeated-run standard deviations are in `comparison.json`; one run cannot estimate variability.",
         "- Answer agreement ignores whitespace differences; it is not an accuracy score.",
@@ -358,6 +530,16 @@ def compare(original_paths, draft_paths, output_dir):
             f"| {benchmark} | {row['matched_turns_per_run']} | {fmt(row['original']['run_mean_latency_s']['mean'])} | "
             f"{fmt(row['draft']['run_mean_latency_s']['mean'])} | {fmt(row['latency_ratio_original_over_draft'])} | "
             f"{fmt(row['controlled_latency_speedup'])} | {fmt(row['answer_agreement_rate'])} | {fmt(row['quality_delta_percentage_points'])} |"
+        )
+    lines += [
+        "",
+        "| Benchmark | Decode peak ratio (draft/original) | Live KV ratio (draft/original) |",
+        "| --- | ---: | ---: |",
+    ]
+    for benchmark, row in result["benchmarks"].items():
+        ratios = row["memory_ratio_draft_over_original"]
+        lines.append(
+            f"| {benchmark} | {fmt(ratios['decode_peak_allocated'])} | {fmt(ratios['kv_live'])} |"
         )
     lines += [
         "",
@@ -413,10 +595,16 @@ def main():
         help="Report directories from independent ViSpec runs",
     )
     parser.add_argument("--output-dir", required=True, type=Path)
-    args = parser.parse_args()
-    print(
-        f"Comparison: {compare(args.original, args.draft, args.output_dir) / 'comparison.md'}"
+    parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default="method",
+        help="method: autoregressive vs ViSpec; sparsity: a sparsity arm vs the same "
+        "method at 100%% retention",
     )
+    args = parser.parse_args()
+    out = compare(args.original, args.draft, args.output_dir, args.mode)
+    print(f"Comparison: {out / 'comparison.md'}")
 
 
 if __name__ == "__main__":

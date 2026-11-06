@@ -42,6 +42,7 @@ propcache==0.3.1
 protobuf==5.29.3
 psutil==7.0.0
 pyarrow==20.0.0
+pycocoevalcap==1.2
 python-dateutil==2.9.0.post0
 pytz==2025.2
 PyYAML==6.0.2
