@@ -43,7 +43,7 @@
 - The LLaVA baseline suite (experiments 00 and 01) is TextVQA (priority, run first),
   GQA, and MM-Vet. Keep future LLaVA comparisons on this same suite unless the user
   changes it; do not restore all eight upstream benchmarks by default.
-- The Qwen experiments (02 and later, including the 04 profile and the 05 and 06 sparsity experiments) use `Qwen/Qwen2.5-VL-3B-Instruct` and
+- The Qwen experiments (02 to 09, including the 04 profile, the 05 and 06 sparsity experiments, the 07 drift probe, the 08 combined sparsity experiment and the 09 Re:Verse long-context experiment) use `Qwen/Qwen2.5-VL-3B-Instruct` and
   `JLKang/ViSpec-Qwen2.5-VL-3B-Instruct` on TextVQA and COCO Captions in both the
   `long` and `short` prompt styles, with Re:Verse page windows added later. They run
   on this cluster's pinned A6000 nodes through `experiment/submit_ampere.sh`. Keep

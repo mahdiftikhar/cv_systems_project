@@ -670,7 +670,8 @@ class ImgAdaptor(nn.Module):
         them, and the queries are ``self.q``, in the same head layout. The logits use SDPA's
         default ``1/sqrt(head_dim)`` scale and are computed in fp32 with the softmax. Returns
         an fp32 ``[n]`` tensor: the softmax over the n tokens, summed over the ``num_q``
-        queries and the heads, so it sums to ``num_q * num_heads``. Read-only.
+        queries and the heads, so it sums to ``num_q * num_heads``. Read-only. Raises
+        RuntimeError on a non-finite score, which ``topk`` would otherwise rank silently.
         """
         bsz, seq_len, _ = hidden_states.size()
         if bsz != 1:
@@ -683,7 +684,12 @@ class ImgAdaptor(nn.Module):
         )  # [heads, n, head_dim]
         query_states = self.q.transpose(0, 1).float()  # [heads, num_q, head_dim]
         logits = query_states @ key_states.transpose(1, 2) / math.sqrt(self.head_dim)
-        return logits.softmax(dim=-1).sum(dim=(0, 1))
+        scores = logits.softmax(dim=-1).sum(dim=(0, 1))
+        if not bool(torch.isfinite(scores).all()):
+            raise RuntimeError(
+                f"draft attention scores are not finite for an image of {seq_len} tokens"
+            )
+        return scores
 
 
 class Model(nn.Module):
@@ -817,19 +823,28 @@ class Model(nn.Module):
         every retention, so a 1.0 arm pays the same scoring cost as a pruned one). When every
         token is kept (always at retention 1.0), ``img_emd`` itself is returned, so the adaptor
         output is bit-identical to the unpruned draft. Otherwise the kept rows stay in
-        ascending order. Adds n and the kept count to ``self.draft_image_counts``.
+        ascending order. Adds n and the kept count to ``self.draft_image_counts`` and
+        lowers its ``draft_min_kept_per_image`` to the kept count when that is smaller.
         """
         config = self.draft_sparsity
         n = img_emd.shape[1]
         k = keep_count(n, config.retention)
         scores = self.imadpt.token_scores(img_emd) if config.policy == "attention" else None
-        self.draft_image_counts["draft_image_tokens"] += n
-        self.draft_image_counts["draft_kept_image_tokens"] += k
         if k == n:
-            return img_emd
-        # The spatial indices come back on the CPU, the attention ones on the scores' device.
-        keep = select_in_span(n, k, config.policy, scores).to(img_emd.device)
-        return img_emd[:, keep]
+            pruned = img_emd
+        else:
+            # The spatial indices come back on the CPU, the attention ones on the scores'
+            # device.
+            keep = select_in_span(n, k, config.policy, scores).to(img_emd.device)
+            pruned = img_emd[:, keep]
+        # The counts are read from the rows the adaptor actually gets.
+        kept = pruned.shape[1]
+        counts = self.draft_image_counts
+        counts["draft_image_tokens"] += n
+        counts["draft_kept_image_tokens"] += kept
+        least = counts["draft_min_kept_per_image"]
+        counts["draft_min_kept_per_image"] = kept if least is None else min(least, kept)
+        return pruned
 
     def _prepare_decoder_attention_mask(
         self, attention_mask, input_shape, inputs_embeds, past_key_values_length
@@ -991,9 +1006,10 @@ class Model(nn.Module):
                             b, img_id_end - img_adapted.shape[0] + 1 : img_id_end
                         ],
                     ]
+                    # This image's own text rows and adapted rows (h_s[-2], h_s[-1]).
                     t_m += [
-                        eye_m[img_id_start : img_id_start + h_s[0].shape[0], :],
-                        eye_m[img_id_end - h_s[1].shape[0] : img_id_end, :],
+                        eye_m[img_id_start : img_id_start + h_s[-2].shape[0], :],
+                        eye_m[img_id_end - h_s[-1].shape[0] : img_id_end, :],
                     ]
                     img_id_start = img_id_end
 
@@ -1004,6 +1020,13 @@ class Model(nn.Module):
                 h_s.append(self.fc(torch.cat((rst_emd, hidden), dim=-1)))
                 p_i.append(position_ids[b, img_id_start:])
                 t_m.append(eye_m[img_id_start:, :])
+                h_s_rows = sum(h.shape[0] for h in h_s)
+                t_m_rows = sum(m.shape[0] for m in t_m)
+                if t_m_rows != h_s_rows:
+                    raise RuntimeError(
+                        f"draft image branch, batch row {b}: trans_mat has {t_m_rows} rows "
+                        f"but the compressed sequence has {h_s_rows}"
+                    )
                 h_s = torch.cat(h_s, dim=0).unsqueeze(0)
                 p_i = torch.cat(p_i, dim=0).unsqueeze(0)
                 t_m = torch.cat(t_m, dim=0).unsqueeze(0)

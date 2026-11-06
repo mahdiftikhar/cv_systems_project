@@ -34,7 +34,7 @@ from .modeling_qwen2_5_vl_kv import (
 )
 from .modeling_qwen2_5_vl_kv import capture_kv_scores
 from .modeling_qwen2_kv import LlamaForCausalLM as KVQwen2ForCausalLM
-from .sparsity import SparsityConfig, keep_positions
+from .sparsity import SparsityConfig, keep_positions, kept_per_image
 from .utils import *
 
 QWEN2_5_VL = "Qwen2_5_VLForConditionalGeneration"
@@ -89,13 +89,18 @@ def draft_pruning(spec_layer, config):
     Sets ``spec_layer.draft_sparsity`` to ``config`` and ``spec_layer.draft_image_counts`` to
     a fresh count dict, and sets both back to None on exit, also after an error. Yields the
     dict: ``draft_image_tokens`` and ``draft_kept_image_tokens``, summed over the images that
-    the draft's image branch (its prefill forward) adapted in the block. ``None`` yields None
-    and changes nothing.
+    the draft's image branch (its prefill forward) adapted in the block, and
+    ``draft_min_kept_per_image``, the fewest tokens kept for any one of those images (None
+    when no image was adapted). ``None`` yields None and changes nothing.
     """
     if config is None:
         yield None
         return
-    counts = {"draft_image_tokens": 0, "draft_kept_image_tokens": 0}
+    counts = {
+        "draft_image_tokens": 0,
+        "draft_kept_image_tokens": 0,
+        "draft_min_kept_per_image": None,
+    }
     spec_layer.draft_sparsity = config
     spec_layer.draft_image_counts = counts
     try:
@@ -115,6 +120,7 @@ class TargetKVEviction:
     language-model layer adds the attention that the window queries pay to each prompt
     position to one shared score tensor. ``keep()`` then picks one set of prompt positions,
     applied to every layer: all text positions plus the selected tokens of each image.
+    ``keep()`` also records how many tokens it kept of each image, for ``stats()``.
     """
 
     def __init__(self, model, input_ids, config):
@@ -134,6 +140,7 @@ class TargetKVEviction:
                 "the attention policy needs at least one prompt token after the last image token"
             )
         self.scores = None
+        self.kept_per_image = None
 
     @contextlib.contextmanager
     def prefill_capture(self):
@@ -148,6 +155,7 @@ class TargetKVEviction:
     def keep(self, device):
         """Ascending prompt positions to keep, on ``device`` (the KV buffer's)."""
         if not self.image_tokens:
+            self.kept_per_image = []
             return torch.arange(self.prompt_tokens, device=device)
         if self.scores is not None:
             # Each layer adds one softmax row (sum 1) per head and window query.
@@ -162,16 +170,29 @@ class TargetKVEviction:
                 )
         elif self.config.policy == "attention" and self.config.retention < 1.0:
             raise RuntimeError("the attention policy found no captured prefill scores")
-        return keep_positions(self.image_mask, self.config, self.scores).to(device)
+        positions = keep_positions(self.image_mask, self.config, self.scores)
+        # Counted on the CPU from the positions that are returned, so no GPU memory is used.
+        self.kept_per_image = kept_per_image(self.image_mask, positions)
+        return positions.to(device)
 
     def stats(self, kept):
-        """The measurement fields for this generation, given the kept prompt length."""
+        """The measurement fields for this generation, given the kept prompt length.
+
+        ``kv_image_tokens`` counts the image tokens before eviction. ``kv_min_kept_per_image``
+        is the fewest tokens ``keep()`` kept of any one image, or None without image tokens.
+        """
+        if self.kept_per_image is None:
+            raise RuntimeError("TargetKVEviction.stats() needs keep() to run first")
         kept = int(kept)
         return {
             "kv_prompt_tokens": self.prompt_tokens,
             "kv_kept_prompt_tokens": kept,
             "kv_evicted_tokens": self.prompt_tokens - kept,
             "kv_score_window": self.window,
+            "kv_image_tokens": self.image_tokens,
+            "kv_min_kept_per_image": (
+                min(self.kept_per_image) if self.kept_per_image else None
+            ),
         }
 
 
@@ -452,6 +473,7 @@ class SpecModel(nn.Module):
         generation_stats=None,
         kv_sparsity=None,
         draft_sparsity=None,
+        on_kv_compacted=None,
         **kwargs,
     ):
         """ViSpec generation.
@@ -465,6 +487,10 @@ class SpecModel(nn.Module):
         rows. Only the draft's prefill forward (in ``initialize_tree``) takes the image
         branch; later draft calls reuse the draft's own KV. The target is unchanged.
         ``None`` prunes nothing.
+
+        ``on_kv_compacted()`` (compact layout only) is called once, right after the target
+        cache is compacted and the prefill-sized buffer is released, before decoding goes on.
+        The evaluator uses it to split the decode-phase memory peak.
         """
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError(
@@ -754,6 +780,8 @@ class SpecModel(nn.Module):
             past_key_values = self.past_key_values
             past_key_values_data = self.past_key_values_data
             current_length_data = self.current_length_data
+            if on_kv_compacted is not None:
+                on_kv_compacted()
             kv_offset = input_len - prompt_kept
             if eviction is not None and generation_stats is not None:
                 generation_stats["kv_eviction"] = eviction.stats(prompt_kept)

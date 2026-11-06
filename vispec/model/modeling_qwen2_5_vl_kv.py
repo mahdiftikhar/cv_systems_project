@@ -72,6 +72,8 @@ else:
     flash_attn_varlen_func = None
 
 
+from .vision_split import encode_images_separately  # [MODIFIED]
+
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "Qwen2_5_VLConfig"
@@ -1822,6 +1824,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(
             config.vision_config
         )
+        # [MODIFIED] encode multi-image prompts one image at a time (dense cross-image mask OOM)
+        encode_images_separately(self.visual)
         self.model = Qwen2_5_VLModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Shared by experiment/05_qwen_draft_pruning/run.sh and experiment/06_qwen_kv_eviction/run.sh.
-# Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (draft|kv),
-# arms (space-separated <retention>:<policy>[:<method>]), prompt_style, and has done
+# Shared by experiment/05_qwen_draft_pruning, 06_qwen_kv_eviction and 08_qwen_combined_sparsity run.sh.
+# Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (reference|draft|kv|combined),
+# arms (space-separated <retention>:<policy>[:<method>]; reference sweeps take `ar` and `vispec`), prompt_style, and has done
 # `set -euo pipefail` and `cd "$repo_dir"`.
 # Each arm gets its own run folder with the full launch evidence and its own EXIT report.
 # Failure: a failed arm records a failure and the remaining arms still run; a failed benchmark stops that
@@ -18,6 +18,20 @@ qwen_require_style() {
         exit 2
     fi
     prompt_style="$PROMPT_STYLE"
+}
+
+# Validate the arms of a reference sweep (ar, vispec) before any run folder exists. Usage: qwen_validate_ref_arms <arms>
+qwen_validate_ref_arms() {
+    local list="$1" spec
+    if [[ -z "${list// /}" ]]; then
+        echo "The arm list is empty." >&2
+        exit 2
+    fi
+    for spec in $list; do
+        case "$spec" in ar|vispec) ;; *)
+            echo "Invalid reference arm '$spec': must be ar or vispec." >&2; exit 2 ;;
+        esac
+    done
 }
 
 # Validate every arm before any run folder exists. Usage: qwen_validate_arms <allow-method:0|1> <arms>
@@ -68,6 +82,16 @@ qwen_run_arm() {
     IFS=: read -r ret policy method_field <<< "$spec"
     local method="${method_field:-vispec}" suffix=""
     [[ -n "$method_field" ]] && suffix="_${method_field}"
+    local folder_arm="r${ret}_${policy}${suffix}"
+    if [[ "$sweep" == "reference" ]]; then
+        # A reference arm is `ar` or `vispec`: no sparsity flags, folder name ..._ref_<ar|vispec>_XXXXXX.
+        case "$spec" in
+            ar) method="autoregressive" ;;
+            vispec) method="vispec" ;;
+            *) echo "Invalid reference arm '$spec': must be ar or vispec." >&2; return 2 ;;
+        esac
+        folder_arm="ref_${spec}"
+    fi
 
     export HF_HOME="$repo_dir/.cache/huggingface"
     export HF_HUB_CACHE="$HF_HOME/hub"
@@ -82,7 +106,8 @@ qwen_run_arm() {
     local temperature="0.0" max_new_tokens=1024 num_samples=100 kv_capacity=16384
     local python_bin="${PYTHON_BIN:-/home/aeternum/anaconda3/envs/vipsec/bin/python}"
     local depth="${DEPTH:-3}" top_k="${TOP_K:-8}" total_token="${TOTAL_TOKEN:-30}" num_q="${NUM_Q:-2}"
-    local benchmarks=(textvqa coco_caption)
+    local qwen_benchmarks="${QWEN_BENCHMARKS:-textvqa coco_caption}" benchmarks=()
+    read -r -a benchmarks <<< "$qwen_benchmarks"
     local method_dir meta_method
     if [[ "$method" == "autoregressive" ]]; then
         method_dir="autoregressive_qwen"; meta_method="autoregressive"
@@ -91,11 +116,15 @@ qwen_run_arm() {
     fi
     # Sparsity settings this arm applies; "none" in metadata means the flag is omitted.
     local kv_retention="none" kv_policy="none" draft_retention="none" draft_policy="none"
-    if [[ "$sweep" == "kv" ]]; then
-        kv_retention="$ret"; kv_policy="$policy"
-    else
-        draft_retention="$ret"; draft_policy="$policy"
-    fi
+    case "$sweep" in
+        reference) ;;
+        draft) draft_retention="$ret"; draft_policy="$policy" ;;
+        kv) kv_retention="$ret"; kv_policy="$policy" ;;
+        combined)
+            kv_retention="$ret"; kv_policy="$policy"
+            draft_retention="$ret"; draft_policy="$policy" ;;
+        *) echo "Unknown sweep type '$sweep' (expected reference, draft, kv or combined)." >&2; exit 2 ;;
+    esac
 
     command -v "$python_bin" >/dev/null || return 1
     export PATH="$(dirname "$python_bin"):$PATH"
@@ -105,7 +134,7 @@ qwen_run_arm() {
     local commit run_dir
     commit="$(git rev-parse HEAD)"
     mkdir -p "$experiment_dir/runs"
-    run_dir="$(mktemp -d "$experiment_dir/runs/$(date -u +%Y%m%dT%H%M%SZ)_${commit:0:12}_${prompt_style}_r${ret}_${policy}${suffix}_XXXXXX")" || return 1
+    run_dir="$(mktemp -d "$experiment_dir/runs/$(date -u +%Y%m%dT%H%M%SZ)_${commit:0:12}_${prompt_style}_${folder_arm}_XXXXXX")" || return 1
     printf '%s\n' "$commit" > "$run_dir/commit.txt"
     git status --short > "$run_dir/git-status.txt"
     git diff HEAD --binary > "$run_dir/tracked-changes.patch"
@@ -167,6 +196,7 @@ qwen_run_arm() {
         printf 'prompt_style=%s\nslim_prefill=true\nkv_capacity=%s\nnum_samples=%s\n' "$prompt_style" "$kv_capacity" "$num_samples"
         printf 'max_new_tokens=%s\n' "$max_new_tokens"
         printf 'benchmarks=%s\n' "${benchmarks[*]}"
+        printf 'qwen_benchmarks=%s\n' "$qwen_benchmarks"
         printf 'kv_layout=compact\nkv_retention=%s\nkv_policy=%s\ndraft_retention=%s\ndraft_policy=%s\n' \
             "$kv_retention" "$kv_policy" "$draft_retention" "$draft_policy"
         printf 'arm=%s\nsweep=%s\narm_list=%s\n' "$spec" "$sweep" "$arms"
@@ -205,11 +235,14 @@ qwen_run_arm() {
             cmd+=(--depth "$depth" --top-k "$top_k" --total-token "$total_token" --num-q "$num_q")
         fi
         cmd+=(--kv-capacity "$kv_capacity" --kv-layout compact)
-        if [[ "$sweep" == "kv" ]]; then
-            cmd+=(--kv-retention "$ret" --kv-policy "$policy")
-        else
-            cmd+=(--draft-retention "$ret" --draft-policy "$policy")
-        fi
+        case "$sweep" in
+            reference) ;;
+            draft) cmd+=(--draft-retention "$ret" --draft-policy "$policy") ;;
+            kv) cmd+=(--kv-retention "$ret" --kv-policy "$policy") ;;
+            combined) cmd+=(--kv-retention "$ret" --kv-policy "$policy"
+                --draft-retention "$ret" --draft-policy "$policy") ;;
+            *) echo "Unknown sweep type '$sweep' (expected reference, draft, kv or combined)." >&2; exit 2 ;;
+        esac
         printf '\nRunning:'
         printf ' %q' "${cmd[@]}"
         printf '\n'

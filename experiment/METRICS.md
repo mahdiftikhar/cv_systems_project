@@ -138,11 +138,12 @@ GiB. We measure it to assess the GPU capacity required by each decoding method.
 
 ### Phase memory and live KV (`memory` block)
 
-Each benchmark in `summary.json` has a `memory` block with four fields: `prefill_peak_allocated_gib`
-(GiB, bytes / 2**30), `decode_peak_allocated_gib` (GiB), `kv_live_mib` (MiB, bytes / 2**20) and
-`kv_tokens` (tokens). Each field is a distribution over turns (`count`, `mean`, `median`, `p95`,
-`stdev`) plus `max`. The prefill and decode peaks come from the per-device `gpu_memory` entries and
-take the largest value across visible devices for a turn. `kv_live_bytes` and `kv_tokens` are
+Each benchmark in `summary.json` has a `memory` block with up to five fields: `prefill_peak_allocated_gib`
+(GiB, bytes / 2**30), `decode_peak_allocated_gib` (GiB), `post_compaction_peak_allocated_gib` (GiB,
+compact-layout records from Week 3 on, see [Compact KV layout](#compact-kv-layout-experiments-05-and-06)),
+`kv_live_mib` (MiB, bytes / 2**20) and `kv_tokens` (tokens). Each field is a distribution over turns
+(`count`, `mean`, `median`, `p95`, `stdev`) plus `max`. The three peaks come from the per-device
+`gpu_memory` entries and take the largest value across visible devices for a turn. `kv_live_bytes` and `kv_tokens` are
 whole-model figures repeated on every device entry, so each is counted once per turn. Turns without
 a field (LLaVA runs, older records, or a null phase peak) are excluded and `count` shows how many
 remain. A field with no turns is omitted, so a LLaVA report has an empty `memory` block.
@@ -389,6 +390,16 @@ explicit value.
   `ValueError`. Latency and memory ratios between arms are only controlled within one
   allocation: the runtime signature (GPU, affinity, revision) can match across jobs.
   Method mode does not apply this check, because the LLaVA 00/01 pair spans two jobs.
+- **Runtime evidence (Week 3 on):** for every benchmark that any compared report
+  evaluated (it has a runtime file, a manifest or answers), every report must have that
+  benchmark's runtime entry with `generation_args`. Otherwise `compare_metrics` raises
+  `ValueError` naming the report. Before Week 3 such a side's settings were left null in
+  the `sparsity` block. Benchmarks that no report evaluated (the empty `gqa` and `mmvet`
+  entries of a Qwen report) are not checked.
+- **Requeued jobs:** a requeued preempt job reruns the runner into fresh folders, so one
+  `slurm_job_id` can own several folders per arm, one per `slurm_restart_count`. Take the
+  final attempt: the folders with the highest `slurm_restart_count` of that job. The
+  same-job rule above then holds, because all of them share that restart count.
 - **Output:** `comparison.json` gains a `mode` field and a `sparsity` block with each
   side's settings per benchmark. Other keys are unchanged. In sparsity mode the
   `original` columns are the reference and the `draft` columns the candidate.
@@ -403,6 +414,116 @@ and it labels no divergence. Draft-only arms (`draft_retention` below 1.0 with
 For a sparsity-mode comparison, `--original-run` is the reference and `--draft-run`
 the candidate, and both must share one method; the "ar" and "vispec" labels in the
 output then mean reference and candidate.
+
+The refusal fails closed (Week 3 on). `kv_retention` comes from each benchmark's
+`runtime.json` `generation_args`, where null or absent means no eviction. When a run has
+no `runtime.json`, or an answer file has none beside it, the tool also reads
+`kv_retention` from the run's `metadata.txt` (`none` means no eviction). When neither
+source gives a value (no `metadata.txt`, or no `kv_retention` key in it, as in a 02 or 03
+reference) or the value is not a number, the run is refused as well, because its eviction
+setting is unknown.
+
+### Offset check (`offset_check`)
+
+`diagnose_divergence` cannot check an eviction arm, so `offset_check` is the only oracle
+for large `kv_offset` values. Greedy ViSpec commits only tokens that the target itself
+picks in tree verification, so an autoregressive run and a ViSpec run with the same
+target-side eviction must return the same tokens, whatever the draft proposes. Draft-side
+pruning changes only the proposals, so the agreement must also hold in a combined arm. In
+bf16 a different kernel shape can flip a near-tied argmax. In fp32 those flips go away
+(Week 2: 5/5 at 0.5 spatial), so an fp32 mismatch points at the cache bookkeeping: the
+offset, the decode positions or the kept rows. The Week 2 fp32 runs had TF32 off for matrix
+multiplications but on for cuDNN (the vision patch embedding), so they were not fully
+TF32-free. The current script turns both off, and its output records both flags.
+
+```bash
+python -m vispec.evaluation.offset_check --kv-retention 0.25 --kv-policy spatial \
+  [--draft-retention 0.25 --draft-policy spatial] --num-samples 5 --dtype float32 \
+  --output-dir <new_dir>
+```
+
+It loads one `SpecModel` with `--kv-layout compact` in `--dtype` (long TextVQA by
+default) and runs `autoregressive_generate` and `specgenerate` on each sample. It writes
+`offset_check.json` and `offset_check.md` to the new folder. Per question they record exact
+agreement of the raw output IDs through EOS, the first differing zero-based index when the
+IDs differ, the eviction counts of both runs (`kv_counts_match`), `kv_offset` and the
+draft-pruning counts. The exit code is 0 only when every question agrees and both methods
+report the same eviction counts. The fp32 weights of Qwen2.5-VL-3B take about 14 GiB
+(twice the 7.0 GiB of bf16 checkpoint), plus the draft and activations, so the check fits
+one A6000.
+
+## Sweep table (Week 3)
+
+`vispec/evaluation/sweep_table.py` reads the saved reports of many runs and writes one table per
+(prompt style, Slurm job) to a new folder (`sweep.md`, `sweep.csv`, `sweep.json`). It loads no
+models.
+
+```bash
+python -m vispec.evaluation.sweep_table --run-dirs <run>... --output-dir experiment/sweeps/<UTC>_<label>
+```
+
+- Each run uses its newest `reports/*/summary.json`. A run that did not finish (`exit_code` not 0,
+  or no report) is listed as skipped. Two finished folders for one arm raise `ValueError`.
+- Inside a group every run must share the GPU UUID (`device.txt` and the report runtime), the
+  allocation, the prompt fingerprints, the Slurm job and restart count, and the model settings.
+  Otherwise the tool raises. Ratios never cross groups.
+- Roles: the autoregressive reference is `method=autoregressive` with no sparsity settings, the
+  ViSpec reference is `vispec_speculative` with none. Autoregressive eviction arms are arms. The
+  same-policy 1.0 arm has the same method, sweep and policy at retention 1.0.
+- The direction is in the column name. `speedup_vs_ar`, `latency_speedup_vs_vispec_ref` and
+  `latency_speedup_vs_samepolicy_1_0` are reference latency over arm latency (above 1 means the arm
+  is faster). `decode_peak_arm_over_samepolicy_1_0` and `live_kv_arm_over_samepolicy_1_0` are arm
+  over reference memory (above 1 means more memory). `sweep.json` repeats this in `column_notes`.
+- When an arm and a reference cover different samples, the affected cells stay empty and the row's
+  `note` column and the Notes section name the reference and both counts.
+- Token and text agreement use the `compare_metrics` logic (`token_agreement`,
+  `answer_agreement_rates`). Agreement against the AR reference is computed by the tool, because
+  method mode refuses sparsity-arm-versus-AR pairs.
+- `post_compaction_peak_arm_over_samepolicy_1_0` is the arm's mean `post_compaction_peak_allocated_gib`
+  over the same-policy 1.0 arm's (above 1 means more memory). It follows the same sample-set rule
+  and note as the other `arm_over` columns, and is empty when either run lacks the field (Week 2).
+- `bertscore_f1` (reverse_summary only) is the mean BERTScore F1, 0-100.
+  `bertscore_f1_delta_vs_vispec_ref` is the arm's minus the ViSpec reference's, in points. Both are
+  empty for other benchmarks. BERTScore cuts each text at 512 word pieces, so it does not reflect later pages, and
+  the primary `quality` and `quality_delta_vs_vispec_ref` stay ROUGE-1 F1 for reverse_summary.
+- `kv_min_kept_per_image`, `kv_image_tokens`, `draft_min_kept_per_image` and the
+  `post_compaction_peak_allocated_gib` memory field are read when present. Week 2 runs lack them,
+  and their cells stay empty.
+
+## Trade-off plots (Week 5)
+
+`experiment/plot_tradeoffs.py` reads `sweep.json` files from `sweep_table` and draws the trade-off
+curves. It loads no models and recomputes no ratio.
+
+```bash
+python experiment/plot_tradeoffs.py --sweeps <sweep.json>... --output-dir experiment/sweeps/<UTC>_tradeoffs
+```
+
+- The output folder must be new (the script refuses an existing one). It holds one PNG and one SVG
+  per (benchmark, prompt style), and `figures.json`: the source `sweep.json` paths with sha256, the
+  command line, and every plotted point (figure, panel, series, budget label, x and y with their
+  column names, source file and row index).
+- Axes: x is the ratio column and y is the quality delta, so the ViSpec reference sits at (1, 0).
+  The quality axis is labelled per benchmark (VQA points, CIDEr-D x100, ROUGE-1 F1). It is the
+  `quality_delta_vs_vispec_ref` column.
+- Panels: (1) `latency_speedup_vs_vispec_ref`; (2) `live_kv_arm_over_samepolicy_1_0`;
+  (3) `post_compaction_peak_arm_over_samepolicy_1_0`; (4) `speedup_vs_ar`. Each (job, method,
+  sweep, policy) is one series, and each point is labelled with its retention budget (`kv x/dr y`
+  for combined arms). Stars mark the ViSpec and AR references.
+- Ratio directions are those of the column names, never inverted. `*_speedup_vs_*` is reference
+  latency over arm latency (above 1 means faster). `*_arm_over_*` is arm over reference memory
+  (above 1 means more memory). Axis labels state this.
+- A panel with no value shows "no data". Week 2 tables have no post-compaction field, so panel 3
+  stays empty for them. The script reads `post_compaction_peak_arm_over_samepolicy_1_0` from the
+  table and does not divide anything itself.
+- Groups: every ratio was computed inside one (prompt style, Slurm job) group. A series always
+  belongs to one group and its legend names the job when a figure holds several. A request to put
+  rows of two groups into one series raises `ValueError`, as does reading the same row from two
+  files. The three long-style Week 3 jobs therefore appear as separate, job-labelled series on one
+  figure, never averaged.
+- `reverse_summary`: the four panels use ROUGE-1 F1. BERTScore cuts each text at 512 word pieces and
+  does not reflect later pages, so it only gets a fifth, separately labelled panel. That panel reads
+  `bertscore_f1_delta_vs_vispec_ref`.
 
 ## Qwen experiments (02 and 03)
 
@@ -469,19 +590,77 @@ buffer. The transient is most visible for the autoregressive arm, whose decode p
 then set by compaction and not by decoding. `decode_time` also includes compaction and
 selection of the kept positions in these arms.
 
+From Week 3 on, the evaluator also splits the decode phase at the compaction. Right after
+the compaction has released the prefill-sized buffer, and before decoding goes on, it keeps
+each device's peak so far and resets the peak counters (`on_kv_compacted`, then
+`GenerationMeasurement.mark_compaction`). The per-device field
+`post_compaction_peak_allocated_bytes` is the allocator peak from that reset to the end of
+the call. It measures steady-state decoding with the compacted buffer, without the
+transient, so it shows what eviction saves during decoding. The peak kept before the reset
+is folded back in at finish. `decode_peak_allocated_bytes` therefore keeps its Week 2
+meaning, the peak of the whole decode phase including the transient, and Week 2 and Week 3
+decode peaks stay comparable. `peak_allocated_bytes` and `peak_reserved_bytes` stay
+whole-call peaks for the same reason. The post-compaction peak is never above the decode
+peak, because its window is part of the decode phase.
+
+`post_compaction_peak_allocated_bytes` appears in every compact-layout record, including
+the no-flag compact references and the 1.0 arms, because each of them compacts. A
+reference and an arm then have the same field, so it can be compared between them.
+Fixed-layout records never compact and do not have the field, so they are unchanged.
+Records written before Week 3 do not have it either. `report_metrics` reports it as
+`post_compaction_peak_allocated_gib` in the `memory` block, over the turns that have it.
+
+Memory ratios stay valid under truncation. The decode buffer is sized from the kept prompt
+plus `max_new_tokens` plus slack before the first decode step, so a turn that stops at the
+1,024-token cap fills that buffer but cannot grow it. The decode and post-compaction peaks
+therefore depend on the kept prompt, not on where the answer stopped. Only the per-layer
+attention temporaries grow with the cache length: by shape arithmetic, the repeated K and V
+heads take about 8 KiB per cached token, so about 8 MiB over a full 1,024-token answer. A memory ratio between two
+arms stays a measurement of eviction even when one arm truncates a turn and the other does
+not. `kv_live_mib` and `kv_tokens` do grow with the output length (they include the output
+tokens), so read a live-KV ratio together with the output lengths. Latency and TPOT ratios
+are the ones that truncation confounds.
+
+The `spatial` policy (both sides) is a 1-D raster stride over each image's merged tokens,
+not a 2-D pool. In each image span it keeps `round(linspace(0, n - 1, k))`, so the kept
+tokens are evenly spaced in row-major order. At 0.5 it keeps every other token in raster
+order: every other column when the merged grid width is even, and a checkerboard when it
+is odd. Rounding absorbs the remainder in a few steps that are one token longer, which
+shifts the pattern by a column there. At 0.5 the count of one such step per image holds for every
+even number of image tokens n (checked for n = 6 to 798). At 0.25 the count of three holds when n
+is divisible by 4 (checked for n = 20 to 796). For other n the count differs: at 0.5, n = 101 has
+two and n = 103 has none, and at 0.25, n = 102 has one and n = 103 has two. This is the Week 2
+selector. Week 3 keeps it unchanged so that Week 2 and Week 3 arms stay comparable.
+
 Per-question fields written by the eviction and draft-pruning arms (all counts of
 tokens, no units beyond tokens; absent in other runs):
 
 - `kv_prompt_tokens`: prompt tokens in the target KV cache before eviction (the input
   length, text and image).
 - `kv_kept_prompt_tokens`: prompt tokens still in the cache after eviction.
-- `kv_evicted_tokens`: `kv_prompt_tokens` - `kv_kept_prompt_tokens`.
-- `kv_score_window`: prompt tokens after the last image token. The attention policy
-  scores image tokens by the attention these tokens pay them; 0 without image tokens.
+- `kv_evicted_tokens`: `kv_prompt_tokens` - `kv_kept_prompt_tokens`. This is the
+  `kv_offset` of ViSpec decoding: the token count minus the physical cache length.
+- `kv_score_window`: prompt tokens after the last image token (the chat-template tail);
+  0 without image tokens. It is recorded for both policies, but only the `attention`
+  policy uses it: that policy scores image tokens by the prefill attention these tokens
+  pay them. The `spatial` policy ignores it.
+- `kv_image_tokens` (Week 3 on): image tokens in the prompt before eviction, summed over
+  the prompt's images.
+- `kv_min_kept_per_image` (Week 3 on): the fewest tokens kept in the target cache for any
+  one image, counted from the actual kept positions in each image span. Every image keeps
+  at least one token. Null for a prompt without image tokens.
 - `draft_image_tokens`: image tokens the draft's image adaptor received, summed over
   the prompt's images, before draft-side pruning.
 - `draft_kept_image_tokens`: image tokens the adaptor saw after pruning, summed the
   same way. Equal to `draft_image_tokens` at retention 1.0.
+- `draft_min_kept_per_image` (Week 3 on): the fewest tokens the adaptor saw for any one
+  image, counted from the rows it actually received. Null when no image was adapted.
+
+Records without the eviction or draft flags carry none of these fields. Their other fields
+are unchanged, except that compact-layout records gain `post_compaction_peak_allocated_bytes`
+(see above). Two guards fail closed: `select_in_span` raises `ValueError` unless
+`1 <= k <= n`, and the draft's attention scores raise `RuntimeError` when any score is not
+finite. The target's attention scores are checked against their expected sum.
 
 ### Decode time
 
@@ -513,3 +692,158 @@ revision pinned in `.preparation/assets_qwen.json` when the checkpoint is a loca
 folder, while the Week 1 runtime files hold `null`. A new run therefore cannot be
 paired with a Week 1 run, which the GPU and allocation checks would usually
 prevent anyway.
+
+## Re:Verse window summaries (`reverse_summary`, Week 4)
+
+`reverse_summary` tests the sparsity methods on long multi-image prompts. Each prompt is a
+window of 5 or 6 consecutive manga pages from volume 1 of Re:Verse+, and the model summarises
+the story. Each summary is scored against the hand-made light-novel-style text of the same
+pages. `load_samples`, `build_messages` and `build_inputs` in
+`vispec/evaluation/benchmarks.py` build it; `evaluate`, `offset_check`, `profile_generation`
+and `diagnose_divergence` accept `--benchmark reverse_summary` (prompt style `long` only).
+
+### Data and terms
+
+- The data is a frozen local copy of Re:Verse+ (`FREEZE.json` 2026-10-16), reached
+  through the git-ignored symlink `bench_data/reverse_plus`. `prepare.sh --suite reverse`
+  checks it and writes `.preparation/assets_reverse.json`; the loader refuses to run without
+  that file, and when the copy's `FREEZE.json` digest differs from the prepared one.
+- The dataset directory is read-only. The code only opens its files for reading.
+- Terms (`TERMS.txt`): non-commercial research use only, and no redistribution. Credit Yen
+  Press, the official English publisher of Re:Zero. Cite the data as a re-aligned derivative
+  of Re:Verse (arXiv:2508.08508), not as the published Re:Verse text.
+- No page image or page text is committed or copied into the repository. Run folders and
+  reports keep only each window's page numbers and a SHA-256 digest of its reference (see
+  "Run files" below).
+
+### Windows
+
+- Images are `volume_1/images/chapter_<n>/NNN.jpg` and page texts
+  `volume_1/text/chapter_<n>/NNN.txt` (`NNN` is 1-based). The `chapter_<n>.txt` aggregates are
+  not used.
+- For every chapter, the loader asserts that the image pages and the text pages match one to
+  one and are exactly `1..N`, with `N` the prepared count. All 11 chapters pass (308 pages).
+- A chapter of `n` pages is split into `ceil(n/6)` non-overlapping consecutive windows whose
+  sizes differ by at most 1, with the larger windows first. This gives 55 windows: 33 of 6
+  pages and 22 of 5 pages.
+
+| Chapter | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Pages | 24 | 29 | 18 | 31 | 41 | 26 | 28 | 29 | 34 | 22 | 26 |
+| Window sizes | 6,6,6,6 | 6,6,6,6,5 | 6,6,6 | 6,5,5,5,5,5 | 6×6,5 | 6,5,5,5,5 | 6,6,6,5,5 | 6,6,6,6,5 | 6,6,6,6,5,5 | 6,6,5,5 | 6,5,5,5,5 |
+
+- The question ID is `v1_ch{n:02d}_p{first:03d}-{last:03d}`, for example `v1_ch05_p019-024`.
+- `--num-samples` is a maximum here: the first `min(num_samples, 55)` windows in chapter
+  order. The runners' default of 100 gives all 55, and the manifest records 55 expected
+  questions, so a report over 55 answers is complete.
+
+### References
+
+A window's reference is its pages' texts joined in page order with newlines. Each page text is
+read as UTF-8 with any BOM removed. The `<D>…</D>` (speech) and `<T>…</T>` (thought) tags are
+removed and their inner text is kept. Any other markup, or an empty page, raises. Volume 1
+references have 296 to 2,069 words per window (median 949).
+
+### Prompt
+
+One style (`long`), the same in every arm. The pages are given as images only, with no OCR,
+in reading order, followed by the instruction "Summarize the story told in these manga pages,
+in order." The system turn is the one the other Qwen benchmarks use. The decoded prompt of
+`v1_ch01_p001-006`, with image pads abbreviated:
+
+```
+<|im_start|>system
+A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.<|im_end|>
+<|im_start|>user
+<|vision_start|><|image_pad|>x1148<|vision_end|> ... (6 pages) ...<|vision_start|><|image_pad|>x1148<|vision_end|>Summarize the story told in these manga pages, in order.<|im_end|>
+<|im_start|>assistant
+```
+
+The single-image benchmarks keep their own layout (text, then the image). Their inputs are
+byte-identical to those before this benchmark was added.
+
+### Positions and the pixel cap
+
+The ViSpec draft's RoPE table has 8,192 rows (`max_position_embeddings` of the released
+draft). The draft indexes it with the full, uncompressed token count
+(`cnets_ours.Model.topK_genrate`, `len_posi = input_ids.shape[1]`), and that index keeps
+growing while the answer is generated. So a window's prompt must leave room for the whole
+output:
+
+```
+prompt tokens + max_new_tokens + depth + 1 <= 8192, so prompt tokens <= 7,164 at 1,024 new tokens and depth 3
+```
+
+- The loader computes each window's prompt length exactly with the real processor on CPU:
+  the image tokens from `image_grid_thw` (checked against the image-pad count in
+  `input_ids`) plus the text tokens. It raises when a window exceeds the budget, and never
+  truncates. The evaluator, `offset_check` and `profile_generation` compute the budget from
+  their own `--max-new-token`, `--depth` and the draft config; 7,164 is the default.
+- At the Week 1 cap of `max_pixels = 1280*28*28` (1,003,520), windows are 6,155 / 7,375 / 7,433
+  tokens (min / median / max). Six-page windows exceed the budget, so a 6-page summary could
+  run the draft past its table during generation.
+- `max_pixels` is therefore lowered once, uniformly, for `reverse_summary` only, to
+  `1200*28*28` (940,800). `min_pixels` stays `256*28*28`. This is the largest round cap that
+  fits: `1210*28*28` still gives a 7,201-token window. Windows are now 5,805 / 6,955 / 6,967
+  tokens (min / median / max). The largest window (`v1_ch01_p019-024`) is 197 tokens under
+  the budget. A typical 900×1300 page is 82×56 patches, which is 1,148 tokens (1,218 at the
+  Week 1 cap). The window sizes stay 5 to 6 pages.
+- TextVQA and COCO keep the Week 1 limits.
+
+The evaluator's manifest (`<answer>.manifest.json`) records, per window, the chapter, pages,
+`prompt_positions`, `image_tokens` per page, `text_tokens` and `reference_sha256`. At the top
+level it records the window rule, the dataset freeze digest, the pixel limits, the budget and
+the min, median and max positions.
+
+### Scorers
+
+`Scorer.score_corpus("reverse_summary", ...)` returns `rouge1_f1` and `bertscore_f1`, both
+0-100 means over windows, with per-window 0-1 fractions in `per_sample`. Each metric becomes
+pending on its own, with a reason, when its package, weights or inputs are missing. Scoring
+never aborts a report.
+
+- **ROUGE-1 F1:** `rouge-score==0.1.2`, `rouge1` with the Porter stemmer, reference as target
+  and summary as prediction. This is each window's `score`, so `quality.score_percent`,
+  `sweep_table` quality and the `compare_metrics` quality delta are ROUGE-1 F1.
+- **BERTScore F1:** `bert-score==0.3.13` with the local `models/bert-base-uncased` (revision
+  `86b5e0934494bd15c9632b12f734a8a67f723594`), layer 9, no idf and no baseline rescaling.
+  The weights' SHA-256 must equal the one in `.preparation/assets_reverse.json`, or BERTScore
+  stays pending. The model loads offline from the local folder (`HF_HUB_OFFLINE=1` and
+  `TRANSFORMERS_OFFLINE=1` are set before loading). Without rescaling, unrelated English text
+  scores about 35 (bert-score's own layer-9 baseline is 0.352).
+- **Truncation:** bert-base-uncased reads at most 512 word pieces, and bert-score truncates
+  longer texts to their first 510 pieces plus `[CLS]` and `[SEP]`. Fifty of the 55 references
+  are longer (up to 2,723 pieces), so BERTScore compares a summary with the opening of its
+  reference only. Long summaries are truncated the same way. The report records
+  `truncated_references` and `truncated_predictions`. ROUGE-1 uses the full texts.
+- **Device:** `report_metrics --bertscore-device` (or `$BERTSCORE_DEVICE`) takes `auto`,
+  `cpu`, `cuda` or `cuda:N`. `auto`, the default, is CUDA when a GPU is visible and CPU
+  otherwise. The device is recorded but kept out of `score_protocol`, so CPU and GPU reports
+  stay comparable; their BERTScore values can differ in the last float digits. On the CPU
+  node (24 torch threads), scoring 55 windows with long candidates took 24.7 s, of which
+  19.9 s was the BERTScore call including the model load.
+- `--bert-model` (or `$BERTSCORE_MODEL`) points at another local folder; its weights must
+  still match the prepared digest.
+
+### Run files and reports
+
+- Answer records keep `reference_answers` empty for this benchmark, and the manifest keeps
+  only the digests. `report_metrics` reads the references again from
+  `<--bench-dir>/reverse_plus` (default `<repo>/bench_data`) and checks each one against the
+  recorded digest. A missing dataset or a different digest makes both scores pending.
+- `summary.json` gets a `reverse_summary` entry only when the run evaluated it, so reports
+  of TextVQA and COCO runs are unchanged. The entry's `quality` adds `primary`
+  (`rouge1_f1`), `rouge1_f1`, `bertscore_f1`, `bertscore_scored` and
+  `bertscore_pending_reason`. The top-level `reverse_summary_scores` block records both
+  methods, the BERT folder, revision, weights digest, layer, device, seconds and the
+  truncation counts. Each scored row in `samples.jsonl` carries `score` (ROUGE-1 F1) and
+  `bertscore_f1`, both 0-1. The report also writes `reverse_summary_predictions.json`.
+
+```bash
+python -m vispec.evaluation.evaluate --method vispec --benchmark reverse_summary --prompt-style long \
+  --base-model-path models/Qwen2.5-VL-3B-Instruct --spec-model-path models/ViSpec-Qwen2.5-VL-3B-Instruct \
+  --data-dir bench_data --kv-layout compact --answer-file <new path> --model-id test
+python -m vispec.evaluation.report_metrics --run-dir <run> --bench-dir bench_data [--bertscore-device cpu]
+python -m vispec.evaluation.offset_check --benchmark reverse_summary --kv-retention 1.0 \
+  --kv-policy spatial --num-samples 3 --dtype float32 --output-dir <new_dir>
+```

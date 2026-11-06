@@ -88,8 +88,11 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [02: Qwen autoregressive](02_qwen_autoregressive/README.md) | Qwen2.5-VL-3B reference decoding | Week 1 measured, `long` and `short`, 400/400 completed |
 | [03: Qwen ViSpec](03_qwen_vispec/README.md)             | Qwen2.5-VL-3B speculative decoding | Week 1 measured, 400/400 completed. Output equivalence unresolved (all divergences are bf16 near-ties) |
 | [04: Qwen decode profile](04_qwen_decode_profile/README.md) | Where AR and ViSpec decode time goes (`torch.profiler`) | Measured (job 393060), `long`, 3 samples per benchmark. Decode is inferred to be host-bound |
-| [05: Qwen draft pruning](05_qwen_draft_pruning/README.md) | ViSpec with a pruned draft image-adaptor input, vs the same arm at 100% | Week 2 measured (jobs 393336, 393337), retention 1.0 and 0.5, 100/100 per benchmark. Identity gate passed. Draft-only diagnosis failed for `long` 0.5:attention (1 unexplained case). 0.25, 0.75 and combined arms pending |
-| [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 measured (jobs 393336, 393337), retention 1.0 and 0.5, 100/100 per benchmark. Identity gate and bookkeeping check passed. 0.25, 0.75 and combined arms pending |
+| [05: Qwen draft pruning](05_qwen_draft_pruning/README.md) | ViSpec with a pruned draft image-adaptor input, vs the same arm at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398884, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Acceptance and latency stay at the 1.0 level. Week 2's one unexplained case was traced by 07 (bf16 noise). Diagnosis of the 10 Week 3 draft-only arms (job 402165): 9 pass with every case a near-tie, `long` 0.5:attention fails on the known case (07) |
+| [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398883, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Live KV (arithmetic) falls with the budget, decode peak moves about 0.3%. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at kv 0.25 and 0.75 spatial |
+| [07: Qwen decode drift](07_qwen_decode_drift/README.md) | Fork cached AR decode vs stock HF cached and full-recompute decoding (Week 2 case 35537:162) | Measured (job 398844), `long` TextVQA, 100 questions. Fork and stock HF greedy agree on 19/100, and 80 of 81 first mismatches are bf16 near-ties. At 35537:162 the fork ties 13 and 95518 exactly, while stock incremental decoding prefers 95518 by 0.375. **Both plan stop conditions hold**, so the stop rule fired on one exact-tie case; judged bf16 implementation noise (known limitation). The mechanism is not isolated |
+| [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Week 3 measured (jobs 398885, 398923), diagonal arms, 100/100 per benchmark. Identity gate passed. Combined arms track the matching 06 arm. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at combined 0.25 spatial |
+| [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (about 7 to 8k tokens), `long` style, same-job references | Pending, no run yet |
 
 Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
 Qwen2.5-VL-3B-Instruct on TextVQA and COCO Captions (100 samples each) in two prompt styles,
@@ -206,17 +209,135 @@ What the measurements show:
   the 10.0-point limit (18 against 28); the rule was "more than 10".
 - **Draft pruning (05)** cost acceptance at most slightly and did not move latency, as predicted. Exact agreement
   is 100/100 in `short` and 48 to 77 of 100 in `long`. The draft-only diagnosis **failed** for `long` 0.5:attention
-  (79 near-ties and 1 unexplained case); `long` 0.5:spatial passed (67 of 67). The controller's evidence points to
-  the shared cached decode and not to pruning, which is an inference, and the underlying drift is open.
+  (79 near-ties and 1 unexplained case); `long` 0.5:spatial passed (67 of 67). The evidence pointed to
+  the shared cached decode and not to pruning. Experiment 07 later traced the case ([07 README](07_qwen_decode_drift/README.md)):
+  at that token the fork's bf16 logits tie exactly, and it was judged bf16 implementation noise, a known limitation.
 - **KV eviction (06)** cut live KV to 0.65 to 0.67 (`long`) and 0.53 to 0.58 (`short`) of the 1.0 arm and moved the
   decode peak by about 0.2% or less. Latency changed little per token, but long TextVQA end-to-end latency rose as
   outputs got longer. Long-style outputs diverge heavily from the 1.0 arm. In `short`, the spatial arms lost 1.6 to 2.6 VQA points on TextVQA and 2.61 to 4.91 CIDEr-D on COCO. The
   ViSpec attention arm lost 8.85 CIDEr-D on COCO and nothing on TextVQA.
-- **Pending (Week 3):** retention 0.25 and 0.75, the combined draft-plus-KV arms, and the fp32 confirmation of
-  the draft-arm divergences.
+- **Week 3** swept retention 0.25 and 0.75 and the combined arms; see the next section. The Week 2
+  fp32 confirmation of the draft-arm divergences became job 402165, which diagnosed only the Week 3 draft-only arms with fp32 on the first 50 cases per arm, as in Week 2 (the extension beyond 50 cases was not carried out). Its results are below.
 
 Full tables, memory, hardware and the predictions scored against the measurements are in the
 [05 README](05_qwen_draft_pruning/README.md#results) and [06 README](06_qwen_kv_eviction/README.md#results).
+
+### Qwen Week 3 results (retention sweeps: 05, 06 and 08)
+
+Week 3 swept the retention budgets for draft pruning (05), target KV eviction (06) and both together (08) on
+Qwen2.5-VL-3B, one run per arm and style, 100 samples per benchmark, at commit `c3a36ac25f95` with a clean
+tree. Every run exited 0. **The `long` style ran budgets 1.0, 0.5 and 0.25. The 0.75 budget was dropped from `long`
+to save GPU time. The `short` style ran all four (1.0, 0.75, 0.5 and 0.25).** Both policies (`spatial`, `attention`)
+ran at every budget. Only ViSpec arms ran in Week 3, and each arm is compared with the same method at retention 1.0
+and the same policy from the same job. Numbers come from the per-job sweep tables
+([long KV](sweeps/20261105T192610Z_week3_long_kv_job398883/sweep.md),
+[long draft](sweeps/20261105T192610Z_week3_long_draft_job398884/sweep.md),
+[long combined](sweeps/20261105T192610Z_week3_long_combined_job398885/sweep.md) and
+[short, all experiments](sweeps/20261105T192610Z_week3_short_all_job398923/sweep.md)).
+
+**Speculative decoding first.** ViSpec against autoregressive (AR) decoding, from the references of each job:
+
+| Style | Job (experiments in it) | Benchmark | AR latency (s) | ViSpec latency (s) | ViSpec speedup vs AR | ViSpec accepted draft tokens per iteration | Exact agreement, ViSpec vs AR |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| long | 398883 (02, 03, 06) | TextVQA | 12.353 | 5.615 | 2.200 | 2.141 | 22/100 |
+| long | 398883 (02, 03, 06) | COCO Captions | 4.544 | 1.981 | 2.294 | 2.284 | 28/100 |
+| long | 398884 (02, 03, 05) | TextVQA | 12.485 | 5.700 | 2.190 | 2.141 | 22/100 |
+| long | 398884 (02, 03, 05) | COCO Captions | 4.697 | 2.039 | 2.304 | 2.284 | 28/100 |
+| long | 398885 (02, 03, 08) | TextVQA | 12.185 | 5.647 | 2.158 | 2.141 | 22/100 |
+| long | 398885 (02, 03, 08) | COCO Captions | 4.584 | 1.980 | 2.315 | 2.284 | 28/100 |
+| short | 398923 (02, 03, 06, 05, 08) | TextVQA | 1.100 | 1.122 | 0.981 | 0.690 | 96/100 |
+| short | 398923 (02, 03, 06, 05, 08) | COCO Captions | 0.784 | 0.528 | 1.485 | 1.746 | 88/100 |
+
+In `long`, ViSpec is 2.158 to 2.315 times faster than AR, at 2.141 (TextVQA) and 2.284 (COCO) accepted draft tokens
+per iteration. In `short`, TextVQA shows no speedup (0.981): the answers are about 5 tokens, and TTFT is 0.940 s of
+the 1.122 s ViSpec latency. COCO still gains 1.485. The ViSpec and AR outputs differ in token IDs on `long` and
+nearly agree on `short`. In bf16 the batched tree verification and one-token decoding use different kernel shapes, so
+near-tied logits can flip; the Week 1 diagnosis found every divergence to be a near-tie. Long-style VQA accuracy and
+CIDEr-D are near zero because the answers are paragraphs, so `long` is judged by speed, acceptance, agreement and output
+length, and quality numbers come from `short`. The `short` quality is 71.0 (AR) and 70.0 (ViSpec) VQA accuracy on
+TextVQA and 121.40 and 119.68 CIDEr-D on COCO.
+
+**Hardware.** Every job ran on one `NVIDIA RTX A6000` (driver 615.71.09, node `c1-8`, Xeon Silver 4116, 1 GPU, 4 CPUs,
+22,528 MB, `preempt` partition, 4 h limit). The long KV job ran on a different card from the other three. Each job's
+device report is linked once below (every run folder has its own, listed in the [05](05_qwen_draft_pruning/README.md#week-3-hardware),
+[06](06_qwen_kv_eviction/README.md#week-3-hardware) and [08](08_qwen_combined_sparsity/README.md#week-3-hardware) READMEs).
+**Absolute times are compared only within a job, never across jobs.**
+
+| Style | Job (complete attempt) | GPU UUID | Device report |
+| --- | --- | --- | --- |
+| long, KV eviction | 398883 (restart 0, 2026-10-31) | `GPU-8d51152c-22f1-372d-aef5-063afee0d488` | [03 reference device.txt](03_qwen_vispec/runs/20261031T172630Z_c3a36ac25f95_long_Z1rgED/device.txt) |
+| long, draft pruning | 398884 (restart 2, 2026-11-04) | `GPU-eb032c66-7f3f-d1b6-96cf-c9db5600d457` | [03 reference device.txt](03_qwen_vispec/runs/20261104T004818Z_c3a36ac25f95_long_umvxvi/device.txt) |
+| long, combined | 398885 (restart 1, 2026-11-03) | `GPU-eb032c66-7f3f-d1b6-96cf-c9db5600d457` | [03 reference device.txt](03_qwen_vispec/runs/20261103T223313Z_c3a36ac25f95_long_K6xO4a/device.txt) |
+| short, all experiments | 398923 (restart 0, 2026-11-01) | `GPU-eb032c66-7f3f-d1b6-96cf-c9db5600d457` | [03 reference device.txt](03_qwen_vispec/runs/20261101T122530Z_c3a36ac25f95_short_ePf9XE/device.txt) |
+
+The links point at run folders that Git ignores; they are preserved on project storage and resolve only in a
+checkout that has them.
+
+**Sparsity second.** The retention effects, one row per experiment, style and benchmark. Ratios are arm over the
+same-policy 1.0 arm for memory and 1.0 arm over arm for latency (above 1 means the arm was faster), taken over
+the arms below 1.0. Live KV is arithmetic (`kv_tokens` times 36,864 bytes, output tokens included). The exact
+agreement column counts identical token IDs in bf16, so near-ties count as disagreement.
+
+| Style | Benchmark | Experiment (job) | Accepted draft tokens per iteration | Latency ratio vs same-policy 1.0 | Live KV ratio (arithmetic) | Decode peak ratio | Exact agreement with ViSpec reference (of 100) | Quality (TextVQA % or CIDEr-D x 100) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| long | TextVQA | 05 (398884) | ref 2.141; arms 2.129 to 2.145 | 0.992 to 1.037 | 0.995 to 1.003 | 1.000 | 40 to 56 | near zero (not meaningful) |
+| long | TextVQA | 06 (398883) | ref 2.141; arms 2.255 to 2.324 | 0.875 to 0.983 | 0.470 to 0.671 | 0.997 to 0.998 | 0 to 6 | near zero (not meaningful) |
+| long | TextVQA | 08 (398885) | ref 2.141; arms 2.265 to 2.356 | 0.902 to 0.986 | 0.467 to 0.673 | 0.997 to 0.998 | 0 to 7 | near zero (not meaningful) |
+| short | TextVQA | 05 (398923) | ref 0.690; arms 0.679 to 0.690 | 0.997 to 1.002 | 1.000 | 1.000 | 100 | ref 70.0; arms 70.0 |
+| short | TextVQA | 06 (398923) | ref 0.690; arms 0.696 to 0.983 | 0.955 to 1.002 | 0.298 to 0.766 | 0.997 to 0.999 | 69 to 96 | ref 70.0; arms 60.8 to 71.0 |
+| short | TextVQA | 08 (398923) | ref 0.690; arms 0.696 to 0.960 | 0.956 to 1.001 | 0.298 to 0.766 | 0.997 to 0.999 | 69 to 96 | ref 70.0; arms 60.8 to 71.0 |
+| long | COCO Captions | 05 (398884) | ref 2.284; arms 2.289 to 2.360 | 0.976 to 1.008 | 1.001 to 1.012 | 1.000 | 58 to 77 | near zero (not meaningful) |
+| long | COCO Captions | 06 (398883) | ref 2.284; arms 2.291 to 2.379 | 0.997 to 1.106 | 0.468 to 0.659 | 0.999 | 0 to 2 | near zero (not meaningful) |
+| long | COCO Captions | 08 (398885) | ref 2.284; arms 2.276 to 2.387 | 1.001 to 1.130 | 0.465 to 0.659 | 0.999 | 0 to 2 | near zero (not meaningful) |
+| short | COCO Captions | 05 (398923) | ref 1.746; arms 1.731 to 1.751 | 0.991 to 1.001 | 1.000 | 1.000 | 99 to 100 | ref 119.68; arms 119.68 to 119.93 |
+| short | COCO Captions | 06 (398923) | ref 1.746; arms 1.727 to 1.790 | 0.985 to 1.034 | 0.371 to 0.791 | 0.999 to 1.000 | 10 to 77 | ref 119.68; arms 104.98 to 122.86 |
+| short | COCO Captions | 08 (398923) | ref 1.746; arms 1.727 to 1.796 | 0.988 to 1.027 | 0.371 to 0.791 | 0.999 to 1.000 | 10 to 77 | ref 119.68; arms 104.98 to 122.86 |
+
+- **Draft pruning (05)** left acceptance and latency at the 1.0 level and changed no memory. In `long` the outputs
+  diverge from the reference on 23 to 60 of 100 samples (40 to 77 agree), and in `short` on at most 1.
+- **KV eviction (06)** cut live KV (arithmetic) with the budget and moved the decode peak by about 0.3%. TTFT did not change.
+  End-to-end latency followed output length: long TextVQA answers got longer under eviction (277.70 tokens at 1.0, 300.60 to 325.93
+  at 0.5 and 0.25) and long COCO answers shorter at 0.25 (100.15 and 107.38 against 109.89).
+- **Both (08)** track the matching 06 arm: live KV (arithmetic) within 0.005, agreement within 1 of 100, `short` quality within
+  0.58 CIDEr-D points.
+- **Quality (`short`).** At 0.25, the spatial policy lost 9.2 VQA points and 14.70 CIDEr-D against the reference,
+  and the attention policy lost none at 0.25 (within the noise of 100 samples). At 0.5 the attention policy lost 8.85 CIDEr-D on COCO in 06.
+
+**Why the latency effects are small.** This is the explanation for the small effects, not a new method. On this
+model the KV cache costs 36,864 bytes per token (36 layers x 2 x 2 KV heads x 128 x 2 bytes), while every decode
+step reads about 5.75 GiB of language-model weights (measured from the checkpoint files; the 1.25 GiB vision encoder is not read in decode steps). The cache is therefore 0.6% of the per-step weight read at 1,000 tokens and 4.2% at
+7,000 tokens, and the two are equal only at about 167,000 tokens. Decode is also host-bound (the Week 2 profile,
+experiment 04: the GPU is busy 36 to 50% of each step), and eviction runs after prefill, so it cannot cut time to
+first token. The host-bound reading is an inference from the profile, not tested by these runs.
+
+**Acceptance rises under eviction (an inference about the cause).** Accepted draft tokens per iteration rose with
+eviction. In the long KV job TextVQA went from 2.141 to 2.255 and 2.265 at 0.5 and 2.286 and 2.324 at 0.25, and COCO from
+2.284 up to 2.379. Decode time per iteration stayed at 52.1 to 54.3 ms in every ViSpec run of that job, so we infer
+that part of the small per-token gain comes from the rise and not from cheaper steps. Part of the TextVQA rise comes
+from more answers at the token cap: over the 93 questions that are below the cap in the reference and the arm the rise
+is +0.02 to +0.10, against +0.11 to +0.18 on the full sample. The cause of the rise is not tested.
+
+**Which Week 2 predictions held.** Draft pruning costs acceptance at most slightly: held. Pruning barely moves
+latency: held. The target still verifies every draft, so greedy output matches up to bf16 near-ties: held for `short`,
+held for `long` apart from one known case, because the diagnosis finds the `long` divergences to be bf16 near-ties. Eviction lowers live KV: held. Eviction lowers the
+decode peak: partly held (about 0.3%). Eviction barely moves latency: held for TTFT and per-iteration time, partly
+end to end. Eviction can change the output: held, strongly. Combined arms track the 06 arm: held. Each README scores
+these against the numbers.
+
+**Diagnosis and exactness check (GPU job 402165, node `c4-3`, card `GPU-786d8051-7e60-0cbf-22b0-defdaae84a18`, a check and
+not a timed result).** The identity gate passed on all 12 1.0 arms (100/100 on both benchmarks). The divergence diagnosis ran
+on the 10 draft-only arms (`short` 0.75, 0.5 and 0.25 and `long` 0.5 and 0.25, both policies). Nine pass with every case a
+bf16 near-tie: `long` has 102 cases for 0.25:attention, 72 for 0.25:spatial and 67 for 0.5:spatial, and `short` has 1 case each
+for 0.25:attention and 0.75:spatial (the other four `short` arms have none). `long` 0.5:attention fails with 79 near-ties and
+1 unexplained case of 80, the known TextVQA question 35537 at output index 162 (stock bf16 margin 0.625, fp32 0.724). Experiment
+07 traced it to an exact tie in the fork's own cached bf16 logits and it was judged bf16 implementation noise, a known
+limitation; the threshold stays at 0.5 logits. fp32 covered the first 50 cases per arm, so 52, 22, 30 and 17 cases (`long`
+0.25:attention, 0.25:spatial, 0.5:attention, 0.5:spatial) are classified by bf16 margin only. The fp32 offset oracle, on 5
+`long` TextVQA questions per setting, found AR equal to ViSpec on 5 of 5 at kv 0.25 spatial, kv 0.75 spatial and combined 0.25
+spatial, with matching KV counts and kv_offset from 231 to 944. Full tables, ratios
+that run against the trend, memory and the predictions are in the [05](05_qwen_draft_pruning/README.md#week-3-results-retention-sweep),
+[06](06_qwen_kv_eviction/README.md#week-3-results-retention-sweep) and
+[08](08_qwen_combined_sparsity/README.md#week-3-results-retention-sweep) READMEs.
 
 ### LLaVA run conditions (00 and 01)
 

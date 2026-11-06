@@ -31,6 +31,16 @@ QWEN_MODELS = {
         "ViSpec-Qwen2.5-VL-3B-Instruct",
     ),
 }
+REVERSE_DEFAULT_DIR = "/home/aeternum/Research/Comic/M3/reverse_plus"
+BERT_REPO = "bert-base-uncased"
+BERT_REVISION = "86b5e0934494bd15c9632b12f734a8a67f723594"
+BERT_FILES = [
+    "config.json",
+    "vocab.txt",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "model.safetensors",
+]
 COCO_REPO = "yerevann/coco-karpathy"
 COCO_FILE = "data/test-00000-of-00001.parquet"
 SOURCES = {
@@ -575,6 +585,169 @@ def run_qwen(root, check_only):
     print("Qwen preparation complete. All assets are under:", root, flush=True)
 
 
+def reverse_dir():
+    return Path(os.environ.get("REVERSE_PLUS_DIR") or REVERSE_DEFAULT_DIR)
+
+
+def validate_reverse(dataset):
+    """Hash volume 1 pages against FREEZE_manifest.tsv. Opens dataset files read-only."""
+    if not dataset.is_dir():
+        raise ValueError(f"Re:Verse+ directory not found: {dataset}")
+    freeze = json.loads((dataset / "FREEZE.json").read_text())
+    expected = {}
+    for line in (dataset / "FREEZE_manifest.tsv").read_text().splitlines():
+        if line.strip():
+            relative, digest = line.split("\t")
+            expected[relative] = digest
+    image_pattern = re.compile(r"volume_1/images/chapter_(\d+)/(\d+)\.jpg")
+    text_pattern = re.compile(r"volume_1/text/chapter_(\d+)/(\d+)\.txt")
+    pages = {"images": {}, "text": {}}
+    hashed = 0
+    for relative, digest in sorted(expected.items()):
+        if relative.startswith("volume_1/images/"):
+            kind, match = "images", image_pattern.fullmatch(relative)
+        elif relative.startswith("volume_1/text/") and text_pattern.fullmatch(relative):
+            kind, match = "text", text_pattern.fullmatch(relative)
+        else:
+            continue  # chapter_<n>.txt aggregates and non-page files are not used
+        if match is None:
+            raise ValueError(f"Unexpected volume 1 file in manifest: {relative}")
+        path = dataset / relative
+        if not path.is_file():
+            raise ValueError(f"Missing Re:Verse+ file: {path}")
+        if file_sha256(path) != digest:
+            raise ValueError(f"SHA-256 mismatch against FREEZE_manifest.tsv: {relative}")
+        pages[kind].setdefault(int(match[1]), set()).add(int(match[2]))
+        hashed += 1
+    if set(pages["images"]) != set(pages["text"]) or not pages["images"]:
+        raise ValueError("Image and text chapters differ or are empty")
+    chapters = {}
+    for chapter in sorted(pages["images"]):
+        images, texts = pages["images"][chapter], pages["text"][chapter]
+        if images != texts or images != set(range(1, len(images) + 1)):
+            raise ValueError(
+                f"Chapter {chapter}: image/text pages differ or are not 1..N"
+            )
+        chapters[str(chapter)] = {"pages": len(images), "texts": len(texts)}
+    # Every page file on disk must also be in the manifest (no unhashed extras).
+    for kind, folder, suffix in (("images", "images", "jpg"), ("text", "text", "txt")):
+        for chapter, numbers in pages[kind].items():
+            on_disk = {
+                int(item.stem)
+                for item in (dataset / f"volume_1/{folder}/chapter_{chapter}").glob(
+                    f"[0-9]*.{suffix}"
+                )
+            }
+            if on_disk != numbers:
+                raise ValueError(f"Chapter {chapter} {kind}: files on disk differ from manifest")
+    return {
+        "freeze_sha256": freeze["sha256"],
+        "freeze_date": freeze["date"],
+        "terms_sha256": file_sha256(dataset / "TERMS.txt"),
+        "files_hashed": hashed,
+        "chapters": chapters,
+        "total_pages": sum(item["pages"] for item in chapters.values()),
+    }
+
+
+def link_reverse(root, dataset):
+    """Create bench_data/reverse_plus only if absent or already the same target."""
+    link = root / "bench_data/reverse_plus"
+    target = dataset.resolve()
+    if link.is_symlink() or link.exists():
+        if not link.is_symlink() or link.resolve() != target:
+            raise ValueError(f"{link} exists and does not point at {target}")
+        return link
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(target)
+    return link
+
+
+def validate_bert(root):
+    path = root / "models/bert-base-uncased"
+    validate_model(path)
+    for name in ("vocab.txt", "tokenizer_config.json"):
+        if not (path / name).is_file() or (path / name).stat().st_size == 0:
+            raise ValueError(f"Missing {path / name}")
+
+
+def run_reverse(root, check_only):
+    state_path = root / ".preparation/assets_reverse.json"
+    dataset = reverse_dir()
+    if state_path.resolve().is_relative_to(dataset.resolve()) or root.resolve().is_relative_to(dataset.resolve()):
+        raise ValueError("Refusing to write inside the read-only dataset directory")
+    state = (
+        json.loads(state_path.read_text())
+        if state_path.exists()
+        else {"schema_version": 1, "suite": "reverse"}
+    )
+    if check_only:
+        if not state_path.exists():
+            raise ValueError(
+                f"Missing manifest {state_path}; run bash prepare.sh --suite reverse first"
+            )
+        missing = [
+            name
+            for name, value in (
+                ("ready", state.get("ready")),
+                ("freeze_sha256", state.get("freeze_sha256")),
+                ("terms_sha256", state.get("terms_sha256")),
+                ("bert.revision", state.get("bert", {}).get("revision")),
+                ("chapters", state.get("chapters")),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                f"Manifest {state_path} lacks: {', '.join(missing)}; rerun preparation"
+            )
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["HF_DATASETS_OFFLINE"] = "1"
+    state["ready"] = False
+    facts = validate_reverse(dataset)
+    if check_only:
+        for key in ("freeze_sha256", "freeze_date", "terms_sha256", "chapters"):
+            if state[key] != facts[key]:
+                raise ValueError(f"Dataset {key} differs from manifest {state_path}")
+        link = root / "bench_data/reverse_plus"
+        if not link.is_symlink() or link.resolve() != dataset.resolve():
+            raise ValueError(f"{link} is missing or does not point at {dataset}")
+        if state["bert"]["revision"] != BERT_REVISION:
+            raise ValueError("Manifest BERT revision differs from the pinned revision")
+    else:
+        for key in ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE"):
+            os.environ.pop(key, None)
+        from huggingface_hub import snapshot_download
+
+        link_reverse(root, dataset)
+        path = root / "models/bert-base-uncased"
+        snapshot_download(
+            BERT_REPO, revision=BERT_REVISION, local_dir=str(path), allow_patterns=BERT_FILES
+        )
+        print(f"BERT ready: {path} @ {BERT_REVISION}", flush=True)
+    validate_bert(root)
+    state.update(
+        facts,
+        dataset_dir=str(dataset),
+        bert={
+            "repo_id": BERT_REPO,
+            "revision": BERT_REVISION,
+            "path": "models/bert-base-uncased",
+            "weights_sha256": file_sha256(root / "models/bert-base-uncased/model.safetensors"),
+        },
+        ready=True,
+        finished_utc=datetime.now(UTC).isoformat(),
+    )
+    if not check_only:
+        atomic_json(state_path, state)
+    print(
+        f"Re:Verse+ volume 1: {len(facts['chapters'])} chapters, "
+        f"{facts['total_pages']} pages, {facts['files_hashed']} files verified",
+        flush=True,
+    )
+    print("Reverse preparation complete. Assets:", root, flush=True)
+
+
 def cache_mmvet(check_only=False):
     from datasets import DownloadConfig, load_dataset
 
@@ -602,7 +775,7 @@ def main():
         action="store_true",
         help="Validate existing assets without downloads or installations",
     )
-    parser.add_argument("--suite", choices=("llava", "qwen"), default="llava")
+    parser.add_argument("--suite", choices=("llava", "qwen", "reverse"), default="llava")
     args = parser.parse_args()
     root = args.repo_dir.resolve()
     configure(root)
@@ -624,6 +797,9 @@ def main():
             ) from error
         if args.suite == "qwen":
             run_qwen(root, args.check_only)
+            return
+        if args.suite == "reverse":
+            run_reverse(root, args.check_only)
             return
         state = (
             json.loads(state_path.read_text())

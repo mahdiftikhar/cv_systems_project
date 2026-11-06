@@ -12,7 +12,7 @@ the last position, and repeats the pass in fp32 for up to ``--fp32-limit`` cases
 A case is ``both_wrong`` when the bf16 argmax agrees with neither method and both the
 AR and the ViSpec token logits are more than 0.5 below the bf16 maximum. Otherwise it is
 ``near_tie`` when the bf16 top-2 margin is at most 0.5 logits, else ``unexplained`` (a
-possible bug). The gate (ruling R20) passes only when no case is ``unexplained`` or
+possible bug). The gate passes only when no case is ``unexplained`` or
 ``both_wrong``. Cases where one sequence ended (no token at the first differing index)
 are also listed separately with both runs' stop reasons.
 
@@ -36,6 +36,7 @@ from pathlib import Path
 
 import torch
 
+from ..model.vision_split import encode_images_separately
 from .benchmarks import build_inputs, load_processor, load_samples
 from .report_metrics import BENCHMARKS, metadata
 from .scoring import evidence
@@ -107,16 +108,54 @@ def report_run_dir(report_path):
     return Path(summary["run_dir"]).resolve()
 
 
+def metadata_retention(run):
+    """kv_retention from ``run``'s metadata.txt: a float, or None for ``none``.
+
+    Raises ValueError when the file or the key is missing or the value is not a number,
+    so an unknown setting is never read as "no eviction".
+    """
+    value = metadata(run).get("kv_retention")
+    if value is None:
+        raise ValueError(
+            f"Cannot diagnose {run}: an answer file has no runtime.json and metadata.txt "
+            "has no kv_retention, so whether the run evicts target KV entries is unknown. "
+            "No diagnosis was run."
+        )
+    value = value.strip()
+    if value == "none":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        raise ValueError(
+            f"Cannot diagnose {run}: metadata.txt has kv_retention={value!r}, which is "
+            "neither a number nor 'none'. No diagnosis was run."
+        ) from None
+
+
 def refuse_unreproducible_eviction(*runs):
     """Refuse runs with target-side KV eviction: the stock full-KV model cannot reproduce it.
 
-    A null or absent kv_retention means no eviction. Draft-only sparsity leaves the target
-    model unchanged, so those runs stay diagnosable.
+    kv_retention comes from each benchmark's runtime.json ``generation_args``, where a null
+    or absent value means no eviction (Week 1 files have no ``generation_args``). When a run
+    has no runtime.json, or an answer file has none beside it, the run's metadata.txt
+    ``kv_retention`` is read as well (``none`` means no eviction). If neither source exists
+    the run is refused, so an unknown setting fails closed. Draft-only sparsity leaves the
+    target model unchanged, so those runs stay diagnosable.
     """
     for run in runs:
-        for path in sorted((run / "results").glob("*_test/*/*.runtime.json")):
+        results = run / "results"
+        runtimes = sorted(results.glob("*_test/*/*.runtime.json"))
+        settings = []
+        for path in runtimes:
             args = json.loads(path.read_text()).get("generation_args") or {}
-            retention = args.get("kv_retention")
+            settings.append(args.get("kv_retention"))
+        answers = sorted(results.glob("*_test/*/*.jsonl"))
+        if not runtimes or any(
+            not path.with_suffix(".runtime.json").exists() for path in answers
+        ):
+            settings.append(metadata_retention(run))
+        for retention in settings:
             if retention is not None and retention < 1.0:
                 raise ValueError(
                     f"Cannot diagnose {run}: kv_retention={retention} evicts target KV "
@@ -217,6 +256,8 @@ def load_model(path, dtype):
         path, torch_dtype=dtype, low_cpu_mem_usage=True, device_map=DEVICE
     )
     model.eval()
+    # Multi-page windows: encode one image at a time, as the fork does.
+    encode_images_separately(model.visual)
     return model
 
 
@@ -410,7 +451,7 @@ def summarize(cases, skipped=0, prompt_fingerprint_mismatches=0):
         "ended_sequences": ended,
         "ended_sequence_counts": stop_counts,
         "gate": {
-            "rule": "passes when unexplained + both_wrong == 0 (ruling R20)",
+            "rule": "passes when unexplained + both_wrong == 0",
             "unexplained": unexplained,
             "both_wrong": both_wrong,
             "counted_unexplained": unexplained + both_wrong,
@@ -626,18 +667,21 @@ def main(argv=None):
     args.output_dir.mkdir(parents=True, exist_ok=False)
     print(f"{len(cases)} mismatching turns to diagnose ({skipped} from other runs skipped)")
 
+    # The processor comes first: reverse_summary needs it to rebuild its multi-image
+    # windows (and their position check) exactly as the evaluator did.
+    processor = load_processor(args.base_model_path)
     samples = {}
     for benchmark in {case["benchmark"] for case in cases}:
         size = subset_size(original_run, benchmark, original_meta)
         samples[benchmark] = {
-            s.question_id: s for s in load_samples(benchmark, args.data_dir, size)
+            s.question_id: s
+            for s in load_samples(benchmark, args.data_dir, size, processor=processor)
         }
         missing = {str(c["question_id"]) for c in cases if c["benchmark"] == benchmark}
         missing -= set(samples[benchmark])
         if missing:
             raise ValueError(f"{benchmark} questions not in the subset: {sorted(missing)}")
 
-    processor = load_processor(args.base_model_path)
     for case in cases:
         for key in ("ar", "vispec"):
             token_id = case[f"{key}_token_id"]
@@ -714,7 +758,7 @@ def main(argv=None):
                 f"margin <= {NEAR_TIE_MARGIN}, else unexplained"
             ),
             "ar_vispec_logit_gap": "|AR token logit - ViSpec token logit| in that pass; None when a sequence ended",
-            "gate_passes": "true when unexplained + both_wrong == 0 (ruling R20)",
+            "gate_passes": "true when unexplained + both_wrong == 0",
             "agrees": "whether that pass's argmax equals the AR token, the ViSpec token, or neither",
             "argmax": "torch.argmax, the first maximal index (decoder tie-break); top-2 is the best remaining token",
             "tokens_tied_at_max": "number of vocabulary entries whose logit equals the argmax logit",

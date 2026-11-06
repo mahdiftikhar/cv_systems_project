@@ -9,9 +9,14 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .scoring import Scorer, evidence
+from .benchmarks import reference_sha256, reverse_references
+from .scoring import BERT_NUM_LAYERS, Scorer, evidence, summary_pending
 
-BENCHMARKS = ("textvqa", "gqa", "mmvet", "coco_caption")
+BENCHMARKS = ("textvqa", "gqa", "mmvet", "coco_caption", "reverse_summary")
+# Benchmarks added from Week 4 on get a report entry only when the run evaluated them, so
+# reports of earlier runs keep their shape (and compare_metrics skips the benchmark).
+OPTIONAL_BENCHMARKS = ("reverse_summary",)
+REPO_DIR = Path(__file__).resolve().parents[2]
 
 
 def percentile(values, fraction):
@@ -118,10 +123,12 @@ def memory_summary(rows):
     Peaks are the largest value across visible devices for the turn. kv_live_bytes and
     kv_tokens are whole-model figures repeated on every device entry, so they are read
     once per turn (the largest repeated value). ``max`` is added to each distribution.
+    The post-compaction peak exists only in compact-layout records from Week 3 on.
     """
     fields = {
         "prefill_peak_allocated_gib": [],
         "decode_peak_allocated_gib": [],
+        "post_compaction_peak_allocated_gib": [],
         "kv_live_mib": [],
         "kv_tokens": [],
     }
@@ -137,6 +144,9 @@ def memory_summary(rows):
         )
         fields["decode_peak_allocated_gib"].append(
             per_turn(entries, "decode_peak_allocated_bytes", 2**30)
+        )
+        fields["post_compaction_peak_allocated_gib"].append(
+            per_turn(entries, "post_compaction_peak_allocated_bytes", 2**30)
         )
         fields["kv_live_mib"].append(per_turn(entries, "kv_live_bytes", 2**20))
         fields["kv_tokens"].append(per_turn(entries, "kv_tokens", 1))
@@ -259,7 +269,43 @@ def fmt(value):
     return "Pending" if value is None else f"{value:.4f}"
 
 
-def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=None):
+def summary_references(bench_dir, manifest):
+    """(references, pending reason) for reverse_summary, read from the dataset.
+
+    Run files keep only a digest of each window's reference, so the text is read again
+    from ``<bench_dir>/reverse_plus`` and must match the digest recorded at generation.
+    """
+    if manifest is None:
+        return {}, "pending: no manifest with reference digests"
+    data_dir = Path(bench_dir) if bench_dir else REPO_DIR / "bench_data"
+    try:
+        texts = reverse_references(data_dir)
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return {}, (
+            f"pending: Re:Verse references unavailable under {data_dir} "
+            f"({type(error).__name__}: {error})"
+        )
+    references = {}
+    for item in manifest["questions"]:
+        question_id = item["question_id"]
+        text = texts.get(question_id)
+        if text is None or [reference_sha256(text)] != item.get("reference_sha256"):
+            return {}, (
+                f"pending: the reference of {question_id} differs from the digest "
+                "recorded at generation"
+            )
+        references[question_id] = [text]
+    return references, None
+
+
+def create_report(
+    run_dir, output_dir=None, scorer=None, evaluation_exit_code=None, bench_dir=None
+):
+    """Write a new report folder for ``run_dir``.
+
+    ``bench_dir`` (default ``<repo>/bench_data``) is where reverse_summary references are
+    read from.
+    """
     run_dir = Path(run_dir).resolve()
     if not run_dir.is_dir():
         raise ValueError(f"Run directory does not exist: {run_dir}")
@@ -275,6 +321,7 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
     runtimes = {}
     predictions = {}
     coco_scores = {}
+    summary_scores = {}
     for benchmark in BENCHMARKS:
         files = list((run_dir / "results").glob(f"{benchmark}_test/*/*.jsonl"))
         manifests = list(
@@ -282,8 +329,11 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
         )
         if len(files) > 1 or len(manifests) > 1:
             raise ValueError(f"Ambiguous result files for {benchmark}")
+        if benchmark in OPTIONAL_BENCHMARKS and not files and not manifests:
+            continue
         rows = samples_from_file(files[0], benchmark) if files else []
         expected_ids = None
+        manifest = None
         if manifests:
             manifest = json.loads(manifests[0].read_text())
             expected_ids = [item["question_id"] for item in manifest["questions"]]
@@ -306,11 +356,30 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
             coco_scores[benchmark] = {
                 k: corpus[k] for k in ("score", "scored", "method", "pending_reason")
             }
+        if benchmark == "reverse_summary":
+            first = [r for r in rows if r["choice"] == 0 and r["turn"] == 0]
+            references, reason = summary_references(bench_dir, manifest)
+            corpus = (
+                scorer.score_corpus(
+                    benchmark, {r["question_id"]: r["answer"] for r in first}, references
+                )
+                if references
+                else summary_pending(reason)
+            )
+            summary_scores[benchmark] = {
+                k: v for k, v in corpus.items() if k != "per_sample"
+            }
         for row in rows:
             row["score"] = None
             if corpus is not None:
                 if row["choice"] == 0 and row["turn"] == 0:
-                    row["score"] = corpus["per_sample"].get(row["question_id"])
+                    if benchmark == "reverse_summary":
+                        # ROUGE-1 F1 is the per-window score; BERTScore F1 sits beside it.
+                        scores = corpus["per_sample"].get(row["question_id"]) or {}
+                        row["score"] = scores.get("rouge1_f1")
+                        row["bertscore_f1"] = scores.get("bertscore_f1")
+                    else:
+                        row["score"] = corpus["per_sample"].get(row["question_id"])
                     row["score_method"] = (
                         corpus["method"]
                         if row["score"] is not None
@@ -329,6 +398,15 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
                 first_answers[row["question_id"]] = row["answer"]
         predictions[benchmark] = first_answers
         benches[benchmark] = summarize(rows, expected_ids)
+        if benchmark == "reverse_summary":
+            # Both 0-100 means over the scored windows; score_percent is ROUGE-1 F1.
+            benches[benchmark]["quality"].update(
+                primary="rouge1_f1",
+                rouge1_f1=corpus["rouge1_f1"],
+                bertscore_f1=corpus["bertscore_f1"],
+                bertscore_scored=corpus["bertscore_scored"],
+                bertscore_pending_reason=corpus["bertscore_pending_reason"],
+            )
         all_rows.extend(rows)
     # Export formats accepted by benchmark tooling. No answer extraction heuristics.
     (output_dir / "mmvet_predictions.json").write_text(
@@ -364,6 +442,17 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
         )
         + "\n"
     )
+    if "reverse_summary" in predictions:
+        (output_dir / "reverse_summary_predictions.json").write_text(
+            json.dumps(
+                [
+                    {"question_id": key, "summary": value}
+                    for key, value in predictions["reverse_summary"].items()
+                ],
+                indent=2,
+            )
+            + "\n"
+        )
     exit_path = run_dir / "exit-code.txt"
     if evaluation_exit_code is None and exit_path.exists():
         evaluation_exit_code = int(exit_path.read_text().strip())
@@ -398,6 +487,14 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
             "Memory is measured after warmup; initial cache/model allocation peaks are excluded.",
         ],
     }
+    if summary_scores:
+        summary["reverse_summary_scores"] = summary_scores["reverse_summary"]
+        summary["definitions"]["reverse_summary_quality"] = (
+            "ROUGE-1 F1 (rouge-score, Porter stemmer) and BERTScore F1 (bert-score, local "
+            f"bert-base-uncased, layer {BERT_NUM_LAYERS}, no idf, no baseline rescaling, "
+            "512-word-piece truncation), each 0-100 and averaged over windows; "
+            "score_percent is ROUGE-1 F1"
+        )
     (output_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, allow_nan=False) + "\n"
     )
@@ -445,6 +542,27 @@ def create_report(run_dir, output_dir=None, scorer=None, evaluation_exit_code=No
                 f"{100 * cider['score']:.2f} on {cider['scored']} scored captions ({cider['method']})"
                 if cider["score"] is not None
                 else f"Pending, {cider['pending_reason']}"
+            )
+        )
+    scores = summary_scores.get("reverse_summary")
+    if scores:
+        bert = scores["bertscore"] or {}
+        lines.append(
+            "- **reverse_summary (0-100, mean over windows):** ROUGE-1 F1 "
+            + (
+                f"{scores['rouge1_f1']:.2f} on {scores['rouge_scored']} windows"
+                if scores["rouge1_f1"] is not None
+                else f"Pending, {scores['pending_reason']}"
+            )
+            + "; BERTScore F1 "
+            + (
+                f"{scores['bertscore_f1']:.2f} on {scores['bertscore_scored']} windows "
+                f"({bert.get('device')}, {bert.get('seconds', 0):.1f} s; "
+                f"{bert.get('truncated_references')} references and "
+                f"{bert.get('truncated_predictions')} summaries truncated to "
+                f"{bert.get('max_word_pieces')} word pieces)"
+                if scores["bertscore_f1"] is not None
+                else f"Pending, {scores['bertscore_pending_reason']}"
             )
         )
     lines += [
@@ -510,6 +628,17 @@ def main():
         "--mmvet-graded-predictions", default=os.environ.get("MMVET_GRADED_PREDICTIONS")
     )
     parser.add_argument("--evaluation-exit-code", type=int)
+    parser.add_argument(
+        "--bertscore-device",
+        default=os.environ.get("BERTSCORE_DEVICE", "auto"),
+        help="Device for reverse_summary BERTScore: auto (CUDA when a GPU is visible, "
+        "else CPU), cpu, cuda or cuda:N. Default $BERTSCORE_DEVICE or auto.",
+    )
+    parser.add_argument(
+        "--bert-model",
+        default=os.environ.get("BERTSCORE_MODEL"),
+        help="Local bert-base-uncased folder (default <repo>/models/bert-base-uncased).",
+    )
     args = parser.parse_args()
     if args.bench_dir and not args.textvqa_annotations:
         candidate = args.bench_dir / "textvqa/TextVQA_0.5.1_val.json"
@@ -521,9 +650,15 @@ def main():
         args.gqa_annotations,
         args.mmvet_grades,
         args.mmvet_graded_predictions,
+        bert_model=args.bert_model,
+        bertscore_device=args.bertscore_device,
     )
     report = create_report(
-        args.run_dir, args.output_dir, scorer, args.evaluation_exit_code
+        args.run_dir,
+        args.output_dir,
+        scorer,
+        args.evaluation_exit_code,
+        bench_dir=args.bench_dir,
     )
     print(f"Metrics report: {report / 'summary.md'}")
 

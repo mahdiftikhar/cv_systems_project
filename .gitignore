@@ -224,13 +224,17 @@ __marimo__/
 
 # Prepared models, benchmark data, archives, local environments, and setup evidence.
 /models/
+/models
 /bench_data/
+/bench_data
 /vispec_data/
 /downloads/
 /.preparation/
+/.preparation
 /.cache/
 /envs/
 /tools/downloaded/
+/tools/downloaded
 # Legacy generated setup files (new runners discover repo-local assets directly).
 /models.env
 /model_snapshots.json
@@ -245,3 +249,4 @@ __marimo__/
 # macOS folder metadata is not a project artifact.
 .DS_Store
 /.smoke/
+experiment/sweeps/*

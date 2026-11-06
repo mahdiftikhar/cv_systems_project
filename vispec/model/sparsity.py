@@ -76,7 +76,13 @@ def select_in_span(n, k, policy, scores):
 
     Returns:
         torch.Tensor: Ascending long indices into the span, shape [k].
+
+    Raises:
+        ValueError: Unless 1 <= k <= n, so a bad count fails here instead of returning a
+            short, repeated or empty selection.
     """
+    if not 1 <= k <= n:
+        raise ValueError(f"select_in_span needs 1 <= k <= n, got k={k}, n={n}")
     if policy not in POLICIES:
         raise ValueError(f"policy must be one of {POLICIES}, got {policy!r}")
     if policy == "attention":
@@ -125,3 +131,21 @@ def keep_positions(image_mask, config, scores=None):
         sel = select_in_span(n, k, config.policy, span_scores if config.policy == "attention" else None)
         kept.append(sel.to(mask.device) + start)
     return torch.cat(kept).sort().values
+
+
+def kept_per_image(image_mask, positions):
+    """
+    Kept token count of each contiguous image run, read from the kept positions.
+
+    Args:
+        image_mask (torch.Tensor): 1-D bool (or 0/1 integer) mask, True at image tokens.
+        positions (torch.Tensor): The kept positions (indices into image_mask), as
+            keep_positions returns them.
+
+    Returns:
+        list[int]: One count per image span, in span order. Computed on the CPU.
+    """
+    mask = image_mask.bool().cpu()
+    kept = torch.zeros(mask.numel(), dtype=torch.bool)
+    kept[torch.as_tensor(positions).cpu().long()] = True
+    return [int(kept[start:end].sum()) for start, end in image_spans(mask)]
