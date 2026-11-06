@@ -3,7 +3,7 @@
 This script runs only in the separate HiViS environment (Python 3.9, torch 2.6.0+cu124,
 Transformers 4.54.0), started by run.sh from inside the run folder, offline and without
 credentials. It imports nothing from this repository. It puts the read-only HiViS checkout
-(``--hivis-dir``) on ``sys.path`` and calls HiViS's own ``EaModel``, ``prepare_inputs``,
+(``--hivis-checkout``) on ``sys.path`` and calls HiViS's own ``EaModel``, ``prepare_inputs``,
 ``eagenerate`` and ``naivegenerate``. Only HiViS's data loader is replaced: the rows come from
 our ``samples.json`` (seed-42 TextVQA val subset), in the row shape ``_load_textvqa`` produces.
 
@@ -17,8 +17,11 @@ Per sample, in evaluation order:
 2. ``eagenerate(temperature=0.0, max_new_tokens=500, log=True)``. Two recording wrappers are
    active only around the first draft call: ``hivis.model.utils_hivis.prune_image_tokens`` and
    ``model.ea_layer.topK_genrate`` (its arguments, its four outputs and ``ea_layer.add``).
-   The same first call is then rerun in fp32 (the draft checkpoint's own fp32 weights and the
-   target head upcast to fp32, on the recorded inputs upcast to fp32). The records go to
+   The same first call is then rerun in fp32, as ``initialize_tree`` would make it with an
+   fp32 drafter: the draft checkpoint's own fp32 weights, the target head upcast to fp32, the
+   recorded target hidden states and kept target embeddings upcast to fp32, and the first
+   token's embedding recomputed by the fp32 drafter (the recorded fp16 row is checked against
+   the fp16 drafter's ``embed_tokens`` first). The records go to
    ``first_call/<qid>.safetensors``.
 3. ``naivegenerate(temperature=0.0, max_new_tokens=500, log=True)``: HiViS's own AR tokens.
 
@@ -77,16 +80,16 @@ def ids_sha256(input_ids):
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--run-dir", required=True, type=Path)
-    parser.add_argument("--hivis-dir", required=True, type=Path, help="read-only HiViS checkout")
+    parser.add_argument("--hivis-checkout", required=True, type=Path, help="read-only HiViS checkout")
     parser.add_argument("--base-model-path", required=True)
     parser.add_argument("--ea-model-path", required=True)
     return parser.parse_args()
 
 
-def import_hivis(hivis_dir):
+def import_hivis(checkout):
     """Put the checkout first on sys.path and import the HiViS modules used here."""
-    hivis_dir = str(hivis_dir.resolve())
-    sys.path.insert(0, hivis_dir)
+    checkout = str(checkout.resolve())
+    sys.path.insert(0, checkout)
     import hivis.evaluation.benchmark_data as benchmark_data
     import hivis.model.cnets_hivis as cnets_hivis
     import hivis.model.configs as configs
@@ -98,8 +101,8 @@ def import_hivis(hivis_dir):
         for m in (benchmark_data, cnets_hivis, configs, model_hivis, utils_hivis)
     }
     for name, path in modules.items():
-        if not str(path).startswith(hivis_dir + os.sep):
-            raise SystemExit(f"{name} was imported from {path}, not from {hivis_dir}")
+        if not str(path).startswith(checkout + os.sep):
+            raise SystemExit(f"{name} was imported from {path}, not from {checkout}")
     return benchmark_data, cnets_hivis, configs, model_hivis, utils_hivis, modules
 
 
@@ -277,15 +280,41 @@ def fp32_head(lm_head, device):
     return head
 
 
+def check_first_token_embedding(ea_layer, tensors, device):
+    """The recorded last draft-embedding row must be the drafter's own embedding of the token.
+
+    ``initialize_tree`` appends ``ea_layer.embed_tokens(token)`` to the kept target embeddings;
+    the fp32 rerun recomputes that row, so this confirms which row it replaces.
+    """
+    import torch
+
+    token = tensors["topk.in.input_ids"][:, -1:].to(device)
+    expected = cpu(ea_layer.embed_tokens(token))
+    recorded = tensors["topk.in.input_embeds"][:, -1:]
+    if recorded.dtype != expected.dtype or not torch.equal(recorded, expected):
+        raise SystemExit("The recorded first-token embedding is not the drafter's embed_tokens row")
+
+
 def fp32_first_call(drafter, head, tensors, device):
-    """Rerun the recorded first draft call in fp32 on the recorded inputs."""
+    """Rerun the recorded first draft call in fp32, as initialize_tree would make it.
+
+    The target-side inputs (pruned hidden states and kept target embeddings) are the recorded
+    values upcast to fp32. The first token's embedding, the last row of the draft embeddings, is
+    recomputed by the fp32 drafter, exactly as ``initialize_tree`` computes it with
+    ``ea_layer.embed_tokens``; our fp32 side computes the same row the same way.
+    """
+    import torch
+
     drafter.reset_kv()
+    input_ids = tensors["topk.in.input_ids"].to(device)
+    kept_embeds = tensors["topk.in.input_embeds"][:, :-1].to(device).float()
+    input_embeds = torch.cat((kept_embeds, drafter.embed_tokens(input_ids[:, -1:])), dim=1)
     out = drafter.topK_genrate(
         tensors["topk.in.hidden_states"].to(device).float(),
-        tensors["topk.in.input_ids"].to(device),
+        input_ids,
         head,
         None,
-        input_embeds=tensors["topk.in.input_embeds"].to(device).float(),
+        input_embeds=input_embeds,
         position_ids=tensors["topk.in.position_ids"].to(device),
     )
     names = ("draft_tokens", "retrieve_indices", "tree_mask", "tree_position_ids")
@@ -325,6 +354,25 @@ def attn_implementations(embed_model):
     return found
 
 
+def numeric_flags():
+    """The torch settings that can change kernel choice or rounding."""
+    import torch
+
+    return {
+        "cudnn_deterministic": bool(torch.backends.cudnn.deterministic),
+        "cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
+        "matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+        "float32_matmul_precision": torch.get_float32_matmul_precision(),
+    }
+
+
+def gpu_uuid():
+    import torch
+
+    uuid = getattr(torch.cuda.get_device_properties(0), "uuid", None)
+    return None if uuid is None else str(uuid)
+
+
 def distribution_versions(names):
     versions = {}
     for name in names:
@@ -346,14 +394,14 @@ def main():
     for path in (out_jsonl, out_env, bundle_dir, first_call_dir):
         if path.exists():
             raise SystemExit(f"Refusing to overwrite {path}")
-    if Path.cwd().resolve() == args.hivis_dir.resolve() or str(Path.cwd().resolve()).startswith(
-        str(args.hivis_dir.resolve()) + os.sep
+    if Path.cwd().resolve() == args.hivis_checkout.resolve() or str(Path.cwd().resolve()).startswith(
+        str(args.hivis_checkout.resolve()) + os.sep
     ):
         raise SystemExit("The working directory must not be inside the HiViS checkout")
 
     payload, rows = load_samples(run_dir)
     benchmark_data, cnets_hivis, configs, model_hivis, utils_hivis, modules = import_hivis(
-        args.hivis_dir
+        args.hivis_checkout
     )
 
     import torch
@@ -401,7 +449,7 @@ def main():
             "torch_cuda": torch.version.cuda,
             "cudnn": torch.backends.cudnn.version(),
             "transformers_version": transformers.__version__,
-            "hivis_dir": str(args.hivis_dir.resolve()),
+            "hivis_checkout": str(args.hivis_checkout.resolve()),
             "hivis_pin": HIVIS_PIN,
             "hivis_modules": modules,
             "base_model_path": args.base_model_path,
@@ -424,6 +472,8 @@ def main():
             },
             "device": str(device),
             "gpu": torch.cuda.get_device_name(0),
+            "gpu_uuid": gpu_uuid(),
+            "numeric_flags": numeric_flags(),
             "hf_device_map": getattr(model.embed_model, "hf_device_map", None),
             "settings": {
                 "total_token": TOTAL_TOKEN, "depth": DEPTH, "top_k": TOP_K,
@@ -503,6 +553,7 @@ def main():
             recorder.check(qid)
 
             tensors = dict(recorder.tensors)
+            check_first_token_embedding(model.ea_layer, tensors, device)
             tensors["topk.add"] = torch.tensor([recorder.info["topk.add"]], dtype=torch.long)
             fp32_tensors, fp32_add = fp32_first_call(drafter32, head32, tensors, device)
             tensors.update(fp32_tensors)

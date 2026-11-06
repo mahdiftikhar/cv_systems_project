@@ -7,6 +7,8 @@
 # offline, without credentials, from inside the run folder) -> our side (hivis_parity ours) ->
 # the verdict (hivis_parity compare, from the EXIT trap, so a partial run is reported too).
 # Prerequisites: the environment from setup_env.sh and the read-only HiViS checkout.
+# Submitted with --requeue: a preemption requeue re-attempts the same approved reference check
+# from the start, and each attempt writes a fresh run folder (the restart count is recorded).
 # ==========================================
 # step 01 -- Enable strict error handling and enter the repository root.
 # ==========================================
@@ -76,6 +78,24 @@ for suite in qwen qwen7b; do
         cp "$repo_dir/.preparation/assets_${suite}.json" "$run_dir/prepared-assets-${suite}.json"
     fi
 done
+
+# Every call of the HiViS interpreter goes through hivis_isolated: from an empty working
+# directory inside the run folder; HF_HOME an empty folder there, so no stored token or cache
+# is read; offline; no token variables; no PYTHONPATH; the hivis-ref bin first on PATH. The
+# callers also pass -I (no working directory or user site-packages on sys.path) and -B.
+hivis_work="$run_dir/hivis_work"
+mkdir -p "$hivis_work/hf_home"
+hivis_isolated() {
+    (
+        cd "$hivis_work"
+        unset HF_TOKEN HUGGING_FACE_HUB_TOKEN HF_TOKEN_PATH PYTHONPATH HF_HUB_CACHE \
+            HUGGINGFACE_HUB_CACHE HF_DATASETS_CACHE HF_ASSETS_CACHE HF_XET_CACHE
+        export HF_HOME="$hivis_work/hf_home" HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+            HF_DATASETS_OFFLINE=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 \
+            PIP_CONFIG_FILE=/dev/null PATH="$hivis_env/bin:$PATH"
+        "$@"
+    )
+}
 
 # ==========================================
 # step 05 -- Start a logged subshell and register exit and interruption handlers.
@@ -151,7 +171,25 @@ echo "Launch device report: $run_dir/device.txt"
 "$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite qwen
 "$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite qwen7b
 bash "$run_dir/check_cuda.sh" "$python_bin"
-bash "$run_dir/check_cuda.sh" "$hivis_python"
+# The same check as check_cuda.sh, for the HiViS interpreter, with the HiViS step's isolation.
+hivis_isolated "$hivis_python" -I -B - <<'PY'
+import sys
+
+try:
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError("PyTorch reports CUDA unavailable")
+    value = torch.ones(1, device="cuda:0") + 1
+    torch.cuda.synchronize(0)
+    if value.item() != 2:
+        raise RuntimeError("CUDA computation returned an unexpected result")
+    print(f"HiViS environment CUDA preflight passed: torch {torch.__version__}, "
+          f"cuda:0 = {torch.cuda.get_device_name(0)}", flush=True)
+except Exception as error:
+    print(f"HiViS environment CUDA preflight FAILED: {type(error).__name__}: {error}", file=sys.stderr)
+    sys.exit(1)
+PY
 export PYTHONUNBUFFERED=1
 
 # ==========================================
@@ -182,7 +220,7 @@ check_checkout() {
 }
 check_checkout before
 cp "$freeze_file" "$run_dir/hivis-env.freeze.txt"
-PIP_CONFIG_FILE=/dev/null "$hivis_python" -m pip freeze --disable-pip-version-check > "$run_dir/hivis-env.packages.txt"
+hivis_isolated "$hivis_python" -I -B -m pip freeze --disable-pip-version-check > "$run_dir/hivis-env.packages.txt"
 if ! diff -u "$run_dir/hivis-env.freeze.txt" "$run_dir/hivis-env.packages.txt"; then
     echo "The HiViS environment changed since setup_env.sh wrote its freeze file." >&2
     exit 1
@@ -201,25 +239,16 @@ printf '\n'
 # ==========================================
 # step 10 -- HiViS side: offline, no credentials, no writes outside the run folder.
 # ==========================================
-# HF_HOME is an empty folder inside the run folder, so no stored token or cache is read.
-# The working directory is inside the run folder; -I keeps it and user site-packages off
-# sys.path, -B writes no bytecode, and hivis_side.py puts only the checkout on sys.path.
-hivis_work="$run_dir/hivis_work"
-mkdir -p "$hivis_work/hf_home"
+# hivis_isolated (step 04) sets the working directory, HF_HOME, offline mode, PATH and the
+# unset token variables. -I keeps the working directory and user site-packages off sys.path,
+# -B writes no bytecode, and hivis_side.py puts only the checkout on sys.path.
 hivis_cmd=("$hivis_python" -I -B -u "$experiment_dir/hivis_side.py"
-    --run-dir "$run_dir" --hivis-dir "$hivis_checkout"
+    --run-dir "$run_dir" --hivis-checkout "$hivis_checkout"
     --base-model-path "$base_model" --ea-model-path "$hivis_draft")
 printf '\nRunning (HiViS environment):'
 printf ' %q' "${hivis_cmd[@]}"
 printf '\n'
-(
-    cd "$hivis_work"
-    unset HF_TOKEN HUGGING_FACE_HUB_TOKEN PYTHONPATH HF_HUB_CACHE HUGGINGFACE_HUB_CACHE \
-        HF_DATASETS_CACHE HF_ASSETS_CACHE HF_XET_CACHE
-    export HF_HOME="$hivis_work/hf_home" HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-        HF_DATASETS_OFFLINE=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1
-    "${hivis_cmd[@]}"
-)
+hivis_isolated "${hivis_cmd[@]}"
 check_checkout after
 find "$hivis_work/hf_home" -mindepth 1 > "$run_dir/hivis-hf-home-contents.txt"
 echo "HiViS HF_HOME after the run: $(wc -l < "$run_dir/hivis-hf-home-contents.txt") entries (hivis-hf-home-contents.txt)"

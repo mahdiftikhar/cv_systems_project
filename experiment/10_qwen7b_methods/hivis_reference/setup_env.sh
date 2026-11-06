@@ -45,7 +45,7 @@ export PIP_CONFIG_FILE=/dev/null
 export PIP_CACHE_DIR="$cache_dir/pip"
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 export PYTHONNOUSERSITE=1
-unset PYTHONPATH HF_TOKEN HUGGING_FACE_HUB_TOKEN
+unset PYTHONPATH HF_TOKEN HUGGING_FACE_HUB_TOKEN HF_TOKEN_PATH
 
 printf 'setup_started_utc=%s host=%s slurm_job_id=%s\n' \
     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(hostname)" "${SLURM_JOB_ID:-unset}"
@@ -113,6 +113,7 @@ cat "$freeze_file"
 # ==========================================
 # -I keeps the current directory and user site-packages off sys.path; -B writes no bytecode
 # (the checkout is read-only in any case). The working directory is a scratch folder.
+mkdir -p "$cache_dir/tmp"
 work_dir="$(mktemp -d "$cache_dir/tmp/hivis-ref-import-XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 (

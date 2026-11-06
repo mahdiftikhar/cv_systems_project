@@ -85,8 +85,9 @@ UNAVOIDABLE_DIFFERENCES = [
     (
         "Stop rule",
         "HiViS can overshoot max_new_tokens by up to one tree, because it stops at "
-        "new_token > 500, while ours clamps at 500. Hence the cut at 500, and leaving out each "
-        "sample's last iteration from the acceptance means.",
+        "new_token > 500, while ours clamps at 500. Hence the cut at 500. For the acceptance "
+        "means, HiViS iterations that start at 500 or more committed tokens are trimmed first "
+        "(ours never runs them), then each sample's last iteration is left out.",
     ),
     (
         "KV cache and prefill",
@@ -139,10 +140,56 @@ def first_difference(a, b):
     return None if len(a) == len(b) else min(len(a), len(b))
 
 
+def aligned_iterations(accepts, cap=MAX_NEW_TOKENS):
+    """The iterations that start before ``cap`` committed tokens.
+
+    Each iteration commits its accepted draft tokens plus one target token. HiViS stops only
+    once ``new_token > cap``, so it can start an iteration at exactly ``cap`` tokens, which our
+    loop (stopping at ``new_token >= cap``) never runs. Those iterations are trimmed; on our side
+    this changes nothing.
+    """
+    kept, committed = [], 0
+    for accept in accepts:
+        if committed >= cap:
+            break
+        kept.append(accept)
+        committed += accept + 1
+    return kept
+
+
 def pooled_mean(lists):
-    """Accepted draft tokens per iteration over all iterations, last iteration of each left out."""
-    values = [v for lst in lists for v in lst[:-1]]
+    """Accepted draft tokens per iteration, pooled over the samples.
+
+    The iterations are first end-aligned (``aligned_iterations``), then each sample's last
+    iteration is left out, because the two loops clamp and stop differently there.
+    """
+    values = [v for lst in lists for v in aligned_iterations(lst)[:-1]]
     return (sum(values) / len(values) if values else None), len(values)
+
+
+def all_iterations_mean(lists):
+    """HiViS's own rule (ge_hivis_answer.py): the mean over every iteration of every sample."""
+    values = [v for lst in lists for v in lst]
+    return (sum(values) / len(values) if values else None), len(values)
+
+
+def numeric_flags():
+    """The torch settings that can change kernel choice or rounding."""
+    import torch
+
+    return {
+        "cudnn_deterministic": bool(torch.backends.cudnn.deterministic),
+        "cudnn_allow_tf32": bool(torch.backends.cudnn.allow_tf32),
+        "matmul_allow_tf32": bool(torch.backends.cuda.matmul.allow_tf32),
+        "float32_matmul_precision": torch.get_float32_matmul_precision(),
+    }
+
+
+def gpu_uuid():
+    import torch
+
+    uuid = getattr(torch.cuda.get_device_properties(0), "uuid", None)
+    return None if uuid is None else str(uuid)
 
 
 def git_commit():
@@ -276,6 +323,20 @@ def fp32_head(head, device):
     return copy
 
 
+def token_gap(margin_record):
+    """Stock top-1 logit minus the lower of the two differing tokens' logits.
+
+    The tokens are near-tied only if both lie within NEAR_TIE_MARGIN of the top-1. None when
+    a token or a logit is missing (for example, one sequence ended), which never counts as a
+    near-tie.
+    """
+    top = (margin_record.get("top2") or [{}])[0].get("logit")
+    logits = (margin_record.get("ours_token_logit"), margin_record.get("hivis_token_logit"))
+    if top is None or any(value is None for value in logits):
+        return None
+    return top - min(logits)
+
+
 def top2(logits):
     """argmax and the best other token (diagnose_divergence.inspect's rule)."""
     first = int(logits.argmax())
@@ -312,6 +373,8 @@ def cmd_ours(args):
         raise SystemExit(f"HiViS side has no record for {missing}")
     iso_dir.mkdir()
     device = diagnose_divergence.DEVICE
+    # As HiViS's setup_seed does on its side.
+    torch.backends.cudnn.deterministic = True
 
     model = SpecModel.from_pretrained(
         base_model_path=args.base_model_path,
@@ -344,10 +407,18 @@ def cmd_ours(args):
         "torch_cuda": torch.version.cuda,
         "transformers": transformers.__version__,
         "gpu": torch.cuda.get_device_name(0),
+        "gpu_uuid": gpu_uuid(),
+        "numeric_flags": numeric_flags(),
         "base_model_path": args.base_model_path,
         "spec_model_path": args.spec_model_path,
         "draft_method": getattr(model, "draft_method", None),
         "draft_class": type(layer).__module__ + "." + type(layer).__name__,
+        "draft": {
+            "total_tokens": int(layer.total_tokens),
+            "depth": int(layer.depth),
+            "top_k": int(layer.top_k),
+            "residual_count": int(layer.residual.shape[0]),
+        },
         "dtype": str(model.base_model.dtype),
         "draft_dtype": str(next(layer.parameters()).dtype),
         "attn_implementation": getattr(model.base_model.config, "_attn_implementation", None),
@@ -505,10 +576,11 @@ def cmd_ours(args):
                 "hivis_token_logit": token_logit(div["hivis_token_id"]),
                 "dtype": "float16",
             }
+            div["margin"]["token_gap"] = token_gap(div["margin"])
             div["status"] = "measured"
             print(
                 f"{record['question_id']}: first difference at {div['index']}, stock fp16 margin "
-                f"{div['margin']['margin']:.4f}",
+                f"{div['margin']['margin']:.4f}, token gap {fmt(div['margin']['token_gap'])}",
                 flush=True,
             )
         del stock
@@ -561,6 +633,42 @@ def same_values(a, b):
 
 def gate(name, check, passed, detail, **extra):
     return {"gate": name, "check": check, "passed": bool(passed), "detail": detail, **extra}
+
+
+def normalized_uuid(value):
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text[4:] if text.startswith("gpu-") else text
+
+
+def environment_problems(hivis_env, ours_env):
+    """Both sides ran in fp16, at 60/5/10, with 500 new tokens, on the same GPU."""
+    problems = []
+    for name, env, file in (("HiViS", hivis_env, "hivis_side_env.json"),
+                            ("our", ours_env, "ours_side_env.json")):
+        if env is None:
+            problems.append(f"missing or unreadable {file}")
+            continue
+        if env.get("dtype") != "torch.float16":
+            problems.append(f"{name} side dtype is {env.get('dtype')}, not torch.float16")
+        settings = env.get("settings") or {}
+        tree = (settings.get("total_token"), settings.get("depth"), settings.get("top_k"))
+        if tree != (TOTAL_TOKEN, DEPTH, TOP_K):
+            problems.append(f"{name} side tree settings are {tree}")
+        draft = env.get("draft") or {}
+        # The drafter keeps total_token - 1 (the root is not a drafted token).
+        drafted = (draft.get("total_tokens"), draft.get("depth"), draft.get("top_k"))
+        if drafted != (TOTAL_TOKEN - 1, DEPTH, TOP_K):
+            problems.append(f"{name} side drafter runs (total_tokens, depth, top_k) = {drafted}")
+        if settings.get("max_new_tokens") != MAX_NEW_TOKENS:
+            problems.append(f"{name} side max_new_tokens is {settings.get('max_new_tokens')}")
+    if hivis_env is not None and ours_env is not None:
+        theirs = normalized_uuid(hivis_env.get("gpu_uuid"))
+        mine = normalized_uuid(ours_env.get("gpu_uuid"))
+        if theirs is None or theirs != mine:
+            problems.append(f"GPU UUIDs differ or are missing: HiViS {theirs}, ours {mine}")
+    return problems
 
 
 def compare(run_dir, expected):
@@ -622,9 +730,13 @@ def compare(run_dir, expected):
             problems.append(f"{qid}: {iso_file} digest differs from ours_side.jsonl")
             iso = None
         isolations[qid] = iso
+    problems.extend(environment_problems(hivis_env, ours_env))
     inputs_gate = gate(
-        "inputs", "bundle and sample digests; all samples present, none skipped",
-        not problems, "; ".join(problems) if problems else f"{len(samples)}/{expected} samples, digests equal",
+        "inputs", "bundle and sample digests; all samples present, none skipped; both sides "
+        f"fp16, tree {TOTAL_TOKEN}/{DEPTH}/{TOP_K}, {MAX_NEW_TOKENS} new tokens, the same GPU",
+        not problems,
+        "; ".join(problems) if problems
+        else f"{len(samples)}/{expected} samples, digests equal, environments match",
     )
 
     # Prune and positions: exact integers, same prompt.
@@ -718,22 +830,35 @@ def compare(run_dir, expected):
             identical.append(qid)
             continue
         div = mine.get("divergence") or {}
-        margin = (div.get("margin") or {}).get("margin")
+        margin_record = div.get("margin") or {}
+        margin = margin_record.get("margin")
+        # Recomputed from the recorded logits, not read from the record.
+        gap = token_gap(margin_record)
         row["tokens"]["margin"] = margin
+        row["tokens"]["token_gap"] = gap
+        row["tokens"]["near_tie"] = False
         if div.get("index") != diff:
             token_problems.append(f"{qid}: recorded divergence index {div.get('index')} != {diff}")
         elif margin is None:
             token_problems.append(f"{qid}: no margin recorded at index {diff}")
-        elif margin <= NEAR_TIE_MARGIN:
+        elif margin > NEAR_TIE_MARGIN:
+            token_problems.append(f"{qid}: margin {margin:.4f} > {NEAR_TIE_MARGIN} at index {diff}")
+        elif gap is None:
+            token_problems.append(f"{qid}: a differing token or its logit is missing at index {diff}")
+        elif gap > NEAR_TIE_MARGIN:
+            # The stock top-2 are close, but at least one differing token is not one of them.
+            token_problems.append(
+                f"{qid}: a differing token is {gap:.4f} below the stock top-1 at index {diff} "
+                f"(> {NEAR_TIE_MARGIN})"
+            )
+        else:
             near_ties.append(qid)
             row["tokens"]["near_tie"] = True
-        else:
-            row["tokens"]["near_tie"] = False
-            token_problems.append(f"{qid}: margin {margin:.4f} > {NEAR_TIE_MARGIN} at index {diff}")
     mismatches = len(qids) - len(identical)
     tokens_gate = gate(
         "tokens", f"output IDs through the first EOS, cut at {MAX_NEW_TOKENS}; at most "
-        f"{MAX_TOKEN_MISMATCHES} differ, each a near-tie (stock fp16 top-2 margin <= {NEAR_TIE_MARGIN})",
+        f"{MAX_TOKEN_MISMATCHES} differ, each a near-tie: stock fp16 top-2 margin <= "
+        f"{NEAR_TIE_MARGIN} and both differing tokens within {NEAR_TIE_MARGIN} of the top-1",
         len(qids) == expected and mismatches <= MAX_TOKEN_MISMATCHES and not token_problems
         and len(near_ties) == mismatches,
         f"{len(identical)}/{expected} identical, {mismatches} differ, {len(near_ties)} of them near-ties"
@@ -741,22 +866,29 @@ def compare(run_dir, expected):
         identical=identical, near_ties=near_ties,
     )
 
-    # Acceptance over the samples with identical tokens, last iteration left out on both sides.
+    # Acceptance over the samples with identical tokens: iterations end-aligned at 500 tokens,
+    # then each sample's last iteration left out, on both sides.
     hivis_mean, hivis_count = pooled_mean([hivis[q]["hivis"]["accept_lengths"] for q in identical])
     ours_mean, ours_count = pooled_mean([ours[q]["hivis"]["acceptance_len"] for q in identical])
+    hivis_rule_mean, hivis_rule_count = all_iterations_mean(
+        [hivis[q]["hivis"]["accept_lengths"] for q in identical]
+    )
     relative = (
         abs(ours_mean - hivis_mean) / hivis_mean
         if hivis_mean not in (None, 0) and ours_mean is not None else None
     )
     acceptance_gate = gate(
         "acceptance", f"mean accepted draft tokens per iteration over the identical samples, "
-        f"last iteration left out; within {ACCEPTANCE_TOLERANCE:.0%} relative",
+        f"iterations starting at {MAX_NEW_TOKENS} or more tokens trimmed, last iteration left out; "
+        f"within {ACCEPTANCE_TOLERANCE:.0%} relative",
         relative is not None and relative <= ACCEPTANCE_TOLERANCE,
-        f"HiViS {fmt(hivis_mean)} ({hivis_count} iterations), ours {fmt(ours_mean)} "
-        f"({ours_count} iterations), relative difference {fmt(relative)}"
-        if relative is not None else "no identical sample with more than one iteration",
+        (f"HiViS {fmt(hivis_mean)} ({hivis_count} iterations), ours {fmt(ours_mean)} "
+         f"({ours_count} iterations), relative difference {fmt(relative)}"
+         if relative is not None else "no identical sample with more than one iteration")
+        + f"; HiViS by its own rule (every iteration): {fmt(hivis_rule_mean)} "
+        f"({hivis_rule_count} iterations)",
         hivis_mean=hivis_mean, ours_mean=ours_mean, relative_difference=relative,
-        samples=len(identical),
+        hivis_own_rule_mean=hivis_rule_mean, samples=len(identical),
     )
 
     # Reported, not gated.
@@ -775,8 +907,12 @@ def compare(run_dir, expected):
                 result["differ"][qid] = d
         return result
 
-    all_hivis_mean, all_hivis_count = pooled_mean([hivis[q]["hivis"]["accept_lengths"] for q in qids if q in hivis])
-    all_ours_mean, all_ours_count = pooled_mean([ours[q]["hivis"]["acceptance_len"] for q in qids if q in ours])
+    hivis_lists = [hivis[q]["hivis"]["accept_lengths"] for q in qids if q in hivis]
+    ours_lists = [ours[q]["hivis"]["acceptance_len"] for q in qids if q in ours]
+    all_hivis_mean, all_hivis_count = pooled_mean(hivis_lists)
+    all_ours_mean, all_ours_count = pooled_mean(ours_lists)
+    rule_hivis_mean, rule_hivis_count = all_iterations_mean(hivis_lists)
+    rule_ours_mean, rule_ours_count = all_iterations_mean(ours_lists)
     reported = {
         "hivis_speculative_vs_hivis_autoregressive": self_agreement(hivis, "hivis", "ar"),
         "ours_hivis_vs_ours_autoregressive": self_agreement(ours, "hivis", "ar"),
@@ -784,6 +920,11 @@ def compare(run_dir, expected):
         "hivis_side_iterations": all_hivis_count,
         "ours_mean_acceptance_all_samples": all_ours_mean,
         "ours_iterations": all_ours_count,
+        # HiViS's harness (ge_hivis_answer.py) and paper: every iteration of every sample.
+        "hivis_side_mean_acceptance_hivis_rule": rule_hivis_mean,
+        "hivis_side_iterations_hivis_rule": rule_hivis_count,
+        "ours_mean_acceptance_hivis_rule": rule_ours_mean,
+        "ours_iterations_hivis_rule": rule_ours_count,
         "paper_acceptance_60_5_10": PAPER_ACCEPTANCE,
         "note": (
             "HiViS's eagenerate against its naivegenerate: its AR path does not round the pixel "
@@ -810,9 +951,11 @@ def compare(run_dir, expected):
         "environments": {
             "hivis": {k: (hivis_env or {}).get(k) for k in (
                 "torch_version", "transformers_version", "processor_class",
-                "image_processor_class", "attn_implementation", "dtype", "gpu", "kv_cache_slots")},
+                "image_processor_class", "attn_implementation", "dtype", "gpu", "gpu_uuid",
+                "numeric_flags", "kv_cache_slots")},
             "ours": {k: (ours_env or {}).get(k) for k in (
-                "torch", "transformers", "draft_class", "attn_implementation", "dtype", "gpu")},
+                "torch", "transformers", "draft_class", "attn_implementation", "dtype", "gpu",
+                "gpu_uuid", "numeric_flags")},
         },
         "unavoidable_differences": [{"name": n, "text": t} for n, t in UNAVOIDABLE_DIFFERENCES],
     }
@@ -858,8 +1001,12 @@ def markdown(result):
         "",
         "## Samples",
         "",
-        "| Question | Prompt | Kept | add | Prune and positions | First tree | Tokens | First difference | Margin |",
-        "| --- | ---: | ---: | ---: | --- | --- | --- | ---: | ---: |",
+        "Margin is the stock fp16 top-1 minus top-2 logit at the first difference; token gap is "
+        "the top-1 minus the lower of the two differing tokens' logits. A near-tie needs both at "
+        f"most {NEAR_TIE_MARGIN}.",
+        "",
+        "| Question | Prompt | Kept | add | Prune and positions | First tree | Tokens | First difference | Margin | Token gap |",
+        "| --- | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: |",
     ]
     for s in result["samples"]:
         tokens = s.get("tokens") or {}
@@ -867,7 +1014,8 @@ def markdown(result):
             f"| {s['question_id']} | {fmt(s.get('prompt_len'))} | {fmt(s.get('kept_len'))} | "
             f"{fmt(s.get('add'))} | {verdict(s.get('prune_equal'))} | {fmt(s.get('tree'))} | "
             f"{'identical' if tokens.get('identical') else ('differ' if tokens else 'n/a')} | "
-            f"{fmt(tokens.get('first_difference'))} | {fmt(tokens.get('margin'))} |"
+            f"{fmt(tokens.get('first_difference'))} | {fmt(tokens.get('margin'))} | "
+            f"{fmt(tokens.get('token_gap'))} |"
         )
     rep = result["reported"]
     hv, ov = rep["hivis_speculative_vs_hivis_autoregressive"], rep["ours_hivis_vs_ours_autoregressive"]
@@ -879,11 +1027,16 @@ def markdown(result):
         f"first differences {hv['differ'] or 'none'}.",
         f"- Our fp16 HiViS against our fp16 AR: {ov['identical']} identical; first differences "
         f"{ov['differ'] or 'none'}.",
-        f"- Mean accepted draft tokens per iteration over all samples, last iteration left out: "
-        f"HiViS side {fmt(rep['hivis_side_mean_acceptance_all_samples'])} "
+        f"- Mean accepted draft tokens per iteration over all samples, end-aligned at "
+        f"{MAX_NEW_TOKENS} tokens and last iteration left out (the gate's rule): HiViS side "
+        f"{fmt(rep['hivis_side_mean_acceptance_all_samples'])} "
         f"({rep['hivis_side_iterations']} iterations), ours "
-        f"{fmt(rep['ours_mean_acceptance_all_samples'])} ({rep['ours_iterations']} iterations). "
-        f"The paper reports {PAPER_ACCEPTANCE} at 60/5/10 on other samples.",
+        f"{fmt(rep['ours_mean_acceptance_all_samples'])} ({rep['ours_iterations']} iterations).",
+        f"- The same by HiViS's own rule (every iteration, as ge_hivis_answer.py and the paper "
+        f"average it): HiViS side {fmt(rep['hivis_side_mean_acceptance_hivis_rule'])} "
+        f"({rep['hivis_side_iterations_hivis_rule']} iterations), ours "
+        f"{fmt(rep['ours_mean_acceptance_hivis_rule'])} ({rep['ours_iterations_hivis_rule']} "
+        f"iterations). The paper reports {PAPER_ACCEPTANCE} at 60/5/10 on other samples.",
         f"- {rep['note']}",
         "",
         "## Environments",
