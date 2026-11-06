@@ -576,6 +576,22 @@ def cell(value, digits=4):
     return str(value)
 
 
+def methods_cell(row, column):
+    """A cell of the methods table: n/a where the column cannot apply, Pending where data is missing."""
+    value = row[column]
+    if value is None:
+        if row["method"] == "autoregressive" and column in (
+            "acceptance_mean", "output_tokens_per_iteration_mean",
+            "speedup_vs_vispec", "speedup_vs_tree_30_3_8",
+        ):
+            return "n/a"
+        if column == "speedup_vs_vispec" and row["method"] != "hivis_speculative":
+            return "n/a"
+        if column == "speedup_vs_tree_30_3_8" and row["tree"] != "60-5-10":
+            return "n/a"
+    return cell(value)
+
+
 def write_methods_markdown(rows, notes, skipped, output_dir):
     lines = [
         "# Method comparison table", "",
@@ -584,7 +600,8 @@ def write_methods_markdown(rows, notes, skipped, output_dir):
         "- `speedup_vs_*` columns are reference mean latency / row mean latency (above 1 means the row"
         " is faster). `speedup_vs_ar` uses the AR run, `speedup_vs_vispec` the ViSpec run at the same"
         " tree, `speedup_vs_tree_30_3_8` the same method at 30-3-8.",
-        "- `Pending` means the value is absent or its reference is missing.", "",
+        "- `n/a` means the column does not apply to the row; `Pending` means the value is absent or"
+        " its reference is missing.", "",
     ]
     shown = tuple(c for c in METHODS_COLUMNS if c not in ("prompt_style", "slurm_job_id", "benchmark", "note"))
     seen = []
@@ -599,7 +616,7 @@ def write_methods_markdown(rows, notes, skipped, output_dir):
         ]
         for other in rows:
             if (other["prompt_style"], other["slurm_job_id"], other["benchmark"]) == key:
-                lines.append("| " + " | ".join(cell(other[c]) for c in shown) + " |")
+                lines.append("| " + " | ".join(methods_cell(other, c) for c in shown) + " |")
         lines.append("")
     if notes or skipped:
         lines += ["## Notes", ""]

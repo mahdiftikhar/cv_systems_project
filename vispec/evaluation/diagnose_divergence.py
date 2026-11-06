@@ -166,7 +166,7 @@ def refuse_unreproducible_eviction(*runs):
 
 
 DRAFT_NAMES = {"vispec_speculative": "ViSpec", "hivis_speculative": "HiViS"}
-DEFAULT_PROMPT_ORDER = "image-last"
+DEFAULT_PROMPT_ORDER = "image-last"  # same as the evaluator default (benchmarks.PROMPT_ORDERS[0])
 
 
 def run_prompt_orders(run):
@@ -581,6 +581,14 @@ def token_ref(case, key):
 
 def write_markdown(path, result):
     summary = result["summary"]
+    # The JSON keeps "vispec" for the draft side; the markdown names the draft run's method.
+    name = result["inputs"].get("draft_method_name", "ViSpec")
+    tag = name.lower()
+
+    def side(value):
+        return tag if value == "vispec" else value
+
+    order = result["inputs"].get("prompt_order")
     lines = ["# Greedy divergence diagnosis", ""]
     if summary["prompt_fingerprint_mismatches"]:
         lines += [
@@ -592,9 +600,10 @@ def write_markdown(path, result):
     lines += [
         f"Comparison: `{result['inputs']['comparison']['path']}`. Original run: "
         f"`{result['inputs']['original_run']}`. Draft run: `{result['inputs']['draft_run']}`. "
-        f"Prompt style: `{result['inputs']['prompt_style']}`.",
+        f"Prompt style: `{result['inputs']['prompt_style']}`."
+        + (f" Prompt order: `{order}`." if order else ""),
         "",
-        "For every turn whose greedy autoregressive (AR) and ViSpec token sequences differ, "
+        f"For every turn whose greedy autoregressive (AR) and {name} token sequences differ, "
         "the prompt is rebuilt, the shared output prefix (AR IDs before the first differing "
         "zero-based index) is appended, and one full forward pass of the stock "
         f"`transformers.Qwen2_5_VLForConditionalGeneration` "
@@ -605,7 +614,7 @@ def write_markdown(path, result):
         f"than {BOTH_WRONG_GAP} below the bf16 maximum; otherwise it is `near_tie` when the "
         f"bf16 margin is at most {NEAR_TIE_MARGIN}, else `unexplained`. "
         "`bf16 agrees` / `fp32 agrees` say whether that pass's argmax equals the AR token, "
-        "the ViSpec token, or neither. The fp32 pass (TF32 disabled) runs for at most "
+        f"the {name} token, or neither. The fp32 pass (TF32 disabled) runs for at most "
         f"{result['settings']['fp32_limit']} cases in sorted order; other cases show "
         "`not_run`.",
         "",
@@ -620,7 +629,7 @@ def write_markdown(path, result):
         "",
         "## Counts",
         "",
-        "| Benchmark | Cases | near_tie | unexplained | both_wrong | fp32 agrees ar | fp32 agrees vispec | fp32 agrees neither | fp32 not run |",
+        f"| Benchmark | Cases | near_tie | unexplained | both_wrong | fp32 agrees ar | fp32 agrees {tag} | fp32 agrees neither | fp32 not run |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     rows = [*summary["per_benchmark"].items(), ("all", summary["overall"])]
@@ -646,9 +655,9 @@ def write_markdown(path, result):
         )
     lines += [
         "",
-        "## AR vs ViSpec token logit gap (logits)",
+        f"## AR vs {name} token logit gap (logits)",
         "",
-        "`|AR token logit - ViSpec token logit|` in each pass; ended sequences are left out.",
+        f"`|AR token logit - {name} token logit|` in each pass; ended sequences are left out.",
         "",
         "| Benchmark | Pass | Cases | Min | Median | Max |",
         "| --- | --- | ---: | ---: | ---: | ---: |",
@@ -663,13 +672,13 @@ def write_markdown(path, result):
     lines += ["", "## Ended sequences", ""]
     if summary["ended_sequences"]:
         lines += [
-            "| Benchmark | Question | Choice/turn | First diff | Ended | AR stop reason | ViSpec stop reason | Class |",
+            f"| Benchmark | Question | Choice/turn | First diff | Ended | AR stop reason | {name} stop reason | Class |",
             "| --- | --- | --- | ---: | --- | --- | --- | --- |",
         ]
         for row in summary["ended_sequences"]:
             lines.append(
                 f"| {row['benchmark']} | {row['question_id']} | {row['choice']}/{row['turn']} | "
-                f"{row['first_mismatch_index']} | {row['ended']} | {row['original_stop_reason']} | "
+                f"{row['first_mismatch_index']} | {side(row['ended'])} | {row['original_stop_reason']} | "
                 f"{row['draft_stop_reason']} | {row['class']} |"
             )
     else:
@@ -682,7 +691,7 @@ def write_markdown(path, result):
         "Top-1 is `torch.argmax` (first maximal index, the decoders' tie-break); top-2 is the "
         "best remaining token. `bf16 ties` counts tokens whose bf16 logit equals the maximum.",
         "",
-        "| Benchmark | Question | Choice/turn | Runs (orig/draft) | First diff | AR token | ViSpec token | bf16 top-1 | bf16 top-2 | bf16 margin | bf16 ties | bf16 agrees | fp32 margin | fp32 agrees | Class | Prompt match |",
+        f"| Benchmark | Question | Choice/turn | Runs (orig/draft) | First diff | AR token | {name} token | bf16 top-1 | bf16 top-2 | bf16 margin | bf16 ties | bf16 agrees | fp32 margin | fp32 agrees | Class | Prompt match |",
         "| --- | --- | --- | --- | ---: | --- | --- | --- | --- | ---: | ---: | --- | ---: | --- | --- | --- |",
     ]
     for case in result["cases"]:
@@ -692,19 +701,11 @@ def write_markdown(path, result):
             f"{case['original_run_index']}/{case['draft_run_index']} | {case['first_mismatch_index']} | "
             f"{token_ref(case, 'ar')} | {token_ref(case, 'vispec')} | {token_cell(bf16['top2'][0])} | "
             f"{token_cell(bf16['top2'][1])} | {fmt(bf16['margin'])} | "
-            f"{bf16['tokens_tied_at_max']} | {bf16['agrees']} | "
-            f"{fmt(fp32['margin']) if fp32 else 'n/a'} | {case['fp32_agrees']} | "
+            f"{bf16['tokens_tied_at_max']} | {side(bf16['agrees'])} | "
+            f"{fmt(fp32['margin']) if fp32 else 'n/a'} | {side(case['fp32_agrees'])} | "
             f"{case['class']} | {case['prompt_fingerprint_matches']} |"
         )
     lines.append("")
-    name = result["inputs"].get("draft_method_name", "ViSpec")
-    if name != "ViSpec":
-        # Name the draft method; keep the run paths on the first line as they are.
-        lines = [
-            line if line.startswith("Comparison:") else
-            line.replace("ViSpec", name).replace("agrees vispec", f"agrees {name.lower()}")
-            for line in lines
-        ]
     path.write_text("\n".join(lines))
 
 
@@ -821,7 +822,7 @@ def main(argv=None):
             ),
             "ar_vispec_logit_gap": f"|AR token logit - {draft_name} token logit| in that pass; None when a sequence ended",
             "gate_passes": "true when unexplained + both_wrong == 0",
-            "agrees": f"whether that pass's argmax equals the AR token, the {draft_name} token, or neither",
+            "agrees": f"whether that pass's argmax equals the AR token, the {draft_name} token, or neither; the value 'vispec' in this JSON means the draft run's token ({draft_name})",
             "argmax": "torch.argmax, the first maximal index (decoder tie-break); top-2 is the best remaining token",
             "tokens_tied_at_max": "number of vocabulary entries whose logit equals the argmax logit",
         },

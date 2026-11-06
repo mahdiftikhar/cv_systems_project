@@ -20,7 +20,6 @@ RUNTIME_GUARDED_SETTINGS = ("slim_prefill", "kv_capacity")
 SPARSITY_SETTINGS = ("kv_retention", "kv_policy", "draft_retention", "draft_policy")
 LAYOUT_SETTINGS = ("kv_layout",) + SPARSITY_SETTINGS
 METHODS = ("autoregressive", "vispec_speculative", "hivis_speculative")
-SPECULATIVE_METHODS = ("vispec_speculative", "hivis_speculative")
 DEFAULT_PROMPT_ORDER = "image-last"
 MODES = ("method", "sparsity")
 
@@ -327,8 +326,7 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
                 f"{benchmark} {setting} (runtime)",
             )
         require_same(
-            [prompt_order_of(r, benchmark) for r in all_reports
-             if r["summary"].get("runtime", {}).get(benchmark)],
+            [prompt_order_of(r, benchmark) for r in all_reports],
             f"{benchmark} prompt_order (runtime)",
         )
         result["sparsity"][benchmark] = check_sparsity_settings(
