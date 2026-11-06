@@ -103,7 +103,9 @@ upper bound for the compact layout. Budgets are 0.25, 0.5, 0.75 and 1.0. Policie
 | `DEPTH`, `TOP_K`, `TOTAL_TOKEN`, `NUM_Q` | 3, 8, 30, 2 | Draft tree |
 
 `run.sh` validates every arm of all four lists before it creates the first run folder. An invalid or
-empty list exits with status 2 and creates no folder. Each arm creates its own folder; `metadata.txt`
+empty list exits with status 2 and creates no folder. Setting `KV_ARMS`, `DRAFT_ARMS` or `COMBINED_ARMS`
+to `none` skips that sweep. This splits the arms across shorter jobs, which survive preemption better.
+The references always run, so each job carries its own and every ratio stays inside one job. Each arm creates its own folder; `metadata.txt`
 records `sweep`, `arm`, `arm_list`, `benchmarks`, `qwen_benchmarks`, `kv_layout=compact` and the four
 sparsity settings. The runner passes `--num-samples 100` to the evaluator as in the other experiments.
 The window count is 55, so the evaluator must treat that value as an upper bound.
@@ -130,6 +132,14 @@ A failed arm is recorded and the remaining arms still run, but a failed benchmar
 ```bash
 PROMPT_STYLE=long CLUSTER_PARTITION=preempt \
   SBATCH_EXTRA="--cpus-per-task=4 --mem=22G --time=<per task>" \
+  bash experiment/submit_ampere.sh experiment/09_qwen_reverse_longcontext
+```
+
+Split the arms into shorter jobs. Each job runs both references, then its own arms:
+
+```bash
+PROMPT_STYLE=long CLUSTER_PARTITION=preempt KV_ARMS="0.5:spatial 0.5:attention" DRAFT_ARMS=none \
+  COMBINED_ARMS=none SBATCH_EXTRA="--cpus-per-task=4 --mem=22G --time=02:00:00" \
   bash experiment/submit_ampere.sh experiment/09_qwen_reverse_longcontext
 ```
 
