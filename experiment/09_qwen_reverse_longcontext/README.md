@@ -260,20 +260,41 @@ tokens. That gives a rough floor for timing differences between arms inside this
 The ratios below divide AR by ViSpec, so above 1 means ViSpec is faster.
 
 - **End to end:** 1.737. This is `speedup_vs_ar` in the sweep table.
-- **Decode only:** 2.320.
+- **Decode only, like for like:** 1.895 over the 42 windows where neither method hit the 1,024-token cap.
+  Leaving out only the 8 windows where one method hit the cap and the other did not gives 1.981 (47
+  windows).
+- **Decode only, all 55 windows:** 2.320. This figure is inflated by those 8 windows (see the length gap
+  below). The per-window median is 2.02.
 - **Per output token:** 1.903.
 - **The cap:** with TTFT unchanged, infinitely fast decoding would give at most 26.237 / 6.665 = 3.94.
 
-In the same-job comparisons of Week 3, long TextVQA and COCO answers give 2.16 to 2.32 end to end and 2.39 to
-2.48 decode-only. Per output token they give 2.20 to 2.47.
+**Comparison with single images.** On long TextVQA and COCO answers, speedups are:
 
-So speculative decoding still cuts decode time by more than half on these multi-page prompts, and prompt
-processing limits the end-to-end gain. These runs do not split TTFT between the vision encoder and the
-language model's prompt pass.
+- 2.13 to 2.32 end to end (Weeks 1 and 3);
+- 2.28 to 2.48 decode-only below the cap (all samples: 2.39 to 2.48, Week 3 jobs);
+- 2.20 to 2.47 per output token (Week 3 jobs).
 
-**Exact agreement** between AR and ViSpec is 0 of 55. The prompts are identical (55 of 55 fingerprints), and
-the first mismatch falls at output index 7 to 443 (median 58). The divergence diagnosis that would classify
-these as near-ties is Pending GPU run (no job yet).
+So on these multi-page prompts the decode phase gains about 1.9 to 2.0 times, below the single-image figures.
+That fits the lower acceptance (1.70 against 2.14 and 2.28 accepted draft tokens per iteration). Prompt
+processing then dilutes the gain further, to 1.74 end to end. These runs do not split TTFT between the
+vision encoder and the language model's prompt pass.
+
+**The length gap.** AR's summaries average 497.3 tokens and ViSpec's 424.4. The gap comes mostly from a few
+windows:
+
+- 49 of the 55 windows differ in length, and 6 are equal. AR is longer in 29 and ViSpec in 20.
+- AR hits the 1,024-token cap in 12 windows and ViSpec in 6: 5 both, 7 AR only, 1 ViSpec only.
+- The 8 one-sided windows carry 3,816 of the 4,010-token total gap (95%). In the other 47 windows the gap is
+  194 tokens, with AR longer in 22, ViSpec in 19, and 6 equal.
+
+The outputs first differ at output index 7 to 443 (median 58), never at the first token. That fits the known
+bf16 divergence between the two methods, which matched in every fp32 check so far: 15 checks on long
+TextVQA, all with eviction. The Re:Verse+ fp32 check is pending. Why AR reached the cap more often is not
+measured.
+
+**Exact agreement** between AR and ViSpec is 0 of 55, although the prompts are identical (55 of 55
+fingerprints). The divergence diagnosis that would classify these as near-ties is Pending GPU run (no job
+yet).
 
 #### Per arm (sweep table)
 

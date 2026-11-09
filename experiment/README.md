@@ -354,8 +354,12 @@ Job 398924 (attempt with restart count 1, card `GPU-eb032c66-7f3f-d1b6-96cf-c9db
 kv 1.0 attention and kv 0.75 spatial, each with 55 of 55 windows.
 
 - **Identity gate:** passed. Both 1.0 arms are token-identical to the ViSpec reference on 55 of 55 windows.
-- **ViSpec against AR:** 1.74 times faster per window (26.24 s against 15.11 s). The decode phase alone is 2.32
-  times faster.
+- **ViSpec against AR:** 1.74 times faster per window (26.24 s against 15.11 s).
+- **Decode phase:** it gains about 1.9 to 2.0 times like for like. The figure is 1.90 over the 42 windows
+  where neither method hit the 1,024-token cap, and 1.98 without the 8 windows where only one method hit it.
+  That is below the 2.28 to 2.48 of long TextVQA and COCO, and it fits the lower acceptance (1.70 against
+  2.14 and 2.28). The all-window figure, 2.32, is inflated by those 8 windows, which carry 95% of the
+  output-length gap.
 - **The cap:** TTFT, which includes encoding the pages, is 6.65 to 6.66 s. That is 44% of ViSpec's time and
   25% of AR's, so even infinitely fast decoding would give at most about 3.9 times over AR.
 - **Eviction at 0.75 spatial:** live KV went to 0.770 of the 1.0 arm (55.9 MiB less). The decode peak did not

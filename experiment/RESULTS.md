@@ -38,23 +38,33 @@ The project asks: **can dynamic visual sparsity make ViSpec faster and leaner wi
 We answer it in two parts. The first part is what speculative decoding itself delivers. The second part is
 what visual sparsity adds on top of it.
 
-1. **ViSpec is 2.16 to 2.32 times faster than AR on long answers** (TextVQA and COCO, `long` style). It is
-   1.46 to 1.49 times faster on short COCO captions. It is not faster on 5-token TextVQA answers (0.96 to
-   0.98), because prompt processing is most of their time.
-2. **ViSpec is exact in fp32 and differs from AR only at bf16 near-ties.** In fp32, ViSpec and AR gave the
-   same tokens in all 15 checks (5 long TextVQA questions at each of three eviction settings). In bf16 they
-   agree on 22 to 28 of 100 long answers and 88 to 96 of 100 short answers.
-   Every diagnosed divergence is a near-tie between the top two logits, apart from one case. Experiment 07
-   traced that case to an exact tie in the cached decode (section 2.2).
-3. **On 5- to 6-page manga windows, ViSpec is 1.74 times faster, and prompt processing caps the gain.**
-   Time to first token (TTFT), which includes encoding the pages, is 6.65 to 6.66 s per window. That is
-   44% of ViSpec's 15.11 s and 25% of AR's 26.24 s. Even infinitely fast decoding would give at most
-   about 3.9 times over AR. The decode phase alone is 2.32 times faster (section 2.3).
+1. **ViSpec is 2.13 to 2.32 times faster than AR on long answers** (TextVQA and COCO, `long` style, Weeks 1
+   and 3). It is 1.46 to 1.49 times faster on short COCO captions. It is not faster on 5-token TextVQA
+   answers (0.96 to 0.98), because prompt processing is most of their time.
+2. **ViSpec matched AR in every fp32 check, and in bf16 they differ at near-ties.**
+   - **fp32:** ViSpec and AR gave identical tokens in 15 of 15 checks. These are the first 5 long TextVQA
+     questions at each of three eviction settings. No fp32 check without eviction is recorded, and the
+     Re:Verse+ check is pending.
+   - **bf16:** they agree on 22 to 28 of 100 long answers and 88 to 96 of 100 short answers. Every
+     AR-against-ViSpec divergence diagnosed so far (Week 1, 166 cases) is a near-tie between the top two
+     logits (section 2.2).
+3. **On 5- to 6-page manga windows, ViSpec is 1.74 times faster end to end** (section 2.3).
+   - **Decode phase:** it gains about 1.9 to 2.0 times when the length cap does not distort the
+     comparison. The figure is 1.90 over the 42 windows where neither method hit the 1,024-token cap, and
+     1.98 over the 47 windows where the cap was not one-sided.
+   - **Against single images:** that is below the 2.28 to 2.48 times on long TextVQA and COCO (the same
+     below-cap figure, Week 3 jobs). It fits the lower acceptance: 1.70 against 2.14 and 2.28 accepted
+     draft tokens per iteration.
+   - **Prompt processing:** it dilutes the gain further. Time to first token (TTFT), which includes encoding
+     the pages, is 6.65 to 6.66 s per window. That is 44% of ViSpec's 15.11 s and 25% of AR's 26.24 s, so
+     even infinitely fast decoding would give at most about 3.9 times over AR.
 4. **Visual sparsity barely helps at batch 1.**
    - **What it does:** it shrinks the live KV cache and, at low budgets, costs some quality and most
      long-answer agreement.
-   - **What it cannot do:** it cannot speed up decoding, because it removes little of each decode step's
-     cost and decoding is host-bound.
+   - **Speed at batch 1:** it did not make decode steps cheaper. It removes little of each step's cost, and
+     decoding is host-bound. End-to-end latency ratios against the 1.0 arm ranged from 0.875 (the arm took
+     14% longer) to 1.130 (it took 12% less time, on long COCO). These follow output length and, we infer, a
+     rise in acceptance.
    - **Why:** section 3 gives the explanation. This is an explanation of the measurements, not a new method.
 
 ## 2. Speculative decoding: ViSpec against AR
@@ -92,20 +102,29 @@ Accepted draft tokens are identical across jobs because greedy outputs are repro
 
 ### 2.2 Exactness
 
-- **ViSpec is exact in fp32.** Greedy ViSpec commits only tokens that the target picks, so it should equal
-  AR. The fp32 offset check (GPU job 402165) decoded both methods in fp32 with TF32 off. It covered 5 long
-  TextVQA questions each at kv 0.25 spatial, kv 0.75 spatial and combined 0.25 spatial. AR equalled ViSpec
-  on 5 of 5 in each setting ([06](06_qwen_kv_eviction/README.md#fp32-offset-oracle-exactness-check) and
-  [08](08_qwen_combined_sparsity/README.md#fp32-offset-oracle-exactness-check) READMEs).
-- **In bf16 the outputs differ at near-ties.** The Week 1 diagnosis found every AR-against-ViSpec
-  divergence to be a near-tie: 150 of 150 in `long` and 16 of 16 in `short`, with a bf16 top-2 margin of at
-  most 0.375 logits ([03 README](03_qwen_vispec/README.md#results)). The most likely mechanism is not
-  measured: batched tree verification and one-token decoding use different kernel shapes, so tied logits
-  can round differently.
-- **The cached decode itself drifts at ties (experiment 07).** The fork's cached AR decode and stock
-  Hugging Face greedy decoding agree on 19 of 100 long TextVQA answers. 80 of the 81 first mismatches are
-  near-ties. In the remaining case (question 35537, index 162) the fork's two top logits tie exactly. It was
-  judged bf16 implementation noise, a known limitation ([07 README](07_qwen_decode_drift/README.md#results)).
+- **In fp32, ViSpec matched AR in every check (15 of 15).** Greedy ViSpec commits only tokens that the
+  target picks, so it should equal AR.
+  - **The checks:** the fp32 offset check (GPU job 402165) decoded both methods in fp32 with TF32 off. It
+    covered the first 5 long TextVQA questions at each of three settings: kv 0.25 spatial, kv 0.75 spatial
+    and combined 0.25 spatial. AR equalled ViSpec on 5 of 5 in each setting
+    ([06](06_qwen_kv_eviction/README.md#fp32-offset-oracle-exactness-check) and
+    [08](08_qwen_combined_sparsity/README.md#fp32-offset-oracle-exactness-check) READMEs).
+  - **The scope:** every check had eviction on. No fp32 decode without eviction is recorded, and none on
+    COCO or on Re:Verse+ windows.
+- **In bf16, AR and ViSpec differ at near-ties.** The Week 1 diagnosis found every AR-against-ViSpec
+  divergence to be a near-tie, with no exception: 150 of 150 in `long` and 16 of 16 in `short`, with a bf16
+  top-2 margin of at most 0.375 logits ([03 README](03_qwen_vispec/README.md#results)). The most likely
+  mechanism is not measured: batched tree verification and one-token decoding use different kernel shapes,
+  so tied logits can round differently.
+- **The draft-pruning arms have one exception, traced to the cached decode.** This is a separate
+  comparison: each draft-only arm (05) against the ViSpec reference at retention 1.0.
+  - **The exception:** every divergence there is a near-tie except one, question 35537 at output index 162
+    (stock bf16 margin 0.625 logits).
+  - **Experiment 07:** it compared the fork's cached AR decode with stock Hugging Face greedy decoding. They
+    agree on 19 of 100 long TextVQA answers, and 80 of the 81 first mismatches are near-ties. At 35537:162
+    the fork's two top logits tie exactly.
+  - **Judgement:** it was judged bf16 implementation noise, a known limitation
+    ([07 README](07_qwen_decode_drift/README.md#results)).
 - **On Re:Verse+ windows**, ViSpec and AR agree on 0 of 55 summaries in bf16. The prompts are identical
   (55 of 55 input fingerprints match), and the first mismatch falls at output index 7 to 443 (median 58).
   The fp32 offset check and the divergence diagnosis for these windows are **Pending GPU run (no job yet)**.
@@ -117,15 +136,15 @@ Re:Verse+ windows are 5 or 6 manga pages given as images, and the model summaris
 prompts are about 1,063 tokens. The Re:Verse+ row below comes from the run files of job 398924 (restart 1),
 and the other rows come from the Week 3 sweep tables. Each ratio is taken inside one job.
 
-| Job | Benchmark | n | TTFT AR / ViSpec (s) | ViSpec TTFT share | Speedup over AR, end to end | Decode-only speedup | Per-output-token speedup | Accepted draft tokens per iteration |
-| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
-| 398924 | Re:Verse+ windows | 55 | 6.654 / 6.665 | 44.1% | 1.737 | 2.320 | 1.903 | 1.702 |
-| 398883 | TextVQA long | 100 | 0.940 / 0.939 | 16.7% | 2.200 | 2.441 | 2.248 | 2.141 |
-| 398884 | TextVQA long | 100 | 0.937 / 0.941 | 16.5% | 2.190 | 2.427 | 2.230 | 2.141 |
-| 398885 | TextVQA long | 100 | 0.932 / 0.936 | 16.6% | 2.158 | 2.389 | 2.200 | 2.141 |
-| 398883 | COCO long | 100 | 0.223 / 0.221 | 11.2% | 2.294 | 2.457 | 2.445 | 2.284 |
-| 398884 | COCO long | 100 | 0.228 / 0.222 | 10.9% | 2.304 | 2.460 | 2.456 | 2.284 |
-| 398885 | COCO long | 100 | 0.222 / 0.221 | 11.2% | 2.315 | 2.479 | 2.467 | 2.284 |
+| Job | Benchmark | n | TTFT AR / ViSpec (s) | ViSpec TTFT share | Speedup over AR, end to end | Decode-only speedup, below the cap in both (n) | Decode-only speedup, all samples | Per-output-token speedup | Accepted draft tokens per iteration |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 398924 | Re:Verse+ windows | 55 | 6.654 / 6.665 | 44.1% | 1.737 | 1.895 (42) | 2.320 | 1.903 | 1.702 |
+| 398883 | TextVQA long | 100 | 0.940 / 0.939 | 16.7% | 2.200 | 2.327 (96) | 2.441 | 2.248 | 2.141 |
+| 398884 | TextVQA long | 100 | 0.937 / 0.941 | 16.5% | 2.190 | 2.311 (96) | 2.427 | 2.230 | 2.141 |
+| 398885 | TextVQA long | 100 | 0.932 / 0.936 | 16.6% | 2.158 | 2.280 (96) | 2.389 | 2.200 | 2.141 |
+| 398883 | COCO long | 100 | 0.223 / 0.221 | 11.2% | 2.294 | 2.457 (100) | 2.457 | 2.445 | 2.284 |
+| 398884 | COCO long | 100 | 0.228 / 0.222 | 10.9% | 2.304 | 2.460 (100) | 2.460 | 2.456 | 2.284 |
+| 398885 | COCO long | 100 | 0.222 / 0.221 | 11.2% | 2.315 | 2.479 (100) | 2.479 | 2.467 | 2.284 |
 
 Exact agreement and quality for these rows are in the table of section 2.1. For Re:Verse+ they are 0 of 55
 and ROUGE-1 22.92 (AR) against 22.58 (ViSpec).
@@ -133,6 +152,9 @@ and ROUGE-1 22.92 (AR) against 22.58 (ViSpec).
 Column definitions:
 
 - **Decode-only speedup:** AR's mean (latency - TTFT) divided by ViSpec's mean (latency - TTFT).
+  - **Below the cap in both:** only the samples where neither method stopped at the 1,024-token cap. This
+    is the like-for-like figure.
+  - **All samples:** includes samples where one method ran to the cap and the other stopped earlier.
 - **Per-output-token speedup:** AR's mean time per output token divided by ViSpec's. Time per output token
   is (latency - TTFT) / (output tokens - 1), averaged over samples.
 - **Direction:** in all three speedup columns, a value above 1 means ViSpec is faster.
@@ -140,21 +162,37 @@ Column definitions:
 What the Re:Verse+ windows show:
 
 - **The end-to-end speedup is 1.74 times** (AR 26.24 s, ViSpec 15.11 s per window). On long TextVQA and
-  COCO answers it is 2.16 to 2.32 times.
+  COCO answers it is 2.13 to 2.32 times (Weeks 1 and 3).
 - **Prompt processing is the cap.** TTFT is 6.65 s for AR and 6.66 s for ViSpec. That is 44% of ViSpec's
   window time and 25% of AR's (the mean of per-window shares is 47% and 30%). TTFT covers everything up to the
   first token, including encoding the 5 or 6 pages. With TTFT fixed, even infinitely fast decoding would bring a window down
   to 6.66 s, at most about 3.9 times faster than AR (26.24 / 6.66 = 3.94).
-- **Speculative decoding still works at this context length.** The decode phase is 2.32 times faster than
-  AR (19.58 s against 8.44 s). That is close to the 2.2 to 2.3 times end to end, and 2.39 to 2.48 times
-  decode-only, on long TextVQA and COCO answers. Per window, the decode-only ratio has a median of 2.02 and
-  ranges from 0.68 to 8.21.
-- **Two parts of the decode gain differ.**
-  - **Per output token the gain is smaller:** 1.90 times on the windows, against 2.20 to 2.47 times on
-    long answers. Acceptance is also lower: 1.70 accepted draft tokens per iteration, against 2.14 (TextVQA)
-    and 2.28 (COCO).
-  - **AR's summaries are longer:** 497.3 tokens on average against 424.4, with 12 windows against 6 at the
-    1,024-token cap. That makes the decode-time ratio larger than the per-token ratio.
+- **The decode phase gains about 1.9 to 2.0 times, less than on single images.**
+  - **Like for like:** over the 42 windows where neither method hit the 1,024-token cap, AR's decode time
+    is 1.90 times ViSpec's. Leaving out only the 8 windows where one method hit the cap and the other did
+    not gives 1.98 (47 windows).
+  - **Single images:** on long TextVQA and COCO the below-cap figure is 2.28 to 2.48 (all samples: 2.39 to
+    2.48; Week 3 jobs).
+  - **Per output token:** the gain is 1.90 on the windows, against 2.20 to 2.47 on single images.
+  - **Acceptance:** the smaller gain fits the lower acceptance, 1.70 accepted draft tokens per iteration
+    against 2.14 (TextVQA) and 2.28 (COCO).
+  - **End to end:** prompt processing then dilutes the decode gain to 1.74.
+- **The all-window decode figure, 2.32, is inflated by a few capped windows.** Over all 55 windows, AR's
+  mean decode time is 2.32 times ViSpec's (19.58 s against 8.44 s). The 8 windows where only one method hit
+  the cap carry about 95% of the length gap described next. Per window, the decode-only ratio has a median of
+  2.02 and ranges from 0.68 to 8.21.
+- **The length gap comes mostly from a few windows.** AR's summaries average 497.3 tokens and ViSpec's 424.4.
+  - **How many differ:** 49 of the 55 windows differ in length and 6 are equal. AR is longer in 29 windows
+    and ViSpec in 20.
+  - **The cap:** AR hits the 1,024-token cap in 12 windows and ViSpec in 6. Both hit it in 5, AR alone in
+    7 and ViSpec alone in 1.
+  - **Where the gap is:** those 8 one-sided windows carry 3,816 of the 4,010-token total gap (95%). In the
+    other 47 windows the gap is 194 tokens: AR is longer in 22, ViSpec in 19, and 6 are equal.
+  - **Where the outputs split:** they first differ at output index 7 to 443 (median 58), never at the first
+    token. That fits the known bf16 divergence between the two methods, which matched in every fp32 check
+    so far (section 2.2; the Re:Verse+ fp32 check is pending). After the first difference the two summaries
+    can run to different lengths.
+  - **Not measured:** why AR reached the cap more often.
 - **What is not measured.** These runs do not measure how TTFT splits between the vision encoder and the
   language model's prompt pass. We make no claim about that split.
 - **Future work, not done here.** Cutting image tokens before or early in prompt processing is the lever
@@ -170,14 +208,15 @@ Two forms were tested.
 - **Target KV eviction (06):** it drops visual entries from the target's KV cache once, after prompt
   processing.
 
-Experiment 08 applies both at once. At batch 1 neither form makes ViSpec faster, for four reasons. Each
-reason says which part is measured and which part is inferred.
+Experiment 08 applies both at once. At batch 1 neither form made decode steps cheaper, for four reasons.
+Each reason says which part is measured and which part is inferred.
 
 1. **The draft already compresses each image to 2 learned queries.**
    - **The mechanism:** ViSpec's image adaptor replaces each image's tokens with `num_q` = 2 query outputs
      before the draft sees them. A 1,148-token page reaches the draft as 2 positions, so draft pruning has
      almost nothing to cut.
-   - **Measured, Week 3:** draft pruning kept acceptance within -0.015 to +0.076 of the 1.0 arm. Latency
+   - **Measured, Week 3:** draft pruning kept acceptance within -0.015 to +0.076 of the 1.0 arm. The
+     largest rises come from one capped long COCO answer. Latency
      ratios (same-policy 1.0 arm over arm) were 0.976 to 1.037. Live KV did not move (arm over 1.0 arm,
      0.995 to 1.012).
 2. **The KV cache is a small part of each decode step's memory traffic.**
@@ -199,10 +238,22 @@ reason says which part is measured and which part is inferred.
 4. **Eviction runs after prompt processing**, so it cannot cut TTFT. TTFT ratios (1.0 arm over arm) stayed
    within 0.986 to 1.013 in Week 3. On Re:Verse+, TTFT is 44% of ViSpec's time, and eviction cannot reach it.
 
-So at batch 1, visual sparsity mainly trades output agreement, and at low budgets quality, for memory. End-to-end
-latency moved by a few percent either way. It followed output length and, we infer, a rise in acceptance under
-eviction, not cheaper steps. Memory savings are reported as memory and not converted into batched throughput: the ViSpec tree
-code supports batch 1 only.
+So at batch 1, visual sparsity mainly trades output agreement, and at low budgets quality, for memory.
+
+**End-to-end latency** moved from 0.875 to 1.130 times the same-policy 1.0 arm in Week 3 (1.0 arm latency over
+arm latency). The two ends are these:
+
+- **Slow end, 0.875:** long TextVQA kv 0.5 spatial (job 398883). The arm took 14% longer, and its answers were
+  17% longer (325.9 against 277.7 tokens).
+- **Fast end, 1.130:** long COCO combined 0.25 attention (job 398885). The arm took 12% less time, and its
+  answers were 10% shorter (98.6 against 109.9 tokens).
+- **Per output token:** in both arms, time per output token was about 2% lower than in the 1.0 arm.
+
+Latency therefore followed output length and, we infer, a rise in acceptance under eviction (2.141 to 2.265
+and 2.284 to 2.362 accepted draft tokens per iteration in these two arms), not cheaper steps.
+
+Memory savings are reported as memory and not converted into batched throughput: the ViSpec tree code
+supports batch 1 only.
 
 ### 3.1 Sparsity results, Weeks 2 to 4
 
@@ -349,7 +400,7 @@ above.
 
 | Prediction (where it was written) | Outcome | Evidence |
 | --- | --- | --- |
-| Greedy ViSpec reproduces AR tokens (design spec, Week 1) | **Held in fp32. Not held in bf16, explained** | fp32: 15 of 15 checks identical. bf16: 22 to 28 of 100 (`long`), 88 to 96 of 100 (`short`), 0 of 55 (Re:Verse+). Every diagnosed AR-against-ViSpec divergence is a near-tie, and the Re:Verse+ ones are not yet diagnosed (section 2.2) |
+| Greedy ViSpec reproduces AR tokens (design spec, Week 1) | **Held in all 15 fp32 checks. Not held in bf16, explained** | fp32: 15 of 15 checks identical (5 long TextVQA questions at three eviction settings; none without eviction or on Re:Verse+). bf16: 22 to 28 of 100 (`long`), 88 to 96 of 100 (`short`), 0 of 55 (Re:Verse+). Every diagnosed AR-against-ViSpec divergence is a near-tie, and the Re:Verse+ ones are not yet diagnosed (section 2.2) |
 | Decode is host-bound, so visual KV eviction barely moves decode latency ([04](04_qwen_decode_profile/README.md)) | **Held (inference from a profile)** | GPU busy 36 to 50% of a step. TTFT and per-iteration time did not change under eviction |
 | Draft pruning costs acceptance at most slightly ([05](05_qwen_draft_pruning/README.md)) | **Held** | Acceptance within -0.015 to +0.076 of the 1.0 arm |
 | Draft pruning barely moves latency (05) | **Held** | Latency ratios 0.976 to 1.037 |
@@ -371,7 +422,7 @@ above.
 | Comparing runs from different GPU models, settings or prompts as if matched | Avoided | Every Qwen run is on a pinned RTX A6000 with its device report. `compare_metrics` refuses pairs whose model, settings, GPU identity, allocation or prompt fingerprints differ. `sweep_table` and `plot_tradeoffs` compute and plot every ratio inside one (style, job) group. Timing is never compared across jobs |
 | Claiming KV-eviction memory savings from a measurement that cannot see them | Avoided | All sparsity arms use the compact cache layout, sized per sample. Live KV is labelled arithmetic. The decode and post-compaction allocator peaks are reported separately. The fixed 16,384-token buffer of Week 1 is never used for an eviction memory claim |
 | Committing benchmark images or manga pages, or ignoring the licence terms | Avoided | No page image, narration or generated summary text is in the repository or on this page, only scores, counts and token IDs. Re:Verse+ is reached through the git-ignored link `bench_data/reverse_plus`, and the dataset folder was left unchanged (no file newer than its `FREEZE.json`) |
-| Substituting paper numbers for measurements | Avoided | Every number on this page comes from this cluster's run files, sweep tables or comparison files |
+| Substituting paper numbers for measurements | Avoided | Every measurement on this page comes from this cluster's run files, sweep tables or comparison files. The weight sizes come from the checkpoint file headers, and the prior-art methods are named as citations only |
 
 ## 8. Open issues
 
@@ -388,7 +439,8 @@ above.
   isolated.
 - **bf16 agreement is low on long answers.** ViSpec and AR agree on 22 to 28 of 100 long TextVQA and COCO
   answers and on 0 of 55 Re:Verse+ summaries. In exact arithmetic they would agree on all of them. Equal
-  outputs are shown only in fp32 (15 checks), so the speedups are observed ratios. The Re:Verse+ divergences
+  outputs are shown only in fp32 (15 checks on long TextVQA, all with eviction), so the speedups are observed
+  ratios. The Re:Verse+ divergences
   are not yet diagnosed.
 - **One run per arm.** Run-to-run spread is unknown. In job 398924 the two 1.0 arms, whose tokens are
   identical to the ViSpec reference, still ran 0.9% and 0.5% faster than it. Latency differences of about 1%
