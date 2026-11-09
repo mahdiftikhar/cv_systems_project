@@ -156,3 +156,9 @@ against the measurements with its cutoff.
 - The HiViS paper's numbers use a different harness (fp16, 500 new tokens, an image-first prompt, the first
   80 TextVQA test rows). They are context only and are never substituted for these results.
 - Re:Verse+ on 7B and KV eviction on 7B are not run.
+- Every job runs its arms in the same order: AR first, then ViSpec, then HiViS. Any drift in GPU clock or
+  temperature over a 1-2 hour job falls on the later arms, so a small speed difference between methods can
+  partly reflect when an arm ran. The device report records the GPU at the start of each arm only.
+- `compare_metrics` refuses to pair runs from different jobs only when the draft is HiViS. A ViSpec against AR
+  comparison still accepts runs from different jobs, as the 3B baselines did, so build 7B comparisons from one
+  job's folders, or use `sweep_table`, which refuses to mix jobs.
