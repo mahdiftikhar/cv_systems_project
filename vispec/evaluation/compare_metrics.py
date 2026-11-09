@@ -109,26 +109,26 @@ def check_sparsity_settings(original, draft, benchmark, mode):
     }
 
 
-def check_same_slurm_job(reports):
-    """Sparsity mode: every report must come from one Slurm job and restart attempt."""
+def check_same_slurm_job(reports, label="Sparsity mode"):
+    """Every report must come from one Slurm job and restart attempt."""
     jobs, restarts = set(), set()
     for report in reports:
         metadata = report["summary"]["metadata"]
         job = (metadata.get("slurm_job_id") or "").strip()
         if not job or job == "unset":
             raise ValueError(
-                f"Sparsity mode needs slurm_job_id in metadata.txt: {report['path']}"
+                f"{label} needs slurm_job_id in metadata.txt: {report['path']}"
             )
         jobs.add(job)
         restarts.add((metadata.get("slurm_restart_count") or "0").strip())
     if len(jobs) > 1:
         raise ValueError(
-            "Sparsity mode compares runs from one Slurm job; got slurm_job_id "
+            f"{label} compares runs from one Slurm job; got slurm_job_id "
             + ", ".join(sorted(jobs))
         )
     if len(restarts) > 1:
         raise ValueError(
-            "Sparsity mode compares runs from one restart attempt; got slurm_restart_count "
+            f"{label} compares runs from one restart attempt; got slurm_restart_count "
             + ", ".join(sorted(restarts))
         )
 
@@ -274,6 +274,9 @@ def compare(original_paths, draft_paths, output_dir, mode="method"):
             if len(values) > 1:
                 raise ValueError(f"Cannot compare different {setting} settings")
     hivis = mode == "method" and group_methods[1][1] == "hivis_speculative"
+    if hivis:
+        # A HiViS ratio spans one job and one restart attempt, as in sparsity mode.
+        check_same_slurm_job(all_reports, "HiViS method mode")
     for setting in ("base_model", "spec_model", "temperature"):
         if setting == "spec_model" and hivis:
             # The autoregressive reports record the ViSpec draft they load and do not use,

@@ -73,145 +73,10 @@ if [[ "$check_set" == "diagnosis" ]]; then
 fi
 mkdir -p "$run_dir/checks"
 
-set +e
-(
-set -e
-finish() {
-    local status=$?
-    trap - EXIT
-    set +e
-    printf 'finished_utc=%s\nexit_code=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" >> "$run_dir/metadata.txt"
-    printf '%s\n' "$status" > "$run_dir/exit-code.txt"
-    echo "Checks finished with exit code $status. Artifacts: $run_dir"
-    exit "$status"
-}
-trap finish EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-if [[ -n "${SUBMIT_COMMAND:-}" ]]; then
-    submit_command="$SUBMIT_COMMAND"; sbatch_extra="${SBATCH_EXTRA:-}"
-else
-    submit_command="unset"; sbatch_extra="unset"
-fi
-{
-    printf 'started_utc=%s\ncommit=%s\nhost=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$commit" "$(hostname)"
-    printf 'check_set=%s\nbench_dir=%s\n' "$check_set" "$bench_dir"
-    printf 'base_model_7b=%s\nvispec_7b=%s\nhivis_7b=%s\n' "$base7b" "$vispec7b" "$hivis7b"
-    printf 'python=%s\nslurm_job_id=%s\ncuda_visible_devices=%s\n' "$(command -v "$python_bin")" "${SLURM_JOB_ID:-unset}" "${CUDA_VISIBLE_DEVICES:-unset}"
-    printf 'slurm_restart_count=%s\n' "${SLURM_RESTART_COUNT:-0}"
-    printf 'submit_command=%s\nsbatch_extra=%s\n' "$submit_command" "$sbatch_extra"
-} > "$run_dir/metadata.txt"
-echo "Run artifacts: $run_dir"
-cat "$run_dir/metadata.txt"
-if [[ -s "$run_dir/git-status.txt" ]]; then
-    echo "Working tree has changes; see git-status.txt and tracked-changes.patch."
-fi
-
-"$python_bin" --version
-"$python_bin" "$repo_dir/experiment/capture_packages.py" > "$run_dir/packages.txt"
-bash "$run_dir/capture_device.sh" "$python_bin" > "$run_dir/device.txt" 2>&1
-echo "Launch device report: $run_dir/device.txt"
-"$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite qwen
-"$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite qwen7b
-bash "$run_dir/check_cuda.sh" "$python_bin"
-export PYTHONUNBUFFERED=1
-
-# run_check <name> <command...>: log to checks/<name>.log, record the command and exit code in
-# checks/<name>.json, and keep going whatever the result.
-run_check() {
-    local name="$1"; shift
-    local code
-    printf '\n=== check %s ===\nRunning:' "$name"
-    printf ' %q' "$@"
-    printf '\n'
-    local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    set +e
-    "$@" 2>&1 | tee "$run_dir/checks/$name.log"
-    code="${PIPESTATUS[0]}"
-    set -e
-    "$python_bin" - "$run_dir/checks/$name.cmd.json" "$name" "$code" "$started" "$@" <<'PY'
-import json, sys
-path, name, code, started, *cmd = sys.argv[1:]
-json.dump({"name": name, "command": cmd, "exit_code": int(code), "started_utc": started}, open(path, "w"), indent=2)
-PY
-    echo "check $name exit code $code"
-}
-
-evaluate_cmd() {  # <base> <spec> <method> <name> <samples> <total> <depth> <topk>
-    local base="$1" spec="$2" method="$3" name="$4" samples="$5" total="$6" depth="$7" topk="$8"
-    run_check "$name" "$python_bin" -m vispec.evaluation.evaluate \
-        --method "$method" --benchmark textvqa --prompt-style long \
-        --base-model-path "$base" --spec-model-path "$spec" --data-dir "$bench_dir" \
-        --answer-file "$run_dir/results/$name/test.jsonl" --model-id test \
-        --num-samples "$samples" --max-new-token 1024 --temperature 0.0 \
-        --depth "$depth" --top-k "$topk" --total-token "$total" --num-q 2 \
-        --kv-capacity 16384 --kv-layout compact
-}
-
-offset_cmd() {  # <name> <draft-method> <total> <depth> <topk> <order>
-    run_check "$1" "$python_bin" -m vispec.evaluation.offset_check \
-        --draft-method "$2" --kv-retention 1.0 --kv-policy spatial \
-        --num-samples 5 --dtype float32 --prompt-order "$6" \
-        --base-model-path "$base7b" --spec-model-path "$hivis7b" --data-dir "$bench_dir" \
-        --total-token "$3" --depth "$4" --top-k "$5" \
-        --output-dir "$run_dir/checks/$1"
-}
-
-if [[ "$check_set" == "port" ]]; then
-    # 1. 3B identity against the Week 2 runs.
-    evaluate_cmd "$base3b" "$spec3b" autoregressive id3b_ar 5 30 3 8
-    evaluate_cmd "$base3b" "$spec3b" vispec id3b_vispec 5 30 3 8
-    # 2. fp32 losslessness: image-last 30/3/8, then image-first 60/5/10.
-    offset_cmd fp32_image_last hivis 30 3 8 image-last
-    offset_cmd fp32_image_first hivis 60 5 10 image-first
-    # 3. bf16 smoke on 7B.
-    evaluate_cmd "$base7b" "$vispec7b" autoregressive bf16_ar 5 30 3 8
-    evaluate_cmd "$base7b" "$vispec7b" vispec bf16_vispec 5 30 3 8
-    evaluate_cmd "$base7b" "$hivis7b" hivis bf16_hivis 5 30 3 8
-    # 4. Large tree on 2 samples.
-    evaluate_cmd "$base7b" "$vispec7b" vispec large_vispec 2 60 5 10
-    evaluate_cmd "$base7b" "$hivis7b" hivis large_hivis 2 60 5 10
-    # 5. Position ablation: the same HiViS samples with the pruned position mode.
-    run_check ablation_hivis_pruned "$python_bin" - "$base7b" "$hivis7b" "$bench_dir" \
-        "$run_dir/results/ablation_hivis_pruned/test.jsonl" <<'PY'
-import sys
-from vispec.model.cnets_hivis import HiViSDraft
-from vispec.evaluation import evaluate
-
-base, spec, data, answer = sys.argv[1:5]
-HiViSDraft.position_mode = "pruned"
-print("HiViSDraft.position_mode =", HiViSDraft.position_mode, flush=True)
-evaluate.run(evaluate.parse_args([
-    "--method", "hivis", "--benchmark", "textvqa", "--prompt-style", "long",
-    "--base-model-path", base, "--spec-model-path", spec, "--data-dir", data,
-    "--answer-file", answer, "--model-id", "test",
-    "--num-samples", "5", "--max-new-token", "1024", "--temperature", "0.0",
-    "--depth", "3", "--top-k", "8", "--total-token", "30", "--num-q", "2",
-    "--kv-capacity", "16384", "--kv-layout", "compact",
-]))
-PY
-else
-    n=0
-    while read -r comparison original draft base_path; do
-        [[ -z "${comparison:-}" || "$comparison" == \#* ]] && continue
-        n=$((n + 1))
-        run_check "diagnose_$n" "$python_bin" -m vispec.evaluation.diagnose_divergence \
-            --comparison "$comparison" --original-run "$original" --draft-run "$draft" \
-            --data-dir "$bench_dir" --base-model-path "$base_path" \
-            --output-dir "$run_dir/checks/diagnose_$n"
-    done < "$DIAG_LIST"
-    n=0
-    while read -r -a oracle_args; do
-        [[ ${#oracle_args[@]} -eq 0 || "${oracle_args[0]}" == \#* ]] && continue
-        n=$((n + 1))
-        run_check "oracle_$n" "$python_bin" -m vispec.evaluation.offset_check \
-            "${oracle_args[@]}" --output-dir "$run_dir/checks/oracle_$n"
-    done < "$ORACLE_LIST"
-fi
-
-# Summarise every check into checks.json and exit 1 if any gate failed.
-"$python_bin" - "$run_dir" "$check_set" "$week2_ar" "$week2_vispec" <<'PY'
+# Summarise every check into checks.json; returns 1 if any gate failed. Called from finish so a
+# preempted or failed run still records the checks that finished.
+summarise_checks() {
+    "$python_bin" - "$run_dir" "$check_set" "$week2_ar" "$week2_vispec" <<'PY'
 import glob, json, os, re, statistics, sys
 
 run_dir, check_set, week2_ar, week2_vispec = sys.argv[1:5]
@@ -378,14 +243,180 @@ if check_set == "port":
     checks.append({"check": "Recorded, not gated", "pass": True, "numbers": info})
 else:
     for name, entry in cmds.items():
-        add(name, entry["exit_code"] == 0, {}, "command exits 0", [name])
+        passed, numbers, rule = entry["exit_code"] == 0, {}, "command exits 0"
+        if name.startswith("diagnose_"):
+            rule = "command exits 0 and diagnosis.json summary.gate_passes is true"
+            path = os.path.join(run_dir, "checks", name, "diagnosis.json")
+            if os.path.exists(path):
+                summ = json.load(open(path))["summary"]
+                numbers = {"gate_passes": summ["gate_passes"], "gate": summ["gate"],
+                           "classes": summ["overall"]["classes"]}
+                passed = passed and summ["gate_passes"] is True
+            else:
+                numbers, passed = {"diagnosis_json": "missing"}, False
+        elif name.startswith("oracle_"):
+            rule = "command exits 0 (offset_check exits 1 on a mismatch); settings recorded"
+            path = os.path.join(run_dir, "checks", name, "offset_check.json")
+            if os.path.exists(path):
+                res = json.load(open(path))
+                numbers = {"base_model_path": res["settings"].get("base_model_path"),
+                           "draft_method": res["settings"].get("draft_method", "vispec"),
+                           "prompt_order": res["settings"].get("prompt_order", "image-last"),
+                           "exact": res["summary"]["exact"], "questions": res["summary"]["questions"]}
+            else:
+                numbers, passed = {"offset_check_json": "missing"}, False
+        add(name, passed, numbers, rule, [name])
 
-result = {"check_set": check_set, "all_pass": all(c["pass"] for c in checks), "checks": checks}
+result = {"check_set": check_set, "all_pass": bool(checks) and all(c["pass"] for c in checks), "checks": checks}
 json.dump(result, open(os.path.join(run_dir, "checks.json"), "w"), indent=2)
 for c in checks:
     print(("PASS" if c["pass"] else "FAIL"), c["check"], json.dumps(c["numbers"])[:600])
 sys.exit(0 if result["all_pass"] else 1)
 PY
+}
+
+set +e
+(
+set -e
+finish() {
+    local status=$?
+    trap - EXIT
+    set +e
+    summarise_checks
+    local summary_status=$?
+    if [[ "$status" -eq 0 ]]; then
+        status=$summary_status
+    fi
+    printf 'finished_utc=%s\nexit_code=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$status" >> "$run_dir/metadata.txt"
+    printf '%s\n' "$status" > "$run_dir/exit-code.txt"
+    echo "Checks finished with exit code $status. Artifacts: $run_dir"
+    exit "$status"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if [[ -n "${SUBMIT_COMMAND:-}" ]]; then
+    submit_command="$SUBMIT_COMMAND"; sbatch_extra="${SBATCH_EXTRA:-}"
+else
+    submit_command="unset"; sbatch_extra="unset"
+fi
+{
+    printf 'started_utc=%s\ncommit=%s\nhost=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$commit" "$(hostname)"
+    printf 'check_set=%s\nbench_dir=%s\n' "$check_set" "$bench_dir"
+    printf 'base_model_7b=%s\nvispec_7b=%s\nhivis_7b=%s\n' "$base7b" "$vispec7b" "$hivis7b"
+    printf 'python=%s\nslurm_job_id=%s\ncuda_visible_devices=%s\n' "$(command -v "$python_bin")" "${SLURM_JOB_ID:-unset}" "${CUDA_VISIBLE_DEVICES:-unset}"
+    printf 'slurm_restart_count=%s\n' "${SLURM_RESTART_COUNT:-0}"
+    printf 'submit_command=%s\nsbatch_extra=%s\n' "$submit_command" "$sbatch_extra"
+} > "$run_dir/metadata.txt"
+echo "Run artifacts: $run_dir"
+cat "$run_dir/metadata.txt"
+if [[ -s "$run_dir/git-status.txt" ]]; then
+    echo "Working tree has changes; see git-status.txt and tracked-changes.patch."
+fi
+
+"$python_bin" --version
+"$python_bin" "$repo_dir/experiment/capture_packages.py" > "$run_dir/packages.txt"
+bash "$run_dir/capture_device.sh" "$python_bin" > "$run_dir/device.txt" 2>&1
+echo "Launch device report: $run_dir/device.txt"
+"$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite qwen
+"$python_bin" experiment/prepare_assets.py --repo-dir "$repo_dir" --check-only --suite qwen7b
+bash "$run_dir/check_cuda.sh" "$python_bin"
+export PYTHONUNBUFFERED=1
+
+# run_check <name> <command...>: log to checks/<name>.log, record the command and exit code in
+# checks/<name>.json, and keep going whatever the result.
+run_check() {
+    local name="$1"; shift
+    local code
+    printf '\n=== check %s ===\nRunning:' "$name"
+    printf ' %q' "$@"
+    printf '\n'
+    local started; started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    set +e
+    "$@" 2>&1 | tee "$run_dir/checks/$name.log"
+    code="${PIPESTATUS[0]}"
+    set -e
+    "$python_bin" - "$run_dir/checks/$name.cmd.json" "$name" "$code" "$started" "$@" <<'PY'
+import json, sys
+path, name, code, started, *cmd = sys.argv[1:]
+json.dump({"name": name, "command": cmd, "exit_code": int(code), "started_utc": started}, open(path, "w"), indent=2)
+PY
+    echo "check $name exit code $code"
+}
+
+evaluate_cmd() {  # <base> <spec> <method> <name> <samples> <total> <depth> <topk>
+    local base="$1" spec="$2" method="$3" name="$4" samples="$5" total="$6" depth="$7" topk="$8"
+    run_check "$name" "$python_bin" -m vispec.evaluation.evaluate \
+        --method "$method" --benchmark textvqa --prompt-style long \
+        --base-model-path "$base" --spec-model-path "$spec" --data-dir "$bench_dir" \
+        --answer-file "$run_dir/results/$name/test.jsonl" --model-id test \
+        --num-samples "$samples" --max-new-token 1024 --temperature 0.0 \
+        --depth "$depth" --top-k "$topk" --total-token "$total" --num-q 2 \
+        --kv-capacity 16384 --kv-layout compact
+}
+
+offset_cmd() {  # <name> <draft-method> <total> <depth> <topk> <order>
+    run_check "$1" "$python_bin" -m vispec.evaluation.offset_check \
+        --draft-method "$2" --kv-retention 1.0 --kv-policy spatial \
+        --num-samples 5 --dtype float32 --prompt-order "$6" \
+        --base-model-path "$base7b" --spec-model-path "$hivis7b" --data-dir "$bench_dir" \
+        --total-token "$3" --depth "$4" --top-k "$5" \
+        --output-dir "$run_dir/checks/$1"
+}
+
+if [[ "$check_set" == "port" ]]; then
+    # 1. 3B identity against the Week 2 runs.
+    evaluate_cmd "$base3b" "$spec3b" autoregressive id3b_ar 5 30 3 8
+    evaluate_cmd "$base3b" "$spec3b" vispec id3b_vispec 5 30 3 8
+    # 2. fp32 losslessness: image-last 30/3/8, then image-first 60/5/10.
+    offset_cmd fp32_image_last hivis 30 3 8 image-last
+    offset_cmd fp32_image_first hivis 60 5 10 image-first
+    # 3. bf16 smoke on 7B.
+    evaluate_cmd "$base7b" "$vispec7b" autoregressive bf16_ar 5 30 3 8
+    evaluate_cmd "$base7b" "$vispec7b" vispec bf16_vispec 5 30 3 8
+    evaluate_cmd "$base7b" "$hivis7b" hivis bf16_hivis 5 30 3 8
+    # 4. Large tree on 2 samples.
+    evaluate_cmd "$base7b" "$vispec7b" vispec large_vispec 2 60 5 10
+    evaluate_cmd "$base7b" "$hivis7b" hivis large_hivis 2 60 5 10
+    # 5. Position ablation: the same HiViS samples with the pruned position mode.
+    run_check ablation_hivis_pruned "$python_bin" - "$base7b" "$hivis7b" "$bench_dir" \
+        "$run_dir/results/ablation_hivis_pruned/test.jsonl" <<'PY'
+import sys
+from vispec.model.cnets_hivis import HiViSDraft
+from vispec.evaluation import evaluate
+
+base, spec, data, answer = sys.argv[1:5]
+HiViSDraft.position_mode = "pruned"
+print("HiViSDraft.position_mode =", HiViSDraft.position_mode, flush=True)
+evaluate.run(evaluate.parse_args([
+    "--method", "hivis", "--benchmark", "textvqa", "--prompt-style", "long",
+    "--base-model-path", base, "--spec-model-path", spec, "--data-dir", data,
+    "--answer-file", answer, "--model-id", "test",
+    "--num-samples", "5", "--max-new-token", "1024", "--temperature", "0.0",
+    "--depth", "3", "--top-k", "8", "--total-token", "30", "--num-q", "2",
+    "--kv-capacity", "16384", "--kv-layout", "compact",
+]))
+PY
+else
+    n=0
+    while read -r comparison original draft base_path; do
+        [[ -z "${comparison:-}" || "$comparison" == \#* ]] && continue
+        n=$((n + 1))
+        run_check "diagnose_$n" "$python_bin" -m vispec.evaluation.diagnose_divergence \
+            --comparison "$comparison" --original-run "$original" --draft-run "$draft" \
+            --data-dir "$bench_dir" --base-model-path "$base_path" \
+            --output-dir "$run_dir/checks/diagnose_$n"
+    done < "$DIAG_LIST"
+    n=0
+    while read -r -a oracle_args; do
+        [[ ${#oracle_args[@]} -eq 0 || "${oracle_args[0]}" == \#* ]] && continue
+        n=$((n + 1))
+        run_check "oracle_$n" "$python_bin" -m vispec.evaluation.offset_check \
+            "${oracle_args[@]}" --output-dir "$run_dir/checks/oracle_$n"
+    done < "$ORACLE_LIST"
+fi
+
 ) 2>&1 | tee "$run_dir/output.log"
 pipeline_status=("${PIPESTATUS[@]}")
 if [[ "${pipeline_status[0]}" -ne 0 ]]; then

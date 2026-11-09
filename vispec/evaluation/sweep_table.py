@@ -49,8 +49,8 @@ METHODS_COLUMNS = (
 METHODS_COLUMN_NOTES = {
     "tree": "total tokens, depth and top-k of the draft tree as total-depth-top_k; none for autoregressive",
     "role": "reference for the autoregressive run, primary for a speculative run at 30-3-8 with image-last, secondary for any other speculative run",
-    "acceptance_mean": "accepted draft tokens per verification iteration, mean over turns",
-    "output_tokens_per_iteration_mean": "accepted draft tokens plus the target token per verification iteration, mean over turns",
+    "acceptance_mean": "accepted draft tokens per verification iteration, pooled over all verification iterations of all turns",
+    "output_tokens_per_iteration_mean": "accepted draft tokens plus the target token per verification iteration, pooled over all verification iterations of all turns",
     "speedup_vs_ar": "AR mean latency / row mean latency, same job and prompt order; above 1 means the row is faster",
     "speedup_vs_vispec": "ViSpec mean latency / row mean latency at the same tree, same job and prompt order (HiViS rows); above 1 means the row is faster",
     "speedup_vs_tree_30_3_8": "the same method at 30-3-8 mean latency / row mean latency, same job and prompt order (60-5-10 rows); above 1 means the row is faster",

@@ -72,7 +72,7 @@ qwen_parse_method_arm() {
 # Validate the arms of a methods sweep before any run folder exists, including duplicates once the defaults are
 # filled in. Usage: qwen_validate_method_arms <arms>
 qwen_validate_method_arms() {
-    local list="$1" spec seen=" "
+    local list="$1" spec seen=" " ar_orders=" " spec_orders=" " order
     if [[ -z "${list// /}" ]]; then
         echo "The arm list is empty." >&2
         exit 2
@@ -83,6 +83,18 @@ qwen_validate_method_arms() {
             echo "Invalid arm '$spec': duplicates an earlier arm (${arm_method}, tree ${arm_tree}, ${arm_order})." >&2; exit 2
         fi
         seen+="${arm_method}/${arm_tree}/${arm_order} "
+        if [[ "$arm_method" == "ar" ]]; then
+            ar_orders+="${arm_order} "
+        else
+            spec_orders+="${arm_order} "
+        fi
+    done
+    # Every prompt order that has a speculative arm needs an ar arm of its own to compare with.
+    for order in image-last image-first; do
+        if [[ "$spec_orders" == *" ${order} "* && "$ar_orders" != *" ${order} "* ]]; then
+            echo "Invalid arm list: a speculative arm uses ${order} but there is no ar arm with ${order} to compare it with." >&2
+            exit 2
+        fi
     done
 }
 
@@ -178,7 +190,7 @@ qwen_run_arm() {
     local python_bin="${PYTHON_BIN:-/home/aeternum/anaconda3/envs/vipsec/bin/python}"
     local depth="${DEPTH:-3}" top_k="${TOP_K:-8}" total_token="${TOTAL_TOKEN:-30}" num_q="${NUM_Q:-2}"
     if [[ "$sweep" == "methods" && -n "$m_total" ]]; then
-        depth="$m_depth"; top_k="$m_top_k"; total_token="$m_total"
+        depth="$m_depth"; top_k="$m_top_k"; total_token="$m_total"; num_q="2"
     fi
     local qwen_benchmarks="${QWEN_BENCHMARKS:-textvqa coco_caption}" benchmarks=()
     read -r -a benchmarks <<< "$qwen_benchmarks"

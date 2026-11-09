@@ -822,7 +822,12 @@ def main(argv=None):
             ),
             "ar_vispec_logit_gap": f"|AR token logit - {draft_name} token logit| in that pass; None when a sequence ended",
             "gate_passes": "true when unexplained + both_wrong == 0",
-            "agrees": f"whether that pass's argmax equals the AR token, the {draft_name} token, or neither; the value 'vispec' in this JSON means the draft run's token ({draft_name})",
+            "agrees": f"whether that pass's argmax equals the AR token, the {draft_name} token, or neither"
+            + (
+                f"; the value 'vispec' in this JSON means the draft run's token ({draft_name})"
+                if draft_name != "ViSpec" or prompt_order != DEFAULT_PROMPT_ORDER
+                else ""
+            ),
             "argmax": "torch.argmax, the first maximal index (decoder tie-break); top-2 is the best remaining token",
             "tokens_tied_at_max": "number of vocabulary entries whose logit equals the argmax logit",
         },

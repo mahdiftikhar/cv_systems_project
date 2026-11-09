@@ -105,9 +105,17 @@ def parse_args(argv=None):
         "reverse_summary uses its Re:Verse page windows (long style only), at most 55.",
     )
     parser.add_argument("--prompt-style", choices=PROMPT_STYLES, default="long")
-    parser.add_argument("--base-model-path", default="models/Qwen2.5-VL-3B-Instruct")
     parser.add_argument(
-        "--spec-model-path", default="models/ViSpec-Qwen2.5-VL-3B-Instruct"
+        "--base-model-path",
+        default=None,
+        help="Target model (default models/Qwen2.5-VL-3B-Instruct; required with "
+        "--draft-method hivis).",
+    )
+    parser.add_argument(
+        "--spec-model-path",
+        default=None,
+        help="Draft checkpoint (default models/ViSpec-Qwen2.5-VL-3B-Instruct; required with "
+        "--draft-method hivis).",
     )
     parser.add_argument("--data-dir", type=Path, default=Path("bench_data"))
     parser.add_argument("--max-new-token", type=int, default=1024)
@@ -117,6 +125,15 @@ def parse_args(argv=None):
     parser.add_argument("--num-q", type=int, default=2)
     parser.add_argument("--kv-capacity", type=int, default=16384)
     args = parser.parse_args(argv)
+    if args.draft_method == "hivis" and (args.base_model_path is None or args.spec_model_path is None):
+        parser.error(
+            "--draft-method hivis needs explicit --base-model-path and --spec-model-path; "
+            "the defaults are the 3B models"
+        )
+    if args.base_model_path is None:
+        args.base_model_path = "models/Qwen2.5-VL-3B-Instruct"
+    if args.spec_model_path is None:
+        args.spec_model_path = "models/ViSpec-Qwen2.5-VL-3B-Instruct"
     if args.num_samples < 1:
         parser.error("--num-samples must be positive")
     if args.max_new_token < 1:
@@ -266,7 +283,7 @@ def environment():
 def write_markdown(path, result):
     settings, summary = result["settings"], result["summary"]
     draft = settings["draft_sparsity"]
-    label = method_label(settings["draft_method"])
+    label = method_label(settings.get("draft_method", "vispec"))
     lines = [
         f"# Offset check: AR vs {label} under one eviction setting",
         "",
@@ -277,7 +294,11 @@ def write_markdown(path, result):
         f"`max_new_tokens` {settings['max_new_tokens']}, compact layout",
         f"- Host `{result['environment']['hostname']}`, job `{result['environment']['slurm_job_id']}`, "
         f"GPU {result['environment']['gpu']['name']} `{result['environment']['gpu']['uuid']}`",
-        f"- draft method: {label}; prompt order: `{settings['prompt_order']}`",
+        *(
+            [f"- draft method: {label}; prompt order: `{settings['prompt_order']}`"]
+            if "draft_method" in settings
+            else []
+        ),
         f"- **AR == {label}: {summary['exact']}/{summary['questions']}**",
         "",
         f"| Question | Input | Image tokens | Kept prompt | kv_offset | Min kept/image | Draft min kept/image | AR tokens | {label} tokens | Exact | First mismatch | KV counts match |",
@@ -371,8 +392,11 @@ def run(args):
             "dtype": args.dtype,
             "kv_layout": "compact",
             "kv_sparsity": {"retention": kv.retention, "policy": kv.policy},
-            "draft_method": args.draft_method,
-            "prompt_order": args.prompt_order,
+            **(
+                {"draft_method": args.draft_method, "prompt_order": args.prompt_order}
+                if args.draft_method != "vispec" or args.prompt_order != "image-last"
+                else {}
+            ),
             "draft_sparsity": (
                 None if draft is None else {"retention": draft.retention, "policy": draft.policy}
             ),
