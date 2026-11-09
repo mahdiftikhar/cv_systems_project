@@ -151,7 +151,7 @@ Experiment 04 profiles decode. Experiment 09 (Re:Verse+ `reverse_summary` window
 one run folder per arm via `experiment/qwen_arm_runner.sh`, always with `--kv-layout compact`. An
 invalid arm list exits 2 before any folder is created. Run the same-job references first: 02 and 03
 with `KV_LAYOUT=compact` (default `fixed` keeps the Week 1 command line). Run metadata `method` is
-`autoregressive` or `vispec_speculative`.
+`autoregressive`, `vispec_speculative` or `hivis_speculative` (experiment 10, Qwen2.5-VL-7B).
 
 `compare_metrics --mode sparsity` compares an arm with the same method at 100% retention (a null
 retention counts as 1.0), not with the other method. `diagnose_divergence` refuses runs with a
@@ -187,5 +187,5 @@ Qwen hazards:
 - `.gitignore` ignores `experiment/*/runs/*`, except the two snapshots for jobs 950793 and 950803.
   Treat those as immutable evidence and write reruns and re-reports to new directories.
 - Experiments 00 and 01 cover only TextVQA, GQA and MM-Vet with LLaVA. The Qwen path is in scope
-  through experiments 02 to 09 (see the Qwen section above). The Mixtral, Medusa, training
+  through experiments 02 to 10 (see the Qwen section above). The Mixtral, Medusa, training
   (`vispec/train`) and data-generation (`vispec/ge_data`) paths are inherited and unexercised.

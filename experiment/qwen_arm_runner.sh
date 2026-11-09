@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Shared by experiment/05_qwen_draft_pruning, 06_qwen_kv_eviction and 08_qwen_combined_sparsity run.sh.
+# Shared by the run.sh of experiments 05_qwen_draft_pruning, 06_qwen_kv_eviction, 08_qwen_combined_sparsity,
+# 09_qwen_reverse_longcontext and 10_qwen7b_methods.
 # Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (reference|draft|kv|combined|methods),
 # arms (space-separated <retention>:<policy>[:<method>]; reference sweeps take `ar` and `vispec`), prompt_style, and has done
 # `set -euo pipefail` and `cd "$repo_dir"`.
