@@ -4,11 +4,13 @@
 
 Experiments 02 to 08 use prompts of about 400 to 1,100 tokens. This experiment repeats the Week 2 and
 Week 3 arms on `reverse_summary`: the model reads a window of 5 to 6 consecutive manga pages as images
-and summarizes the story in order. Prompts are about 7 to 8 thousand tokens, near the 8,192-position
-RoPE table of the draft. It asks whether visual KV eviction and draft pruning behave differently when the
-image tokens are almost the whole context.
+and summarizes the story in order. Prompts are 5,805 to 6,967 tokens (mean 6,496.6, 99% image tokens).
+With the output, the cache reaches up to 7,991 positions, near the 8,192-position RoPE table of the draft.
+It asks whether visual KV eviction and draft pruning behave differently when the image tokens are almost
+the whole context.
 
-Every arm of every earlier sweep runs here, in one Slurm job, with its own same-job references:
+Every arm of every earlier sweep runs here. The arms can run in one Slurm job or be split across shorter
+jobs, and each job runs its own same-job references:
 
 | Sweep | Arms (default) | What it applies |
 | --- | --- | --- |
@@ -41,9 +43,13 @@ Quality (ROUGE-1 F1 and BERTScore F1) and token agreement are reported without a
 Week 2 eviction changed outputs strongly and no earlier run covers this task. The identity gate carries
 forward: at retention 1.0 each arm must be token-identical to its same-job reference.
 
-These are predictions, not results. The Results section is `pending`.
+These are predictions, not results. The [Results](#results) section scores them.
 
-Status: **pending**. No 09 run has been made.
+Status: **partial (Week 4).** Slurm job 398924 completed 5 of the 14 run folders: both references, kv
+`1.0:spatial`, kv `1.0:attention` and kv `0.75:spatial`, each with 55 of 55 windows. The identity gate passed.
+ViSpec was 1.74 times faster than AR per window, and prompt processing (TTFT) was 44% of ViSpec's time. The
+remaining arms are queued as jobs 402641 to 402644. The Re:Verse+ fp32 offset check and the divergence
+diagnosis wait for GPU time. The project-wide results page is [RESULTS.md](../RESULTS.md).
 
 ## Changes from the reference
 
@@ -176,21 +182,187 @@ and the prefill and decode peaks. Task quality is ROUGE-1 F1 (`rouge-score`, ste
 
 ## Results
 
-**Pending.** No run exists yet. When the runs finish, this section reports hardware and run folders, the
-identity gate at retention 1.0, per-arm tables, memory, and a table scoring each prediction above
-against the measurements with its cutoff.
+### Week 4 results (partial)
+
+Pending items are marked "Pending GPU run (job N)", or "(no job yet)" for checks that have not been
+submitted. Ratio directions:
+
+- `*_speedup_vs_*` is the reference latency divided by the arm latency, so above 1 means the arm was faster.
+- `*_arm_over_*` is the arm divided by the reference, so below 1 means the arm used less memory.
+- Every timing ratio from these runs is inside job 398924.
+
+#### Hardware and run folders
+
+| Item | Value |
+| --- | --- |
+| Job | Slurm 398924, `preempt`, attempt `slurm_restart_count=1` (2026-11-04), cancelled afterwards. Other attempts (restart counts 0, 2 and 3) left incomplete or duplicate folders, which are not used |
+| Node and card | `c1-8`, Intel Xeon Silver 4116, one `NVIDIA RTX A6000` (UUID `GPU-eb032c66-7f3f-d1b6-96cf-c9db5600d457`) |
+| Allocation | 1 GPU, 4 CPUs, 22,528 MB, 5 h limit |
+| Code | Commit `f90aa6a8f19f`, clean tree (empty `git-status.txt` and `tracked-changes.patch`) |
+| Run location | The job ran from a separate Git worktree of this repository, so the folders are under that worktree's `experiment/09_qwen_reverse_longcontext/runs/` |
+
+| Arm | Run folder |
+| --- | --- |
+| `ar` reference | `20261104T023022Z_f90aa6a8f19f_long_ref_ar_kvIBpD` |
+| `vispec` reference | `20261104T025726Z_f90aa6a8f19f_long_ref_vispec_l2fLoy` |
+| kv `1.0:spatial` | `20261104T031344Z_f90aa6a8f19f_long_r1.0_spatial_M8DSqk` |
+| kv `1.0:attention` | `20261104T032954Z_f90aa6a8f19f_long_r1.0_attention_nduu4D` |
+| kv `0.75:spatial` | `20261104T034607Z_f90aa6a8f19f_long_r0.75_spatial_3B5yP0` |
+
+The run folders are git-ignored and kept on project storage. Every folder has its own `device.txt`.
+
+#### Completion checks
+
+Every folder passes these checks:
+
+- `exit_code=0` and `report_exit_code=0`;
+- one GPU UUID across all five;
+- 55 of 55 windows, with no missing or unexpected IDs;
+- commit `f90aa6a8f19f` with a clean tree;
+- the expected metadata: `sweep`, `arm`, `method`, the sparsity settings, `kv_layout=compact`,
+  `qwen_benchmarks=reverse_summary`, temperature 0.0, 1,024 new tokens, and the draft tree 3/8/30/2 for ViSpec.
+
+`--num-samples 100` gave all 55 windows, as the evaluator treats it as a maximum.
+
+#### Identity gate
+
+Each 1.0 arm is token-identical to the same-job ViSpec reference on every window. The check compares the
+full saved output token IDs with the reference, and it was repeated with
+`compare_metrics --mode sparsity`.
+
+| Arm | Identical outputs | Identical prompt fingerprints |
+| --- | ---: | ---: |
+| kv `1.0:spatial` | 55/55 | 55/55 |
+| kv `1.0:attention` | 55/55 | 55/55 |
+
+The gate passes. The two 1.0 arms ran 0.9% and 0.5% faster than the ViSpec reference with identical
+tokens. That gives a rough floor for timing differences between arms inside this job.
+
+#### ViSpec against AR
+
+| Measure | AR | ViSpec |
+| --- | ---: | ---: |
+| Windows | 55 | 55 |
+| Mean latency per window (s) | 26.237 | 15.105 |
+| Mean TTFT (s) | 6.654 | 6.665 |
+| Mean decode time, latency minus TTFT (s) | 19.583 | 8.441 |
+| TTFT share of latency (ratio of means) | 25.4% | 44.1% |
+| Mean time per output token (ms) | 39.47 | 20.74 |
+| Mean output tokens | 497.3 | 424.4 |
+| Windows at the 1,024-token cap | 12 | 6 |
+| Accepted draft tokens per iteration | n/a | 1.702 |
+| Prefill peak, mean (GiB) | 11.43 | 11.43 |
+| Decode peak, mean (GiB) | 8.517 | 9.088 |
+| Live KV, mean (MiB) | 245.8 | 243.3 |
+| ROUGE-1 F1 (x 100) | 22.92 | 22.58 |
+| BERTScore F1 (x 100) | 46.58 | 46.63 |
+
+The ratios below divide AR by ViSpec, so above 1 means ViSpec is faster.
+
+- **End to end:** 1.737. This is `speedup_vs_ar` in the sweep table.
+- **Decode only:** 2.320.
+- **Per output token:** 1.903.
+- **The cap:** with TTFT unchanged, infinitely fast decoding would give at most 26.237 / 6.665 = 3.94.
+
+In the same-job comparisons of Week 3, long TextVQA and COCO answers give 2.16 to 2.32 end to end and 2.39 to
+2.48 decode-only. Per output token they give 2.20 to 2.47.
+
+So speculative decoding still cuts decode time by more than half on these multi-page prompts, and prompt
+processing limits the end-to-end gain. These runs do not split TTFT between the vision encoder and the
+language model's prompt pass.
+
+**Exact agreement** between AR and ViSpec is 0 of 55. The prompts are identical (55 of 55 fingerprints), and
+the first mismatch falls at output index 7 to 443 (median 58). The divergence diagnosis that would classify
+these as near-ties is Pending GPU run (no job yet).
+
+#### Per arm (sweep table)
+
+| Arm | Latency (s) | TTFT (s) | TPOT (ms) | Output tokens | At cap | Accepted per iteration | Live KV (MiB) | Decode peak (GiB) | Post-compaction peak (GiB) | `kv_min_kept_per_image` | Exact agreement with ViSpec ref | ROUGE-1 | BERTScore |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ar` reference | 26.237 | 6.654 | 39.47 | 497.3 | 12 | n/a | 245.8 | 8.517 | 8.347 | n/a | 0/55 | 22.92 | 46.58 |
+| `vispec` reference | 15.105 | 6.665 | 20.74 | 424.4 | 6 | 1.702 | 243.3 | 9.088 | 8.488 | n/a | 55/55 | 22.58 | 46.63 |
+| kv `1.0:spatial` | 14.970 | 6.643 | 20.40 | 424.4 | 6 | 1.702 | 243.3 | 9.088 | 8.489 | 1,148 | 55/55 | 22.58 | 46.63 |
+| kv `1.0:attention` | 15.030 | 6.674 | 20.48 | 424.4 | 6 | 1.702 | 243.3 | 9.088 | 8.489 | 1,148 | 55/55 | 22.58 | 46.63 |
+| kv `0.75:spatial` | 15.190 | 6.656 | 20.36 | 442.7 | 8 | 1.760 | 187.4 | 9.088 | 8.421 | 861 | 0/55 | 22.32 | 46.26 |
+
+The ratios for kv `0.75:spatial` against the same-policy 1.0 arm are these:
+
+- **`latency_speedup_vs_samepolicy_1_0` = 0.985.** The arm was 1.5% slower. Its summaries were 4% longer,
+  while time per output token was 0.2% lower.
+- **`live_kv_arm_over_samepolicy_1_0` = 0.770,** which is 55.9 MiB less.
+- **`post_compaction_peak_arm_over_samepolicy_1_0` = 0.992,** which is 0.067 GiB less.
+- **`decode_peak_arm_over_samepolicy_1_0` = 1.000.** The decode-phase peak covers the draft prefill and the
+  compaction transient as well as decoding (see the [metrics guide](../METRICS.md)), and it did not move.
+
+**Other measures for kv `0.75:spatial`:**
+
+- **Against the ViSpec reference:** `latency_speedup_vs_vispec_ref` = 0.994, and the ROUGE-1 delta is -0.26
+  points. The BERTScore delta is -0.37 points.
+- **Against AR:** `speedup_vs_ar` = 1.727.
+- **Kept tokens:** each image kept at least 861 of its tokens. The smallest image has 1,148 tokens at
+  this pixel limit.
+- **Acceptance:** it rose from 1.702 to 1.760 accepted draft tokens per iteration, as eviction did in Week 3.
+
+#### Predictions against the measurements
+
+| Prediction (written before the runs) | Outcome | Evidence |
+| --- | --- | --- |
+| 1. Live KV is about 6 times the TextVQA size: the `1.0:spatial` ViSpec arm is at least 4 times the long TextVQA 06 figure and at least about 200 MiB | **Held** | 243.3 MiB, 5.2 times the 47.1 MiB of the long TextVQA `1.0:spatial` arm in job 398883 |
+| 2. Eviction saves hundreds of MiB (cutoffs at 0.5 and 0.25) | **Pending GPU run (jobs 402641, 402642)** | At 0.75 the live KV ratio is 0.770, which saves 55.9 MiB. It follows the budget closely, because image tokens are 99% of the prompt |
+| 3. Latency moves more than at TextVQA scale: some 0.25 eviction arm at least 3% faster than its same-policy 1.0 arm | **Pending GPU run (job 402642)** | At 0.75 the arm was 1.5% slower (`latency_speedup_vs_samepolicy_1_0` = 0.985), and TTFT did not change |
+
+#### Still waiting for GPU runs
+
+| Arms or check | Status |
+| --- | --- |
+| KV `0.5:spatial` and `0.5:attention` | Pending GPU run (job 402641) |
+| KV `0.25:spatial` and `0.25:attention` | Pending GPU run (job 402642) |
+| KV `0.5:spatial:autoregressive`, draft `0.5:spatial` and `0.25:spatial` | Pending GPU run (job 402643) |
+| Combined `0.5:spatial` and `0.25:spatial` | Pending GPU run (job 402644) |
+| fp32 offset check at kv 1.0, kv 0.25 spatial and combined 0.25 on 3 windows | Pending GPU run (no job yet) |
+| Divergence diagnosis of AR against ViSpec and of the draft-only arms | Pending GPU run (no job yet) |
+
+Each queued job runs both references first, so its ratios stay inside that job. Its timing will not be
+compared with job 398924.
+
+#### Analysis files
+
+These folders are git-ignored and kept on project storage:
+
+- **Sweep table:** `experiment/sweeps/20261109T181008Z_week4_reverse_partial_job398924/`, which has
+  `sweep.md`, `sweep.json` and `sweep.csv`. It was built from exactly the five folders above.
+- **Comparisons:** `experiment/sweeps/20261109T181008Z_week4_reverse_partial_comparisons_job398924/`, which
+  has one `comparison.json` and `comparison.md` per comparison, and `commands.txt`. The comparisons are:
+  - ViSpec against AR (`--mode method`);
+  - each 1.0 arm against the ViSpec reference;
+  - `0.75:spatial` against the ViSpec reference and against `1.0:spatial` (`--mode sparsity`).
+- **Trade-off figure:** `reverse_summary_long` in `experiment/sweeps/20261109T181249Z_tradeoffs_weeks3_4/`
+  (see [RESULTS.md](../RESULTS.md#5-trade-off-figures)).
+
+#### How the inputs differ from 02 to 08
+
+- **Pixel limit:** pages are capped at `max_pixels` = 1200 x 28 x 28, lowered once for the whole benchmark
+  from the 1280 x 28 x 28 of TextVQA and COCO. The cap lets the largest window (6,967 prompt tokens) fit
+  the draft's 8,192 positions with 1,024 new tokens.
+- **Prompt layout:** the images come before the instruction, unlike the single-image prompts of 02 to 08.
+- **Vision encoding:** multi-page features come from one vision-encoder call per page. One call over 6 pages
+  needed a 45 GiB attention buffer and ran out of memory. Per-page calls are mathematically the same as one
+  batched call but not bit-identical: an fp32 CPU check differed by about 1e-4 absolute. Single-image
+  prompts still take the original single call, so 02 to 08 are unchanged.
 
 ## Limits
 
 - Single run per arm, 55 windows from one volume. Differences in quality and agreement are noisy, and no
   confidence intervals are computed.
-- Prompts of about 7 to 8 thousand tokens sit close to the draft's 8,192-position RoPE table. A window
-  that exceeds it is a loader error, not a truncation.
+- Prompts of 5,805 to 6,967 tokens plus up to 1,024 new tokens sit close to the draft's 8,192-position RoPE
+  table. A window that exceeds it is a loader error, not a truncation.
 - Pages are images only, with no OCR. ROUGE-1 and BERTScore compare a model summary with Yen Press-style
   narration, so absolute scores are low, and only differences between arms are meaningful.
 - The cache is the compact layout in every arm, so memory is compared between arms of this experiment
   and not with the `fixed` layout of 02 and 03.
-- The pixel limit is uniform for the benchmark. If it was lowered to fit 6 pages, the value is recorded
-  by the evaluator and these results do not compare with 02 to 08 image sizes.
-- The runner is verified here only with a stub interpreter. The first real job also tests the evaluator's
-  handling of `--num-samples 100` for 55 windows.
+- The pixel limit is uniform for the benchmark, 1200 x 28 x 28, so these results do not compare with 02 to
+  08 image sizes.
+- BERTScore truncates at 512 word pieces, so it compares only the opening of 50 of the 55 references and
+  cannot show whether later pages are covered. ROUGE-1 is the primary score.
+- Only 5 of the 14 folders exist so far, and only one eviction arm (0.75 spatial) is below retention 1.0.
+  Predictions 2 and 3 cannot be scored until the queued jobs run.

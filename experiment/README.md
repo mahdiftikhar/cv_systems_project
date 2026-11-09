@@ -92,7 +92,11 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398883, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Live KV (arithmetic) falls with the budget, decode peak moves about 0.3%. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at kv 0.25 and 0.75 spatial |
 | [07: Qwen decode drift](07_qwen_decode_drift/README.md) | Fork cached AR decode vs stock HF cached and full-recompute decoding (Week 2 case 35537:162) | Measured (job 398844), `long` TextVQA, 100 questions. Fork and stock HF greedy agree on 19/100, and 80 of 81 first mismatches are bf16 near-ties. At 35537:162 the fork ties 13 and 95518 exactly, while stock incremental decoding prefers 95518 by 0.375. **Both plan stop conditions hold**, so the stop rule fired on one exact-tie case; judged bf16 implementation noise (known limitation). The mechanism is not isolated |
 | [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Week 3 measured (jobs 398885, 398923), diagonal arms, 100/100 per benchmark. Identity gate passed. Combined arms track the matching 06 arm. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at combined 0.25 spatial |
-| [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (about 7 to 8k tokens), `long` style, same-job references | Pending, no run yet |
+| [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (prompts of 5.8k to 7.0k tokens), `long` style, same-job references | Partial (job 398924): references, kv 1.0 spatial and attention, kv 0.75 spatial, 55/55 windows each. Identity gate passed. ViSpec 1.74 times faster than AR, with TTFT 44% of ViSpec's time. Other arms pending GPU runs (jobs 402641 to 402644) |
+
+**Results page.** [RESULTS.md](RESULTS.md) brings the Qwen results of Weeks 1 to 4 together on one page:
+speculative decoding first, then the explanation of why visual sparsity barely helps at batch 1, with the
+predictions, the design spec's anti-goal checklist and the open issues.
 
 Experiments 02 and 03 are a separate, later study from the LLaVA pair above. They use
 Qwen2.5-VL-3B-Instruct on TextVQA and COCO Captions (100 samples each) in two prompt styles,
@@ -338,6 +342,29 @@ spatial, with matching KV counts and kv_offset from 231 to 944. Full tables, rat
 that run against the trend, memory and the predictions are in the [05](05_qwen_draft_pruning/README.md#week-3-results-retention-sweep),
 [06](06_qwen_kv_eviction/README.md#week-3-results-retention-sweep) and
 [08](08_qwen_combined_sparsity/README.md#week-3-results-retention-sweep) READMEs.
+
+### Qwen Week 4 results (09, partial)
+
+Week 4 runs the same arms on 55 Re:Verse+ windows of 5 or 6 manga pages, in the `long` style. Re:Verse+ is a
+re-aligned derivative of Re:Verse (arXiv:2508.08508), and its pages are credited to Yen Press. It is used for
+non-commercial research only. No page, narration or generated summary text is in the repository.
+
+Job 398924 (attempt with restart count 1, card `GPU-eb032c66-7f3f-d1b6-96cf-c9db5600d457`, commit
+`f90aa6a8f19f`) completed 5 of the 14 run folders. They are the AR and ViSpec references, kv 1.0 spatial,
+kv 1.0 attention and kv 0.75 spatial, each with 55 of 55 windows.
+
+- **Identity gate:** passed. Both 1.0 arms are token-identical to the ViSpec reference on 55 of 55 windows.
+- **ViSpec against AR:** 1.74 times faster per window (26.24 s against 15.11 s). The decode phase alone is 2.32
+  times faster.
+- **The cap:** TTFT, which includes encoding the pages, is 6.65 to 6.66 s. That is 44% of ViSpec's time and
+  25% of AR's, so even infinitely fast decoding would give at most about 3.9 times over AR.
+- **Eviction at 0.75 spatial:** live KV went to 0.770 of the 1.0 arm (55.9 MiB less). The decode peak did not
+  move. Latency was 1.5% higher with 4% longer summaries.
+- **Still pending:** the other arms, which are Pending GPU run (jobs 402641 to 402644). The Re:Verse+ fp32
+  offset check and the divergence diagnosis are Pending GPU run (no job yet).
+
+Details are in the [09 README](09_qwen_reverse_longcontext/README.md#results) and on the
+[results page](RESULTS.md#23-long-multi-page-prompts-prompt-processing-caps-the-speedup).
 
 ### LLaVA run conditions (00 and 01)
 
