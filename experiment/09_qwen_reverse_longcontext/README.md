@@ -45,12 +45,13 @@ forward: at retention 1.0 each arm must be token-identical to its same-job refer
 
 These are predictions, not results. The [Results](#results) section scores them.
 
-Status: **complete (Week 4), apart from the fp32 check and the divergence diagnosis.** Five Slurm jobs
+Status: **complete (Week 4).** Five Slurm jobs
 (398924 and 402641 to 402644) completed all 14 arms, each with 55 of 55 windows, and the identity gate passed.
 ViSpec was 1.74 to 1.87 times faster than AR per window across the five jobs, and prompt processing (TTFT)
 was 41% to 44% of ViSpec's time. Eviction saved 110 to 170 MiB of live KV at 0.5 and 0.25 but did not make
-decode steps cheaper, and spatial eviction made summaries longer and more repetitive. The fp32 check and the
-diagnosis are Pending GPU run (job 412902). The project-wide results page is [RESULTS.md](../RESULTS.md).
+decode steps cheaper, and spatial eviction made summaries longer and more repetitive. In fp32, AR equalled
+ViSpec on 9 of 9 checks, and every bf16 divergence diagnosed here is a near-tie. The project-wide results
+page is [RESULTS.md](../RESULTS.md).
 
 ## Changes from the reference
 
@@ -317,8 +318,9 @@ windows:
   194 tokens, with AR longer in 22, ViSpec in 19, and 6 equal.
 
 The outputs first differ at output index 7 to 443 (median 58), never at the first token. Exact agreement
-between AR and ViSpec is 0 of 55, although the prompts are identical (55 of 55 fingerprints). The fp32 check
-and the divergence diagnosis below test whether these are bf16 near-ties.
+between AR and ViSpec is 0 of 55, although the prompts are identical (55 of 55 fingerprints). The divergence
+diagnosis below finds every one of the 55 first differences to be a bf16 near-tie, and in fp32 the two
+methods agree on all 3 windows checked.
 
 #### Per arm (sweep table)
 
@@ -414,7 +416,8 @@ Ratios against the same-job reference of the same method:
   about half a point are not distinguishable from noise.
 - **Draft pruning** changed acceptance by -0.010 and +0.038 and made latency 1.0% and 2.3% lower, as in Week 3, because
   the draft already sees each page as 2 query positions. Its outputs still differ from the reference in 39
-  and 37 of 55 windows (at 0.5 and 0.25). The divergence diagnosis below tests whether these are bf16 near-ties.
+  and 37 of 55 windows (at 0.5 and 0.25). The divergence diagnosis below finds every one to be a bf16
+  near-tie.
 
 #### Predictions against the measurements
 
@@ -426,18 +429,47 @@ Ratios against the same-job reference of the same method:
 
 #### fp32 offset check and divergence diagnosis
 
-| Check | Status |
-| --- | --- |
-| fp32 offset check: AR equals ViSpec in fp32 on 3 windows at kv `1.0:spatial`, kv `0.25:spatial` and combined `0.25:spatial` | Pending GPU run (job 412902) |
-| Divergence diagnosis: AR against ViSpec, and each draft-only arm against the ViSpec reference (job 402643) | Pending GPU run (job 412902) |
+Both ran in one GPU step, Slurm job 412902, on 2026-11-21 (node `c4-3`, `NVIDIA RTX A6000`
+`GPU-786d8051-7e60-0cbf-22b0-defdaae84a18`, commit `27405e81224d`, TF32 off for the fp32 passes).
+
+**fp32 offset check.** `offset_check` decoded the first 3 windows (chapter 1, pages 1 to 18) with both
+methods in fp32 under each setting. AR equalled ViSpec on every window:
+
+| Setting | AR equals ViSpec | Output tokens (AR = ViSpec) | Evicted prompt tokens (`kv_offset`) | Kept per image, min | Eviction counts equal |
+| --- | ---: | --- | ---: | ---: | --- |
+| kv `1.0:spatial` (no eviction) | 3/3 | 293, 305, 391 | 0 | 1,148 | yes |
+| kv `0.25:spatial` | 3/3 | 356, 1,024, 1,024 | 5,166 | 287 | yes |
+| combined `0.25:spatial` | 3/3 | 356, 1,024, 1,024 | 5,166 | 287 (draft 287) | yes |
+
+- **What it shows:** on multi-page prompts the draft's multi-image branch and the cache bookkeeping are exact.
+  ViSpec commits the target's tokens even when 5,166 of 6,955 prompt positions are evicted.
+- **Scope:** the kv 1.0 setting is the first fp32 check without eviction in this project. Each window's
+  prompt fingerprint equals the one recorded by the runs, so the checks used the same inputs.
+- **Not a quality result:** two of the 0.25 windows run to the 1,024-token cap in fp32 too, in line with the
+  repetition that spatial eviction causes in bf16.
+
+**Divergence diagnosis.** `diagnose_divergence` replayed each first difference with the stock Hugging Face
+model in bf16 and in fp32, for three comparisons from job 402643. A case is a near-tie when the bf16 top-two
+logit margin is at most 0.5. The diagnosis gate passes when no case is unexplained and none is wrong for both
+runs.
+
+| Comparison | Cases | Near-ties | Unexplained or both wrong | bf16 margin, median and max | fp32 picks the first run's token / the second's / neither |
+| --- | ---: | ---: | ---: | --- | --- |
+| ViSpec against AR (first run AR) | 55 | 55 | 0 | 0.125, 0.375 | 21 / 34 / 0 |
+| draft `0.5:spatial` against the ViSpec reference (first run the reference) | 39 | 39 | 0 | 0.0625, 0.250 | 17 / 22 / 0 |
+| draft `0.25:spatial` against the ViSpec reference (first run the reference) | 37 | 37 | 0 | 0.125, 0.250 | 17 / 19 / 1 |
+
+The gate passes for all three. In fp32 the replay sides with either run about evenly, so neither method is
+systematically off at these points. Together with Week 1, every AR-against-ViSpec divergence diagnosed on
+Qwen is a near-tie: 221 of 221 (150 long and 16 short single-image answers, and 55 manga windows).
 
 **Dataset freeze.** The Re:Verse+ folder was re-frozen on 2026-11-15. Its `FREEZE.json` now
 carries the date 2026-11-16 and digest `d495889d…`, in place of `7b71fc7a…` from 2026-10-16 that the runs
 above used. This project never writes to that folder. The volume 1 page images and page texts that this
 experiment reads carry file dates of 2026-07-13 and 2026-08-30, before the first freeze, so they are
 unchanged. The asset record was re-prepared against the new freeze for the checks above, and the old
-record is kept as `.preparation/assets_reverse.freeze-2026-10-16.json`. The checks also compare each window's
-prompt fingerprint with the runs.
+record is kept as `.preparation/assets_reverse.freeze-2026-10-16.json`. The checks used inputs identical to the runs:
+each window's prompt fingerprint matches.
 
 #### Analysis files
 
@@ -450,7 +482,9 @@ These folders are git-ignored and kept on project storage, under the main checko
   against AR, the two identity comparisons, and kv 0.75 spatial against the reference and the 1.0 arm).
 - **Comparisons, jobs 402641 to 402644:** `20261121T211835Z_week4_reverse_comparisons/`, with ViSpec against
   AR for each job and each draft-only arm against the ViSpec reference of job 402643, and `commands.txt`.
-- **fp32 offset check:** `week4_offset_oracle/` in the worktree that ran the jobs.
+- **fp32 offset check:** `week4_offset_oracle/` under the `experiment/sweeps/` of the worktree that ran the
+  jobs, with its job script and log.
+- **Divergence diagnosis:** a `diagnosis/` folder inside each of the three job 402643 comparisons above.
 - **Trade-off figure:** `reverse_summary_long` in `20261121T212041Z_tradeoffs_weeks3_4_final/` (see
   [RESULTS.md](../RESULTS.md#5-trade-off-figures)).
 
@@ -479,5 +513,7 @@ These folders are git-ignored and kept on project storage, under the main checko
   08 image sizes.
 - BERTScore truncates at 512 word pieces, so it compares only the opening of 50 of the 55 references and
   cannot show whether later pages are covered. ROUGE-1 is the primary score.
-- Only 5 of the 14 folders exist so far, and only one eviction arm (0.75 spatial) is below retention 1.0.
-  Predictions 2 and 3 cannot be scored until the queued jobs run.
+- Timing between jobs varies far more than inside one job: the references, identical in five jobs, took up
+  to 21% longer in the slowest job. Arms are therefore compared only with the references of their own job.
+- The fp32 check covers 3 windows per setting, and the repetition measures are computed from token IDs only.
+  Neither is a substitute for reading the summaries, which this repository does not store.

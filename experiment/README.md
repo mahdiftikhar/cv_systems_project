@@ -92,7 +92,7 @@ first token mismatch, memory measurements, artifact checks, and limitations.
 | [06: Qwen KV eviction](06_qwen_kv_eviction/README.md) | Target visual KV eviction after prefill, vs the same method at 100% | Week 2 (jobs 393336, 393337) and Week 3 (jobs 398883, 398923) measured, retention 1.0 to 0.25, 100/100 per benchmark. Identity gate passed. Live KV (arithmetic) falls with the budget, decode peak moves about 0.3%. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at kv 0.25 and 0.75 spatial |
 | [07: Qwen decode drift](07_qwen_decode_drift/README.md) | Fork cached AR decode vs stock HF cached and full-recompute decoding (Week 2 case 35537:162) | Measured (job 398844), `long` TextVQA, 100 questions. Fork and stock HF greedy agree on 19/100, and 80 of 81 first mismatches are bf16 near-ties. At 35537:162 the fork ties 13 and 95518 exactly, while stock incremental decoding prefers 95518 by 0.375. **Both plan stop conditions hold**, so the stop rule fired on one exact-tie case; judged bf16 implementation noise (known limitation). The mechanism is not isolated |
 | [08: Qwen combined sparsity](08_qwen_combined_sparsity/README.md) | ViSpec with the same retention and policy on draft pruning and target KV eviction (diagonal arms only), vs the same-job 03 reference and the same-policy 1.0 arm | Week 3 measured (jobs 398885, 398923), diagonal arms, 100/100 per benchmark. Identity gate passed. Combined arms track the matching 06 arm. fp32 offset oracle (job 402165): AR equals ViSpec on 5/5 at combined 0.25 spatial |
-| [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (prompts of 5.8k to 7.0k tokens), `long` style, same-job references | Complete (jobs 398924, 402641 to 402644): all 14 arms, 55/55 windows each. Identity gate passed. ViSpec 1.74 to 1.87 times faster than AR, with TTFT 41% to 44% of ViSpec's time. Eviction saved 110 to 170 MiB at 0.5 and 0.25 without cheaper decode steps. fp32 check and diagnosis pending (job 412902) |
+| [09: Qwen Re:Verse long context](09_qwen_reverse_longcontext/README.md) | Every Week 4 arm (references, KV eviction, draft pruning, combined) on `reverse_summary` windows of 5 to 6 manga pages (prompts of 5.8k to 7.0k tokens), `long` style, same-job references | Complete (jobs 398924, 402641 to 402644): all 14 arms, 55/55 windows each. Identity gate passed. ViSpec 1.74 to 1.87 times faster than AR, with TTFT 41% to 44% of ViSpec's time. Eviction saved 110 to 170 MiB at 0.5 and 0.25 without cheaper decode steps. fp32 check 9/9 exact, all bf16 divergences near-ties (job 412902) |
 
 **Results page.** [RESULTS.md](RESULTS.md) brings the Qwen results of Weeks 1 to 4 together on one page:
 speculative decoding first, then the explanation of why visual sparsity barely helps at batch 1, with the
@@ -365,7 +365,9 @@ and jobs 402641 to 402644 (commit `27405e81224d`), each with its own AR and ViSp
   saved). Time per verification step stayed within -2.9% and +3.9%. Latency followed output length: spatial
   eviction made summaries longer and more repetitive (23 windows at the cap at 0.25, against 6), while the
   attention policy did not. At 0.25 the attention policy lost 0.59 ROUGE-1 points and the spatial policy 2.17.
-- **Still pending:** the Re:Verse+ fp32 offset check and the divergence diagnosis, Pending GPU run (job 412902).
+- **Exactness:** in fp32, AR equalled ViSpec on 3 of 3 windows at kv 1.0, kv 0.25 spatial and combined 0.25
+  (job 412902). Every bf16 divergence diagnosed (AR against ViSpec 55/55, draft arms 39/39 and 37/37) is a
+  near-tie.
 
 Details are in the [09 README](09_qwen_reverse_longcontext/README.md#results) and on the
 [results page](RESULTS.md#23-long-multi-page-prompts-prompt-processing-caps-the-speedup).

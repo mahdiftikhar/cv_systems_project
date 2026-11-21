@@ -1,7 +1,7 @@
 # Results: ViSpec speculative decoding and visual sparsity on Qwen2.5-VL-3B
 
-Status on 2026-11-21: Weeks 1 to 4 are measured. All 14 Re:Verse+ manga arms are complete (five Slurm jobs).
-The Re:Verse+ fp32 check and divergence diagnosis, and the HiViS comparison on Qwen2.5-VL-7B, are running. Experiments 00 and 01 (LLaVA-1.6) are an
+Status on 2026-11-21: Weeks 1 to 4 are measured. All 14 Re:Verse+ manga arms are complete (five Slurm jobs),
+with their fp32 check and divergence diagnosis. The HiViS comparison on Qwen2.5-VL-7B is running. Experiments 00 and 01 (LLaVA-1.6) are an
 earlier, separate study and are summarised in the [register](README.md), not here.
 
 **How to read this page.**
@@ -43,12 +43,12 @@ what visual sparsity adds on top of it.
    and 3). It is 1.46 to 1.49 times faster on short COCO captions. It is not faster on 5-token TextVQA
    answers (0.96 to 0.98), because prompt processing is most of their time.
 2. **ViSpec matched AR in every fp32 check, and in bf16 they differ at near-ties.**
-   - **fp32:** ViSpec and AR gave identical tokens in 15 of 15 checks. These are the first 5 long TextVQA
-     questions at each of three eviction settings. No fp32 check without eviction is recorded on single
-     images, and the Re:Verse+ check is Pending GPU run (job 412902).
-   - **bf16:** they agree on 22 to 28 of 100 long answers and 88 to 96 of 100 short answers. Every
-     AR-against-ViSpec divergence diagnosed so far (Week 1, 166 cases) is a near-tie between the top two
-     logits (section 2.2).
+   - **fp32:** ViSpec and AR gave identical tokens in 24 of 24 checks: the first 5 long TextVQA questions at
+     three eviction settings, and the first 3 manga windows at kv 1.0 (no eviction), kv 0.25 spatial and
+     combined 0.25.
+   - **bf16:** they agree on 22 to 28 of 100 long answers, 88 to 96 of 100 short answers and 0 of 55 manga
+     summaries. Every AR-against-ViSpec divergence diagnosed (221 cases: Week 1 and the manga windows) is a
+     near-tie between the top two logits (section 2.2).
 3. **On 5- to 6-page manga windows, ViSpec is 1.74 to 1.87 times faster end to end** in five jobs with
    identical outputs (mean 1.79, section 2.3).
    - **Decode phase:** it gains about 1.9 to 2.1 times when the length cap does not distort the
@@ -109,15 +109,19 @@ Accepted draft tokens are identical across jobs because greedy outputs are repro
 
 ### 2.2 Exactness
 
-- **In fp32, ViSpec matched AR in every check (15 of 15).** Greedy ViSpec commits only tokens that the
+- **In fp32, ViSpec matched AR in every check (24 of 24).** Greedy ViSpec commits only tokens that the
   target picks, so it should equal AR.
   - **The checks:** the fp32 offset check (GPU job 402165) decoded both methods in fp32 with TF32 off. It
     covered the first 5 long TextVQA questions at each of three settings: kv 0.25 spatial, kv 0.75 spatial
     and combined 0.25 spatial. AR equalled ViSpec on 5 of 5 in each setting
     ([06](06_qwen_kv_eviction/README.md#fp32-offset-oracle-exactness-check) and
     [08](08_qwen_combined_sparsity/README.md#fp32-offset-oracle-exactness-check) READMEs).
-  - **The scope:** every check had eviction on. No fp32 decode without eviction is recorded, and none on
-    COCO or on Re:Verse+ windows.
+  - **The scope:** every single-image check had eviction on, and none covers COCO.
+  - **Re:Verse+ windows (job 412902):** AR equalled ViSpec in fp32 on the first 3 windows at kv 1.0 spatial
+    (no eviction), kv 0.25 spatial and combined 0.25 spatial, 9 of 9. The prompt fingerprints equal the
+    runs'. This also confirms the draft's multi-image branch and the cache bookkeeping with 5,166 of 6,955
+    prompt positions evicted
+    ([09 README](09_qwen_reverse_longcontext/README.md#fp32-offset-check-and-divergence-diagnosis)).
 - **In bf16, AR and ViSpec differ at near-ties.** The Week 1 diagnosis found every AR-against-ViSpec
   divergence to be a near-tie, with no exception: 150 of 150 in `long` and 16 of 16 in `short`, with a bf16
   top-2 margin of at most 0.375 logits ([03 README](03_qwen_vispec/README.md#results)). The most likely
@@ -134,7 +138,10 @@ Accepted draft tokens are identical across jobs because greedy outputs are repro
     ([07 README](07_qwen_decode_drift/README.md#results)).
 - **On Re:Verse+ windows**, ViSpec and AR agree on 0 of 55 summaries in bf16. The prompts are identical
   (55 of 55 input fingerprints match), and the first mismatch falls at output index 7 to 443 (median 58).
-  The fp32 offset check and the divergence diagnosis for these windows are **Pending GPU run (job 412902)**.
+  The diagnosis (job 412902, comparison from job 402643) finds all 55 first differences to be near-ties, with
+  a bf16 top-2 margin of at most 0.375 logits (median 0.125). In fp32 the replay picks AR's token in 21 cases
+  and ViSpec's in 34. The draft-only arms at 0.5 and 0.25 are near-ties too, 39 of 39 and 37 of 37, with
+  margins of at most 0.25.
 
 ### 2.3 Long multi-page prompts: prompt processing caps the speedup
 
@@ -355,13 +362,13 @@ final attempt (restart 2). Its restart 1 also finished, with token-identical out
 | Identity gate: each 1.0 arm token-identical to the same-job ViSpec reference | **Passed**: kv 1.0 spatial 55/55, kv 1.0 attention 55/55, with identical prompts (55/55 fingerprints) |
 | References across jobs | AR and ViSpec references token-identical across all five jobs (55/55 each) |
 | Smallest number of image tokens kept per image (`kv_min_kept_per_image`) | 1,148 at 1.0, 861 at 0.75, 574 at 0.5 and 287 at 0.25 (draft side: 574 and 287) |
-| fp32 offset check (AR equals ViSpec under the same eviction, 3 windows at kv 1.0, kv 0.25 spatial and combined 0.25) | Pending GPU run (job 412902) |
-| Divergence diagnosis (AR against ViSpec, and the draft-only arms) | Pending GPU run (job 412902) |
+| fp32 offset check (AR equals ViSpec under the same eviction, 3 windows at kv 1.0, kv 0.25 spatial and combined 0.25) | **Passed**: 3/3 at each setting, job 412902 |
+| Divergence diagnosis (AR against ViSpec, and the draft-only arms) | **Passed**: all near-ties (55/55, 39/39, 37/37), job 412902 |
 
 **Dataset freeze.** The Re:Verse+ folder was re-frozen on 2026-11-15 (new `FREEZE.json` digest). The volume 1
 page images and texts used here are dated 2026-07-13 and 2026-08-30, before the first freeze, so they are
-unchanged. The checks of job 412902 ran against a re-prepared asset record and compare every window's prompt
-fingerprint with the runs. This project never writes to the dataset folder.
+unchanged. The checks of job 412902 ran against a re-prepared asset record, and every window's prompt fingerprint
+equals the runs'. This project never writes to the dataset folder.
 
 **Analysis files** (git-ignored, under the main checkout's `experiment/sweeps/`):
 
@@ -426,11 +433,11 @@ above.
 
 | Prediction (where it was written) | Outcome | Evidence |
 | --- | --- | --- |
-| Greedy ViSpec reproduces AR tokens (design spec, Week 1) | **Held in all 15 fp32 checks. Not held in bf16, explained** | fp32: 15 of 15 checks identical (5 long TextVQA questions at three eviction settings; the Re:Verse+ check is Pending GPU run, job 412902). bf16: 22 to 28 of 100 (`long`), 88 to 96 of 100 (`short`), 0 of 55 (Re:Verse+). Every diagnosed AR-against-ViSpec divergence is a near-tie, and the Re:Verse+ ones are not yet diagnosed (section 2.2) |
+| Greedy ViSpec reproduces AR tokens (design spec, Week 1) | **Held in all 24 fp32 checks. Not held in bf16, explained** | fp32: 24 of 24 checks identical (5 long TextVQA questions at three eviction settings, 3 manga windows at three settings including no eviction). bf16: 22 to 28 of 100 (`long`), 88 to 96 of 100 (`short`), 0 of 55 (Re:Verse+). Every diagnosed AR-against-ViSpec divergence is a near-tie, 221 of 221 (section 2.2) |
 | Decode is host-bound, so visual KV eviction barely moves decode latency ([04](04_qwen_decode_profile/README.md)) | **Held (inference from a profile)** | GPU busy 36 to 50% of a step. TTFT and per-iteration time did not change under eviction |
 | Draft pruning costs acceptance at most slightly ([05](05_qwen_draft_pruning/README.md)) | **Held** | Acceptance within -0.015 to +0.076 of the 1.0 arm |
 | Draft pruning barely moves latency (05) | **Held** | Latency ratios 0.976 to 1.037 |
-| Greedy output matches the 1.0 reference up to bf16 near-ties under draft pruning (05) | **Held for `short`; held for `long` apart from one known case** | 9 of 10 Week 3 draft-only arms pass the diagnosis. Long 0.5 attention fails on question 35537, the exact-tie case of experiment 07 |
+| Greedy output matches the 1.0 reference up to bf16 near-ties under draft pruning (05) | **Held for `short` and on manga; held for `long` apart from one known case** | 9 of 10 Week 3 draft-only arms pass the diagnosis, and both manga draft arms pass (39/39 and 37/37 near-ties). Long 0.5 attention fails on question 35537, the exact-tie case of experiment 07 |
 | Eviction lowers live KV ([06](06_qwen_kv_eviction/README.md)) | **Held** | Live KV ratio 0.298 to 0.791 (Week 3), 0.300 to 0.770 on Re:Verse+ |
 | Eviction lowers the decode peak (06) | **Partly held** | About 0.3% lower (ratio 0.997 to 1.000). Unchanged in every Re:Verse+ ViSpec arm, and 1.3% lower in the Re:Verse+ AR arm |
 | Eviction barely moves latency (06) | **Held for TTFT and per-iteration time, partly end to end** | End-to-end latency ratios of 0.863 to 1.130 follow output length and acceptance. Per verification step, Re:Verse+ arms stayed within -2.9% and +3.9% |
@@ -452,8 +459,6 @@ above.
 
 ## 8. Open issues
 
-- **Re:Verse+ checks that wait for a GPU.** The fp32 offset check and the divergence diagnosis are
-  Pending GPU run (job 412902).
 - **The cached-decode drift probe (07).** The fork's cached AR decode matches stock Hugging Face greedy
   decoding on only 19 of 100 long TextVQA answers. 80 of the 81 first mismatches are near-ties. In the
   remaining case (35537:162) the fork's two top logits tie exactly, while stock decoding prefers the other
@@ -461,9 +466,8 @@ above.
   isolated.
 - **bf16 agreement is low on long answers.** ViSpec and AR agree on 22 to 28 of 100 long TextVQA and COCO
   answers and on 0 of 55 Re:Verse+ summaries. In exact arithmetic they would agree on all of them. Equal
-  outputs are shown only in fp32 (15 checks on long TextVQA, all with eviction), so the speedups are observed
-  ratios. The Re:Verse+ divergences
-  are not yet diagnosed (job 412902).
+  outputs are shown only in fp32 (24 checks on long TextVQA and manga windows), so the speedups are observed
+  ratios. Every diagnosed divergence is a near-tie (221 of 221).
 - **One run per arm.** Inside one job, the two 1.0 arms of job 398924, whose tokens are identical to the
   ViSpec reference, still ran 0.9% and 0.5% faster than it, so latency differences of about 1% between arms
   are within timing noise. Between jobs the spread is much larger: the Re:Verse+ references, identical in
