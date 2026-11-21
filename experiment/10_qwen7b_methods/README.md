@@ -24,9 +24,10 @@ Predictions, written before any run:
    tree verification is larger. Cutoff for the acceptance part: accepted draft tokens per iteration at
    60/5/10 exceed the 30/3/8 value for both methods on both benchmarks.
 
-These are predictions, not results. The Results section is `pending`.
+These predictions were written before any run. The [Results](#results) section scores them.
 
-Status: **pending**. No 10 run has been made.
+Status: **complete** (jobs 412893 to 412899, 2026-11-21). All 31 arms ran 100 of 100 samples. Prediction 1
+held, prediction 2 did not hold, and prediction 3 held for acceptance.
 
 ## Changes from the baseline
 
@@ -144,9 +145,141 @@ mean latency divided by the method's mean latency.
 
 ## Results
 
-**Pending.** No run exists yet. When the runs finish, this section reports hardware and run folders, per-method
-speedup, acceptance, time per output token and time to first token, and a table scoring each prediction above
-against the measurements with its cutoff.
+### Hardware and run folders
+
+Every job ran on one pinned 48 GB `NVIDIA RTX A6000` on the `preempt` partition, at commit `1a0f282` with a
+clean tree. Each job used one GPU (one UUID in every device report of the job).
+
+| Job | Content | Node | Attempt used | Run folders (suffix, in arm order) |
+| --- | --- | --- | --- | --- |
+| 412893 | `long` TextVQA, primary arms | c4-2 | restart 2 | `pgfapa` AR, `j0x9G4` ViSpec, `GXHZvS` HiViS |
+| 412894 | `long` COCO, primary arms | c4-2 | restart 2 | `wlu7kb` AR, `fwQuzN` ViSpec, `k88Sw5` HiViS |
+| 412895 | `short`, both benchmarks, primary arms | c4-3 | first | `SZakwq` AR, `G1SxZa` ViSpec, `vIOO0P` HiViS |
+| 412896 | `long` TextVQA, tree size | c1-8 | first | `0GBfHd` AR, `K8sx7a` ViSpec, `1jGVHp` HiViS, `i86ItQ` ViSpec 60-5-10, `lJyReB` HiViS 60-5-10 |
+| 412897 | `long` COCO, tree size | c4-2 | first | `kvtXKB` AR, `zkjDwi` ViSpec, `fr8ZPu` HiViS, `lhjUo1` ViSpec 60-5-10, `7OaF8J` HiViS 60-5-10 |
+| 412898 | `long` TextVQA, prompt order | c4-3 | first | `joa66M` AR, `5m5iUe` ViSpec, `5llhBP` HiViS, `WeVGWv` AR image-first, `zaxpj0` ViSpec image-first, `Yw3DM3` HiViS image-first |
+| 412899 | `long` COCO, prompt order | c4-3 | first | `9vX30T` AR, `1UpLyu` ViSpec, `wXVaxz` HiViS, `YfoT55` AR image-first, `iU8WO5` ViSpec image-first, `AIczCS` HiViS image-first |
+
+Jobs 412893 and 412894 were requeued twice. Their restart 1 attempts also finished every arm, but the tables use
+the final attempt (highest `slurm_restart_count` with `exit_code=0`), as the prerequisites above require. The
+earlier folders stay in `runs/` and are not used.
+
+**Completion checks.** All 31 folders exit 0, record 100 of 100 samples per benchmark and have one report.
+The GPU checks of job 402297 (final attempt, restart 4, folder `dkKVdV`) passed before these runs: 3B identity
+(5 of 5 AR and 5 of 5 ViSpec outputs equal to the 3B references), fp32 exactness of HiViS against AR (5 of 5
+long TextVQA questions at `image-last` 30-3-8, and 5 of 5 at `image-first` 60-5-10), a bf16 smoke test, the
+large tree and the position ablation.
+
+**Reproducibility between jobs.** Each primary `long` arm (AR, ViSpec and HiViS at 30-3-8, `image-last`) ran in
+three jobs per benchmark, on three different GPUs. Its output token IDs and input fingerprints are identical in
+all three jobs, for all six arm and benchmark pairs. The timing is not identical. Long TextVQA AR took 12.96 s to
+16.62 s in the three jobs (28% longer in the slowest), and long COCO AR took 4.88 s to 5.18 s (6% longer).
+
+### Primary comparison
+
+Speedup over AR is the same-job AR mean latency divided by the method's mean latency (above 1 means faster).
+Speedup over ViSpec divides ViSpec's latency by HiViS's. The TTFT share is the method's TTFT divided by its
+latency, pooled over samples. Quality is TextVQA VQA accuracy (%) or COCO CIDEr-D x 100. `long` quality is
+near zero for every method, because strict scoring rejects paragraph answers, as in [03](../03_qwen_vispec/README.md).
+
+| Style | Benchmark | Job | Method | Latency (s) | Speedup over AR | Speedup over ViSpec | Accepted draft tokens per iteration | TPOT (ms) | TTFT (s) | TTFT share | Exact agreement with AR | Quality |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| long | TextVQA | 412893 | AR | 15.832 | 1.000 | n/a | n/a | 38.2 | 1.049 | 6.6% | 100/100 | 0.0 |
+| long | TextVQA | 412893 | ViSpec | 8.028 | 1.972 | n/a | 2.181 | 17.8 | 1.049 | 13.1% | 2/100 | 0.0 |
+| long | TextVQA | 412893 | HiViS | 7.960 | 1.989 | 1.009 | 2.282 | 17.2 | 1.050 | 13.2% | 3/100 | 0.0 |
+| long | COCO | 412894 | AR | 4.878 | 1.000 | n/a | n/a | 29.5 | 0.251 | 5.1% | 100/100 | 0.0 |
+| long | COCO | 412894 | ViSpec | 2.464 | 1.980 | n/a | 2.287 | 14.3 | 0.251 | 10.2% | 18/100 | 0.0 |
+| long | COCO | 412894 | HiViS | 2.215 | 2.203 | 1.113 | 2.724 | 12.5 | 0.251 | 11.3% | 9/100 | 0.0 |
+| short | TextVQA | 412895 | AR | 1.108 | 1.000 | n/a | n/a | 31.3 | 1.002 | 90.4% | 100/100 | 75.6 |
+| short | TextVQA | 412895 | ViSpec | 1.139 | 0.973 | n/a | 0.846 | 53.1 | 1.008 | 88.5% | 100/100 | 75.6 |
+| short | TextVQA | 412895 | HiViS | 1.148 | 0.966 | 0.993 | 0.549 | 62.2 | 1.001 | 87.2% | 100/100 | 75.6 |
+| short | COCO | 412895 | AR | 0.824 | 1.000 | n/a | n/a | 31.0 | 0.254 | 30.8% | 100/100 | 54.63 |
+| short | COCO | 412895 | ViSpec | 0.588 | 1.401 | n/a | 1.794 | 18.6 | 0.250 | 42.6% | 87/100 | 54.50 |
+| short | COCO | 412895 | HiViS | 0.529 | 1.559 | 1.113 | 2.345 | 15.2 | 0.249 | 47.1% | 84/100 | 54.43 |
+
+- **Speedup.** In the `long` style, both methods were about twice as fast as AR. HiViS was 1.009 times as fast
+  as ViSpec on TextVQA and 1.113 times as fast on COCO.
+- **Spread between jobs.** In the three jobs with identical outputs, the `long` speedup over AR ranged from 1.850
+  to 1.997 (ViSpec) and from 1.931 to 2.013 (HiViS) on TextVQA, and from 1.980 to 2.075 (ViSpec) and from 2.203
+  to 2.339 (HiViS) on COCO. HiViS over ViSpec ranged from 1.008 to 1.044 on TextVQA and from 1.113 to 1.127 on
+  COCO. The TextVQA advantage of HiViS is small and varies between jobs, while the COCO advantage is consistent.
+- **Acceptance.** HiViS accepted more draft tokens per iteration than ViSpec in the `long` style (TextVQA +0.10,
+  COCO +0.44) and on `short` COCO (+0.55). Its time per verification step was about the same as ViSpec's
+  (46.1 ms against 46.3 ms on long COCO in job 412894, pooled over samples), so the higher acceptance became a
+  lower TPOT.
+- **Short TextVQA.** Answers average 4.4 tokens, TTFT is 87% to 90% of the latency, and neither method was
+  faster than AR. HiViS accepted fewer draft tokens per iteration than ViSpec here (0.55 against 0.85).
+- **Agreement.** In bf16, the `long` outputs of both methods rarely match AR exactly (2 to 18 of 100). The median
+  matching prefix before the first differing token is 56.5 (ViSpec) and 60.0 (HiViS) tokens on long TextVQA,
+  and 72.5 and 55.0 tokens on long COCO. The `short` outputs match on 84 to 100 of 100, and the `short` quality
+  of the three methods is within 0.20 CIDEr-D and 0.0 VQA points.
+- **Memory.** The decode peak is 17.20 to 17.28 GiB for HiViS, 17.29 to 17.36 GiB for ViSpec and 17.23 to 17.33
+  GiB for AR, in every AR arm and every 30-3-8 arm.
+
+Compared with the 3B results (`experiment/RESULTS.md` on branch `qwen-results`, a different model and other jobs, so context only), ViSpec's
+`long` acceptance is almost unchanged on 7B (2.181 against 2.141 on TextVQA, 2.287 against 2.284 on COCO), and its
+speedup is somewhat lower (1.85 to 2.00 against 2.15 to 2.20 on TextVQA, 1.98 to 2.07 against 2.13 to 2.32 on COCO).
+Exact agreement on long TextVQA is lower (2 of 100 against 22 of 100). The 7B `short` COCO CIDEr-D (54.63 for AR)
+is less than half of the 3B value (121.40) on the same 100 images. The 7B AR captions are longer (19.4 output
+tokens on average, against 14.8 for 3B AR in job 398923). The cause of the lower score was not examined.
+
+### Tree size (jobs 412896 and 412897)
+
+Tokens per iteration and step time are pooled over the 100 samples (total output tokens or total decode time
+divided by total verification iterations).
+
+| Benchmark | Method | Accepted draft tokens per iteration, 30-3-8 to 60-5-10 | Output tokens per iteration | Decode time per iteration (ms) | Speedup over own 30-3-8 | Speedup over AR, 30-3-8 to 60-5-10 |
+| --- | --- | --- | --- | --- | ---: | --- |
+| TextVQA | ViSpec | 2.181 to 2.496 (+0.31) | 3.181 to 3.496 (+9.9%) | 58.80 to 66.41 (+12.9%) | 0.968 | 1.997 to 1.933 |
+| TextVQA | HiViS | 2.282 to 2.748 (+0.47) | 3.282 to 3.748 (+14.2%) | 58.65 to 66.75 (+13.8%) | 1.010 | 2.013 to 2.034 |
+| COCO | ViSpec | 2.287 to 2.671 (+0.38) | 3.287 to 3.671 (+11.7%) | 46.94 to 52.33 (+11.5%) | 0.995 | 2.075 to 2.065 |
+| COCO | HiViS | 2.724 to 3.335 (+0.61) | 3.724 to 4.335 (+16.4%) | 46.08 to 52.40 (+13.7%) | 1.023 | 2.339 to 2.392 |
+
+The larger tree raised acceptance for both methods on both benchmarks, and HiViS gained more. Each verification
+step took 11.5% to 13.8% longer, which cancelled most of the gain. ViSpec was 3.2% slower on TextVQA and 0.5% slower
+on COCO than at 30-3-8, and HiViS was 1.0% and 2.3% faster. With one run per arm, differences of a few percent
+are close to timing noise (the HiViS over ViSpec ratio on TextVQA varied from 1.008 to 1.044 between jobs with
+identical outputs). The 60-5-10 tree raised the decode peak by about 0.10 GiB for both methods.
+
+### Prompt order (jobs 412898 and 412899)
+
+| Benchmark | Order | AR latency (s) | AR output tokens | AR outputs at the 1,024-token limit | ViSpec speedup over AR | HiViS speedup over AR | Accepted draft tokens per iteration, ViSpec / HiViS | HiViS minus ViSpec |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| TextVQA | image-last | 12.960 | 387.8 | 0 | 1.850 | 1.931 | 2.181 / 2.282 | 0.101 |
+| TextVQA | image-first | 7.591 | 225.2 | 4 | 1.565 | 1.550 | 2.174 / 2.270 | 0.096 |
+| COCO | image-last | 4.999 | 157.9 | 0 | 2.016 | 2.260 | 2.287 / 2.724 | 0.437 |
+| COCO | image-first | 5.353 | 172.1 | 0 | 2.019 | 2.209 | 2.272 / 2.721 | 0.449 |
+
+- **Acceptance.** Moving the image first changed the acceptance of each method by at most 0.015. The difference
+  between HiViS and ViSpec changed by -0.004 on TextVQA and +0.013 on COCO.
+- **Outputs.** The order changed AR's own answers. On TextVQA the mean output fell from 388 to 225 tokens, and
+  exact agreement with AR rose to 28 of 100 (ViSpec) and 30 of 100 (HiViS), from 2 and 3. On COCO it was 10 and
+  19 of 100, from 18 and 9.
+- **TextVQA speed.** With the image first, both speedups fell to about 1.56. The shorter answers raised the TTFT
+  share from 14.6% to 21.6% (ViSpec). In addition, each verification step took 16% (ViSpec) and 21% (HiViS)
+  longer than in the `image-last` arms of the same job, while AR steps took 5% less. The COCO steps did not change
+  (within 1.4%). The cause of the longer TextVQA steps was not examined.
+
+### Predictions
+
+| Prediction | Cutoff | Outcome | Evidence |
+| --- | --- | --- | --- |
+| 1. Both speculative methods beat AR in the `long` style | ViSpec and HiViS mean latency below the same-job AR mean on both benchmarks | **Held** | Speedup over AR 1.972 (ViSpec) and 1.989 (HiViS) on TextVQA (412893), 1.980 and 2.203 on COCO (412894). Every `long` speculative arm in the six `long` jobs was faster than its AR reference (1.550 to 2.392) |
+| 2. HiViS's acceptance relative to ViSpec depends on prompt order | The HiViS minus ViSpec acceptance difference changes by at least 0.1 between `image-last` and `image-first` | **Not held** | The change is -0.004 on TextVQA (0.101 to 0.096) and +0.013 on COCO (0.437 to 0.449). HiViS's own acceptance moved by at most 0.013 |
+| 3. The 60/5/10 tree raises acceptance for both methods | Acceptance at 60/5/10 above the 30/3/8 value for both methods on both benchmarks | **Held** | +0.31 (ViSpec) and +0.47 (HiViS) on TextVQA, +0.38 and +0.61 on COCO. The latency part was left open. It ranged from 3.2% slower to 2.3% faster |
+
+### Analysis files
+
+`experiment/sweeps/20261121T233327Z_qwen7b_methods_full/` (git-ignored) holds the following files.
+
+- `sweep.md`, `sweep.json` and `sweep.csv` are the `sweep_table --layout methods` output for the 31 folders.
+- `run_dirs.txt` lists the folders.
+- `token_identity.py` and its `.txt` output give the cross-job token-ID identity check.
+- `prefix_vs_ar.py` and its `.txt` output give the matching prefix against AR and the outputs at the token
+  limit.
+- `pooled_decode.py` and its `.txt` output give the pooled tokens per iteration, step time and TTFT share.
+
+Each script reads only saved answer files and runs without a GPU.
 
 ## Limitations
 
@@ -156,6 +289,11 @@ against the measurements with its cutoff.
 - The HiViS paper's numbers use a different harness (fp16, 500 new tokens, an image-first prompt, the first
   80 TextVQA test rows). They are context only and are never substituted for these results.
 - Re:Verse+ on 7B and KV eviction on 7B are not run.
+- The ViSpec and HiViS drafters are separately trained checkpoints released by their authors. The acceptance
+  difference compares the two checkpoints, so it cannot be attributed to the draft's visual input alone.
+- fp32 exactness was checked for HiViS (5 questions in each prompt order, job 402297), not for the 7B ViSpec
+  draft, and the bf16 divergences of these runs were not diagnosed. The 7B speedups are observed ratios with
+  their agreement next to them.
 - Every job runs its arms in the same order: AR first, then ViSpec, then HiViS. Any drift in GPU clock or
   temperature over a 1-2 hour job falls on the later arms, so a small speed difference between methods can
   partly reflect when an arm ran. The device report records the GPU at the start of each arm only.
