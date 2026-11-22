@@ -27,7 +27,7 @@ The pages are credited to Yen Press, their English publisher, and are used for n
 All runs decode greedily in bf16 at batch size one with at most 1,024 new tokens, and the draft tree has depth 3, eight candidates per node and 30 tokens in total.
 Each Qwen job runs on one NVIDIA RTX A6000 with 48\,GB and runs AR and the speculative decoders in sequence, and every speedup divides the mean AR latency by the mean latency of the speculative decoder in the same job.
 Repeated jobs with identical outputs give the spread between jobs, which we report as a range.
-The \llava runs were made on separate hardware with the same decoding settings \TODO{confirm the GPU of the LLaVA runs}.
+The \llava runs were made on NVIDIA A100 GPUs with the same decoding settings.
 
 \subsection{Speedup and output exactness}
 \label{sec:exactness}
