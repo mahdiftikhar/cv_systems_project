@@ -259,12 +259,21 @@ ran 31 arms with 100 of 100 samples each.
 - **Against 3B (context only).** ViSpec's `long` acceptance is almost the same on 7B (2.181 against 2.141 on
   TextVQA, 2.287 against 2.284 on COCO), and its speedup is somewhat lower. Exact agreement on long TextVQA is
   lower (2 of 100 against 22 of 100). The 7B `short` COCO CIDEr-D (54.63 for AR) is less than half of the 3B
-  value (121.40). The 7B captions are longer (19.4 against 14.8 output tokens for AR), and the cause of the
-  lower score was not examined.
+  value (121.40). The 7B captions are longer and more descriptive: 15.2 words against 12.1, 13 of 100 wrapped
+  in quotation marks, and 54% of their words found in a reference caption against 76% for 3B. That fits the
+  lower consensus score, and the three 7B methods are within 0.20 CIDEr-D of each other.
+- **Exactness (job 412936).** All 397 bf16 differences from AR in the primary jobs are near-ties (0 unexplained).
+  In fp32 re-runs of 229 of them, the stock model prefers AR's token 112 times and the speculative token 111 times.
+  In fp32, the 7B ViSpec draft matches AR on 5 of 5 long TextVQA questions and HiViS on 5 of 5 image-first COCO
+  images, which with job 402297 makes 20 of 20.
+- **Parity with HiViS's own code (job 412935).** On 20 TextVQA questions at 60-5-10 in fp16, our port matches
+  HiViS's code exactly in pruning, positions and the first draft tree (6 trees up to fp16 rounding ties), and
+  its acceptance on the identical outputs is equal (2.8646). The token-count gate did not pass as written: 9 of
+  20 outputs are identical, against at least 18, and all 11 differences are near-ties. HiViS's own speculative
+  and AR paths agree on 0 of these 20.
 - **Limits.** The two drafters are separately trained checkpoints, so the acceptance difference compares the
-  checkpoints and cannot be attributed to the draft's visual input alone. fp32 exactness was checked for HiViS
-  (5 long TextVQA questions in each prompt order, job 402297), not for the 7B ViSpec draft, and the 7B bf16
-  divergences were not diagnosed. Every arm ran once, always in the order AR, ViSpec, HiViS.
+  checkpoints and cannot be attributed to the draft's visual input alone. Every arm ran once, always in the
+  order AR, ViSpec, HiViS.
 
 ## 3. Visual sparsity: why it barely helps at batch 1
 
@@ -535,11 +544,11 @@ above.
 - **Prompt processing dominates multi-page inputs.** Cutting image tokens before prompt processing (FastV,
   VisionZip, PyramidDrop) is future work. The vision-encoder and language-model shares of TTFT are not
   measured.
-- **HiViS on Qwen2.5-VL-7B.** The comparison is complete (section 2.4). Three limits remain. The two drafters
-  are separately trained, so the acceptance difference cannot be attributed to the visual input alone. fp32
-  exactness was checked for HiViS only, and the 7B bf16 divergences were not diagnosed. The 7B `short` COCO
-  CIDEr-D is less than half of the 3B value, for a reason not examined. The experiment README is on branch
-  `qwen-hivis-7b`.
+- **HiViS on Qwen2.5-VL-7B.** The comparison, its divergence diagnosis and its fp32 checks are complete
+  (section 2.4). Two points remain. The two drafters are separately trained, so the acceptance difference
+  cannot be attributed to the visual input alone. The parity check against HiViS's own code did not pass its
+  token-count gate as written (9 of 20 identical, all differences near-ties). The experiment README is on
+  branch `qwen-hivis-7b`.
 
 ## Data credits and terms
 
