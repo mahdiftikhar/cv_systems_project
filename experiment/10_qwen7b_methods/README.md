@@ -226,7 +226,7 @@ near zero for every method, because strict scoring rejects paragraph answers, as
 - **Memory.** The decode peak is 17.20 to 17.28 GiB for HiViS, 17.29 to 17.36 GiB for ViSpec and 17.23 to 17.33
   GiB for AR, in every AR arm and every 30-3-8 arm.
 
-Compared with the 3B results (`experiment/RESULTS.md` on branch `qwen-results`, a different model and other jobs, so context only), ViSpec's
+Compared with the 3B results ([RESULTS.md](../RESULTS.md), a different model and other jobs, so context only), ViSpec's
 `long` acceptance is almost unchanged on 7B (2.181 against 2.141 on TextVQA, 2.287 against 2.284 on COCO), and its
 speedup is somewhat lower (1.85 to 2.00 against 2.15 to 2.20 on TextVQA, 1.98 to 2.07 against 2.13 to 2.32 on COCO).
 Exact agreement on long TextVQA is lower (2 of 100 against 22 of 100). The 7B `short` COCO CIDEr-D (54.63 for AR)
