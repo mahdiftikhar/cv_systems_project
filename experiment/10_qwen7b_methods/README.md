@@ -29,7 +29,9 @@ These predictions were written before any run. The [Results](#results) section s
 Status: **complete** (jobs 412893 to 412899, 2026-11-21). All 31 arms ran 100 of 100 samples. Prediction 1
 held, prediction 2 did not hold, and prediction 3 held for acceptance. The divergence diagnosis and fp32 checks
 (job 412936, 2026-11-22) passed. The parity check against HiViS's own code (job 412935) passed four of its five
-gates. The token-count gate did not pass as written, and every difference it found is a near-tie.
+gates. The token-count gate did not pass as written, and every difference it found is a near-tie. A rerun of the
+TextVQA prompt-order arms in reverse order (job 412937) showed that the slower `image-first` steps of job 412898
+came from when those arms ran, not from the prompt order.
 
 ## Changes from the baseline
 
@@ -161,10 +163,15 @@ clean tree. Each job used one GPU (one UUID in every device report of the job).
 | 412897 | `long` COCO, tree size | c4-2 | first | `kvtXKB` AR, `zkjDwi` ViSpec, `fr8ZPu` HiViS, `lhjUo1` ViSpec 60-5-10, `7OaF8J` HiViS 60-5-10 |
 | 412898 | `long` TextVQA, prompt order | c4-3 | first | `joa66M` AR, `5m5iUe` ViSpec, `5llhBP` HiViS, `WeVGWv` AR image-first, `zaxpj0` ViSpec image-first, `Yw3DM3` HiViS image-first |
 | 412899 | `long` COCO, prompt order | c4-3 | first | `9vX30T` AR, `1UpLyu` ViSpec, `wXVaxz` HiViS, `YfoT55` AR image-first, `iU8WO5` ViSpec image-first, `AIczCS` HiViS image-first |
+| 412937 | `long` TextVQA, prompt order rerun with the image-first arms first | c4-2 | first | `zxEcz6` AR image-first, `ipRWfs` ViSpec image-first, `HTwlPl` HiViS image-first, `Y1B21R` AR, `rnC0LL` ViSpec, `tgoWov` HiViS |
 
 Jobs 412893 and 412894 were requeued twice. Their restart 1 attempts also finished every arm, but the tables use
 the final attempt (highest `slurm_restart_count` with `exit_code=0`), as the prerequisites above require. The
 earlier folders stay in `runs/` and are not used.
+
+Job 412937 ran on 2026-11-22, after the other seven. Its first arm records commit `def2e96` and the other five
+record `0f23bf8`, because a documentation commit landed while the job ran. The two commits differ only in two
+README files, so every arm ran the same code.
 
 **Completion checks.** All 31 folders exit 0, record 100 of 100 samples per benchmark and have one report.
 The GPU checks of job 402297 (final attempt, restart 4, folder `dkKVdV`) passed before these runs: 3B identity
@@ -248,24 +255,38 @@ on COCO than at 30-3-8, and HiViS was 1.0% and 2.3% faster. With one run per arm
 are close to timing noise (the HiViS over ViSpec ratio on TextVQA varied from 1.008 to 1.044 between jobs with
 identical outputs). The 60-5-10 tree raised the decode peak by about 0.10 GiB for both methods.
 
-### Prompt order (jobs 412898 and 412899)
+### Prompt order (jobs 412898, 412899 and 412937)
 
-| Benchmark | Order | AR latency (s) | AR output tokens | AR outputs at the 1,024-token limit | ViSpec speedup over AR | HiViS speedup over AR | Accepted draft tokens per iteration, ViSpec / HiViS | HiViS minus ViSpec |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
-| TextVQA | image-last | 12.960 | 387.8 | 0 | 1.850 | 1.931 | 2.181 / 2.282 | 0.101 |
-| TextVQA | image-first | 7.591 | 225.2 | 4 | 1.565 | 1.550 | 2.174 / 2.270 | 0.096 |
-| COCO | image-last | 4.999 | 157.9 | 0 | 2.016 | 2.260 | 2.287 / 2.724 | 0.437 |
-| COCO | image-first | 5.353 | 172.1 | 0 | 2.019 | 2.209 | 2.272 / 2.721 | 0.449 |
+Jobs 412898 and 412899 ran the `image-last` arms first. Job 412937 reran the TextVQA arms with the `image-first`
+arms first, to separate the prompt order from the time at which an arm ran.
+
+| Benchmark | Job | Order | AR latency (s) | AR output tokens | AR outputs at the 1,024-token limit | ViSpec speedup over AR | HiViS speedup over AR | Accepted draft tokens per iteration, ViSpec / HiViS | HiViS minus ViSpec |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |
+| TextVQA | 412898 | image-last | 12.960 | 387.8 | 0 | 1.850 | 1.931 | 2.181 / 2.282 | 0.101 |
+| TextVQA | 412898 | image-first | 7.591 | 225.2 | 4 | 1.565 | 1.550 | 2.174 / 2.270 | 0.096 |
+| TextVQA | 412937 | image-first | 8.073 | 225.2 | 4 | 1.885 | 1.913 | 2.174 / 2.270 | 0.096 |
+| TextVQA | 412937 | image-last | 12.935 | 387.8 | 0 | 1.849 | 1.860 | 2.181 / 2.282 | 0.101 |
+| COCO | 412899 | image-last | 4.999 | 157.9 | 0 | 2.016 | 2.260 | 2.287 / 2.724 | 0.437 |
+| COCO | 412899 | image-first | 5.353 | 172.1 | 0 | 2.019 | 2.209 | 2.272 / 2.721 | 0.449 |
 
 - **Acceptance.** Moving the image first changed the acceptance of each method by at most 0.015. The difference
   between HiViS and ViSpec changed by -0.004 on TextVQA and +0.013 on COCO.
 - **Outputs.** The order changed AR's own answers. On TextVQA the mean output fell from 388 to 225 tokens, and
   exact agreement with AR rose to 28 of 100 (ViSpec) and 30 of 100 (HiViS), from 2 and 3. On COCO it was 10 and
   19 of 100, from 18 and 9.
-- **TextVQA speed.** With the image first, both speedups fell to about 1.56. The shorter answers raised the TTFT
-  share from 14.6% to 21.6% (ViSpec). In addition, each verification step took 16% (ViSpec) and 21% (HiViS)
-  longer than in the `image-last` arms of the same job, while AR steps took 5% less. The COCO steps did not change
-  (within 1.4%). The cause of the longer TextVQA steps was not examined.
+- **TextVQA speed.** Prompt order changes the TextVQA speedup by less than 3%. In job 412898, both `image-first`
+  speedups were about 1.56, because the `image-first` ViSpec and HiViS steps took 16% and 21% longer than the
+  `image-last` ones, while AR steps did not. In the rerun (412937), all six outputs are token-identical to
+  412898, and the steps take the same time in both orders: 48.6 ms against 48.6 ms for ViSpec, 47.0 ms against
+  48.6 ms for HiViS, and 31.2 ms against 31.0 ms for AR (median per sample, `image-first` against `image-last`).
+  Its `image-first` speedups are 1.885 (ViSpec) and 1.913 (HiViS), against 1.849 and 1.860 with the image last.
+- **The slow arms of job 412898.** The slow steps therefore came from when the last two arms of 412898 ran (22:17
+  to 22:36 UTC on c4-3), not from the prompt order. The slowdown is uniform across samples and does not depend on
+  answer length. The device reports show no GPU clock or temperature change at the start of those arms. Decoding
+  is host-bound, so a change in host load on the node is a candidate cause, but host load is not recorded. The
+  COCO steps of 412899 did not change between orders (within 1.4%).
+- **TTFT share.** The shorter `image-first` answers raise the TTFT share from 14.5% to 23.7% (ViSpec, 412937), yet
+  the speedup did not fall.
 
 ### Exactness checks (job 412936)
 
@@ -350,7 +371,10 @@ comparisons (AR against each speculative arm, within one prompt order), their co
 of the diagnosis job.
 
 `experiment/sweeps/20261122T020838Z_qwen7b_open_questions/` holds `coco_caption_style.py` (the caption length,
-quoting and word overlap above) and `order_step_time.py` (per-sample step times in job 412898), with their outputs.
+quoting and word overlap above) and `order_step_time.py` (per-sample step times by prompt order), with their
+outputs for job 412898. For the rerun, `order_rerun_dirs.txt` lists the twelve TextVQA order folders of 412898 and
+412937, `order_rerun_token_identity.txt` and `order_rerun_step_time.txt` hold the token identity and step times,
+and `order_rerun_sweep/` holds the methods sweep table of 412937.
 
 Each script reads only saved answer files and runs without a GPU.
 
@@ -369,9 +393,12 @@ Each script reads only saved answer files and runs without a GPU.
   differ from AR at near-ties, with their agreement next to them.
 - The parity check compares our port with HiViS's code on 20 TextVQA questions at 60-5-10 in fp16 only. Its
   token-count gate did not pass as written.
-- Every job runs its arms in the same order: AR first, then ViSpec, then HiViS. Any drift in GPU clock or
-  temperature over a 1-2 hour job falls on the later arms, so a small speed difference between methods can
-  partly reflect when an arm ran. The device report records the GPU at the start of each arm only.
+- Every job except 412937 runs its arms in the same order: AR first, then ViSpec, then HiViS. Timing inside a
+  job is not stable. In job 412898 the last two arms took 16% and 21% longer per step than the `image-last` arms
+  of the same job, and the reversed-order rerun, with identical outputs, shows that prompt order does not explain
+  it. A speed difference of a few percent between two arms of one run
+  can therefore reflect when each arm ran. The device report records the GPU at the start of each arm only, and
+  host load is not recorded.
 - `compare_metrics` refuses to pair runs from different jobs only when the draft is HiViS. A ViSpec against AR
   comparison still accepts runs from different jobs, as the 3B baselines did, so build 7B comparisons from one
   job's folders, or use `sweep_table`, which refuses to mix jobs.
