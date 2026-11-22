@@ -1,0 +1,27 @@
+\begin{table*}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4.2pt}
+\begin{tabular}{lllccccccc}
+\toprule
+& & & \multicolumn{3}{c}{Long answers} & \multicolumn{4}{c}{Short answers} \\
+\cmidrule(lr){4-6}\cmidrule(lr){7-10}
+Target & Drafter & Benchmark & Speedup & $\tau$ & Same as AR & Speedup & Quality, AR & Quality, drafter & Same as AR \\
+\midrule
+\multirow{3}{*}{\llava} & \multirow{3}{*}{\vispec} & TextVQA & \llavaLongTextvqaSpeedup & \llavaLongTextvqaAccept & \llavaLongTextvqaSame/\llavaLongTextvqaTotal & \llavaShortTextvqaSpeedup & \llavaShortTextvqaAcc & \llavaShortTextvqaAcc & \llavaShortTextvqaSame/100 \\
+ & & GQA & \llavaLongGqaSpeedup & \llavaLongGqaAccept & \llavaLongGqaSame/\llavaLongGqaTotal & \llavaShortGqaSpeedup & \llavaShortGqaAcc & \llavaShortGqaAcc & \llavaShortGqaSame/100 \\
+ & & MM-Vet & \llavaLongMmvetSpeedup & \llavaLongMmvetAccept & \llavaLongMmvetSame/\llavaLongMmvetTotal & n/a & n/a & n/a & n/a \\
+\midrule
+\multirow{2}{*}{\qwenS} & \multirow{2}{*}{\vispec} & TextVQA & \tbLongTextvqaSpeedMin to \tbLongTextvqaSpeedMax & \tbLongTextvqaAccept & \tbLongTextvqaSame/\tbLongTextvqaTotal & \tbShortTextvqaSpeedMin & \tbShortTextvqaQualAr & \tbShortTextvqaQualSpec & \tbShortTextvqaSame/\tbShortTextvqaTotal \\
+ & & COCO & \tbLongCocoSpeedMin to \tbLongCocoSpeedMax & \tbLongCocoAccept & \tbLongCocoSame/\tbLongCocoTotal & \tbShortCocoSpeedMin & \tbShortCocoQualAr & \tbShortCocoQualSpec & \tbShortCocoSame/\tbShortCocoTotal \\
+\midrule
+\multirow{4}{*}{\qwenL} & \multirow{2}{*}{\vispec} & TextVQA & \sbLongTextvqaVisSpeedMin to \sbLongTextvqaVisSpeedMax & \sbLongTextvqaVisAccept & \sbLongTextvqaVisSame/100 & \sbShortTextvqaVisSpeedMin & \sbShortTextvqaQualAr & \sbShortTextvqaVisQual & \sbShortTextvqaVisSame/100 \\
+ & & COCO & \sbLongCocoVisSpeedMin to \sbLongCocoVisSpeedMax & \sbLongCocoVisAccept & \sbLongCocoVisSame/100 & \sbShortCocoVisSpeedMin & \sbShortCocoQualAr & \sbShortCocoVisQual & \sbShortCocoVisSame/100 \\
+\cmidrule{2-10}
+ & \multirow{2}{*}{\hivis} & TextVQA & \sbLongTextvqaHivSpeedMin to \sbLongTextvqaHivSpeedMax & \sbLongTextvqaHivAccept & \sbLongTextvqaHivSame/100 & \sbShortTextvqaHivSpeedMin & \sbShortTextvqaQualAr & \sbShortTextvqaHivQual & \sbShortTextvqaHivSame/100 \\
+ & & COCO & \sbLongCocoHivSpeedMin to \sbLongCocoHivSpeedMax & \sbLongCocoHivAccept & \sbLongCocoHivSame/100 & \sbShortCocoHivSpeedMin & \sbShortCocoQualAr & \sbShortCocoHivQual & \sbShortCocoHivSame/100 \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Speculative decoding on single images.} Speedup is the mean AR latency over the mean latency of the drafter in the same job, given as the range over three jobs for long answers on the Qwen targets and from one job otherwise. $\tau$ is the mean number of accepted draft tokens per decoding step, and Same as AR counts outputs whose tokens equal those of AR. Quality is VQA accuracy for TextVQA, exact match for GQA and CIDEr-D for COCO captions. Long answers are not scored, because the strict scorers reject paragraph answers. The \llava rows come from a separate set of runs on NVIDIA A100 GPUs.}
+\label{tab:main}
+\end{table*}

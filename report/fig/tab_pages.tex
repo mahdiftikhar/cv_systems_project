@@ -1,0 +1,18 @@
+\begin{table*}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{llcccccccc}
+\toprule
+Target & Drafter & Jobs & Speedup & Decoding speedup & TTFT share & $\tau$ & Output tokens & Windows at the limit & ROUGE-1 \\
+ & & & & below the limit & of the drafter & & AR, drafter & AR, drafter & AR, drafter \\
+\midrule
+\qwenS & \vispec & \pagesJobs & \tbPagesSpeedMin to \tbPagesSpeedMax & \tbPagesDecodeMin to \tbPagesDecodeMax & \tbPagesShareMin to \tbPagesShareMax\% & \tbPagesAccept & \tbPagesLenAr, \tbPagesLenSpec & \tbPagesCapAr, \tbPagesCapSpec & \tbPagesQualAr, \tbPagesQualSpec \\
+\midrule
+\multirow{2}{*}{\qwenL} & \vispec & \sbPagesJobs & \sbPagesVisSpeedMin to \sbPagesVisSpeedMax & \sbPagesVisDecodeMin to \sbPagesVisDecodeMax & \sbPagesVisShare\% & \sbPagesVisAccept & \sbPagesArLen, \sbPagesVisLen & \sbPagesArCap, \sbPagesVisCap & \sbPagesArRouge, \sbPagesVisRouge \\
+ & \hivis & \sbPagesJobs & \sbPagesHivSpeedMin to \sbPagesHivSpeedMax & \sbPagesHivDecodeMin to \sbPagesHivDecodeMax & \sbPagesHivShare\% & \sbPagesHivAccept & \sbPagesArLen, \sbPagesHivLen & \sbPagesArCap, \sbPagesHivCap & \sbPagesArRouge, \sbPagesHivRouge \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Speculative decoding on manga page windows.} Each window holds five or six pages of \rvp, and each job runs all \pagesN windows with identical outputs for each method across jobs. The decoding speedup divides the decoding time of AR by that of the drafter over the windows where neither reaches the limit of 1,024 new tokens, \tbPagesDecodeN windows for \vispec on \qwenS and \sbPagesVisDecodeN and \sbPagesHivDecodeN for \vispec and \hivis on \qwenL. The TTFT share is the time to the first token over the latency of the drafter.}
+\label{tab:pages}
+\end{table*}

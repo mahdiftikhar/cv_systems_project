@@ -1,0 +1,23 @@
+{
+  "source": "LLaVA-1.6 Vicuna 7B runs by the teammates who ran the LLaVA experiments, as reported on slides 8 and 9 of the group's presentation (Canva design DAHacbxPvUg). Their run files are not in this repository, so these values are transcribed from those slides.",
+  "long": {
+    "textvqa": {"speedup": "1.89", "mean_output_tokens": "419", "accepted_per_step": "3", "identical": "81", "total": "100"},
+    "gqa": {"speedup": "1.54", "mean_output_tokens": "49", "accepted_per_step": "2.86", "identical": "97", "total": "100"},
+    "mmvet": {"speedup": "1.70", "mean_output_tokens": "183", "accepted_per_step": "2.85", "identical": "186", "total": "218"}
+  },
+  "short": {
+    "textvqa": {"speedup": "0.98", "accuracy_both_methods": "64.10", "identical": "100", "total": "100"},
+    "gqa": {"speedup": "0.90", "accuracy_both_methods": "60.00", "identical": "100", "total": "100"},
+    "first_token_share_min_percent": "74",
+    "first_token_share_max_percent": "82",
+    "answer_tokens_min": "2",
+    "answer_tokens_max": "4"
+  },
+  "pruned_kv": {
+    "retained_percent": ["100", "50", "25", "10", "0"],
+    "short_textvqa_accuracy": ["64.1", "63.1", "58.9", "45.6", "40.6"],
+    "max_throughput_gain_percent": "6",
+    "unpruned_prefix_match_min_percent": "86",
+    "unpruned_prefix_match_max_percent": "94"
+  }
+}

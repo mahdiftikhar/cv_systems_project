@@ -1,0 +1,73 @@
+\input{fig/method}
+
+\section{Speculative Decoding with Visual Input}
+\label{sec:method}
+
+\looseness=-1 \Cref{fig:method} traces one sample through a vision-language model with a speculative decoder and marks where each method of this report intervenes.
+
+\subsection{Decoding steps and the time to the first token}
+\label{sec:time}
+
+\noindent\textbf{Speculative decoding.}
+At each decoding step the draft model expands a tree of candidate continuations, the target model scores every node of the tree in one forward pass, and greedy acceptance keeps the longest path whose tokens equal the target's own argmax, followed by the target's next token.
+We write $\tau$ for the mean number of accepted draft tokens per step, so that one step commits $\tau + 1$ tokens where autoregressive (AR) decoding commits one.
+
+\noindent\textbf{Time decomposition.}
+The latency of a sample is $L = T + D$, where the time to the first token $T$ covers image encoding and the target's pass over the prompt, and the decoding time $D$ covers every later token.
+Speculative decoding leaves $T$ unchanged and divides $D$ by a decoding speedup $s_d$.
+With $f = T / L_{\mathrm{AR}}$ the share of autoregressive time spent before the first token, the end-to-end speedup is
+\begin{equation}
+S = \frac{L_{\mathrm{AR}}}{L_{\mathrm{spec}}} = \frac{1}{f + (1 - f) / s_d} \le \frac{1}{f},
+\label{eq:amdahl}
+\end{equation}
+which is Amdahl's law~\cite{amdahl1967validity} for a part of the work that the method cannot reach.
+A long answer has a small $f$ and inherits most of $s_d$, while a short answer or a long prompt has a large $f$ and a speedup near one.
+
+\noindent\textbf{Bytes of a decoding step.}
+At batch size one a decoding step reads the weights of the language model, $W$ bytes, and the KV cache of the $n$ tokens so far.
+With $\ell$ layers, $h$ key-value heads of dimension $d$ and $b$ bytes per value, the step reads
+\begin{equation}
+B(n) = W + n \cdot 2 \ell h d b
+\label{eq:bytes}
+\end{equation}
+bytes, where the factor two counts keys and values.
+Visual sparsity can only shrink the second term.
+
+\subsection{Visual input of the draft model}
+\label{sec:drafters}
+
+\noindent\textbf{\vispec.}
+The \vispec draft model reads each image through an adaptor whose output is $q$ learned queries, with $q = 2$ in the released checkpoints, so a page of more than a thousand image tokens reaches the draft model as two positions~\cite{kang2025vispec}.
+
+\noindent\textbf{\hivis.}
+The \hivis draft model receives the prompt with each image span removed, that is the vision start token, the image tokens, the vision end token and the token after it~\cite{xie2025hivis}.
+The remaining tokens keep their original positions, and the target's hidden states, which the draft model reads at every step, convey the image.
+The released mask removes exactly one image.
+We apply the same rule to every image in the prompt and route a prompt with one image through the released mask unchanged, which reproduces the single-image outputs exactly.
+In a manga window the pages follow one another, so the draft model sees the system turn, the user header, the instruction without its first token and the assistant header, the same text for every window.
+
+\subsection{Visual sparsity}
+\label{sec:sparsity}
+
+Both forms keep a fraction $r \in \{1, 0.75, 0.5, 0.25\}$ of each image's tokens, chosen by one of two policies.
+
+\noindent\textbf{Draft pruning} applies to the \vispec adaptor's input.
+The spatial policy keeps tokens at a uniform stride in raster order, and the attention policy keeps the tokens with the highest attention from the adaptor's learned queries.
+
+\noindent\textbf{KV eviction} removes image entries from the target's KV cache once, right after prompt processing.
+The spatial policy keeps entries at a uniform stride, and the attention policy keeps the entries that received the highest attention during prompt processing from the prompt tokens after the last image.
+The cache is sized for each sample, so evicted entries free memory.
+A third configuration applies both forms with the same budget and the same policy on both sides.
+
+\subsection{Exactness protocol}
+\label{sec:protocol}
+
+\noindent\looseness=-1\textbf{Full-precision replay.} 
+For each setting we decode the first prompts with AR and with the speculative decoder in float32, with TF32 matrix multiplication disabled, and compare the output tokens.
+Under KV eviction the AR run evicts the same entries, so the replay also checks that the eviction keeps the cache bookkeeping exact.
+
+\noindent\textbf{Divergence diagnosis.}
+For every bf16 output that differs from AR, we locate the first differing token, rebuild the prompt with the shared prefix, and run the unmodified target model on it in bf16 and in float32.
+We record the margin between the two highest logits at that position.
+A difference is a \textbf{near-tie} when the bf16 margin is at most 0.5 logits, and \textbf{unexplained} otherwise.
+A near-tie is a position where rounding alone can change the argmax, after which the two outputs continue from different prefixes.

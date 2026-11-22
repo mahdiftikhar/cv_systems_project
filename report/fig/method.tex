@@ -1,0 +1,50 @@
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  box/.style={draw=black!65, rounded corners=1.5pt, align=center, minimum height=0.75cm, inner sep=2.5pt, fill=white},
+  tgt/.style={box, fill=black!8},
+  vis/.style={box, draw=cvprviz, fill=cvprviz!8, minimum width=2.7cm},
+  hiv/.style={box, draw=cvprhiv, fill=cvprhiv!8, minimum width=2.7cm},
+  cut/.style={draw=cvprcut, dashed, rounded corners=1.5pt, align=center, inner sep=2.5pt, text=cvprcut, font=\scriptsize\itshape, fill=white},
+  arr/.style={-{Stealth[length=4pt]}, black!70, line width=0.55pt},
+  cutarr/.style={-{Stealth[length=4pt]}, cvprcut, dashed, line width=0.55pt},
+  lab/.style={font=\scriptsize, text=black!70, align=center},
+]
+% prompt processing
+\node[box, minimum width=1.9cm] (img) at (0.9, 0) {page images\\and question};
+\node[box, minimum width=1.5cm] (enc) at (3.25, 0) {vision\\encoder};
+\node[box, minimum width=2.3cm] (prompt) at (5.85, 0) {image tokens\\and text tokens};
+\node[tgt, minimum width=2.6cm] (pre) at (9.1, 0) {target model,\\one pass over the prompt};
+\node[box, minimum width=1.4cm] (first) at (13.4, 0) {first\\token};
+\draw[arr] (img) -- (enc);
+\draw[arr] (enc) -- (prompt);
+\draw[arr] (prompt) -- (pre);
+\draw[arr] (pre) -- (first);
+\draw[decorate, decoration={brace, amplitude=4pt, raise=3pt}, black!55] (img.north west) -- (first.north east)
+  node[midway, above=8pt, lab] {prompt processing, measured as the time to the first token (TTFT)};
+
+% cache between the two phases
+\node[tgt, minimum width=2.0cm] (kv) at (9.1, -1.25) {KV cache};
+\draw[arr] (pre) -- node[lab, right] {writes} (kv);
+\node[cut] (ke) at (12.05, -1.25) {KV eviction keeps a fraction\\of each image's entries};
+\draw[cutarr] (ke) -- (kv);
+
+% decoding steps
+\node[vis] (vdraft) at (4.85, -2.25) {\vispec draft model\\each image as 2 learned queries};
+\node[hiv] (hdraft) at (4.85, -3.15) {\hivis draft model\\image tokens removed};
+\node[tgt, minimum width=2.6cm] (ver) at (9.1, -2.7) {target model verifies\\the draft tree in one pass};
+\node[box, minimum width=2.2cm] (acc) at (13.4, -2.7) {longest matching prefix\\and one more token};
+\draw[arr] (5.55,-0.375) -- node[lab, right, pos=0.62] {image features} (5.55,-1.875);
+\draw[arr] (6.2, -2.7) -- node[lab, above] {draft tree} (ver.west);
+\draw[arr] (kv) -- node[lab, right] {read every step} (ver);
+\draw[arr] (ver) -- (acc);
+\draw[arr] (first) -- (acc);
+\draw[arr] (acc.south) -- ++(0,-0.55) -| node[lab, below, pos=0.25] {next decoding step} (hdraft.south);
+\node[cut] (dp) at (1.75, -1.25) {draft pruning keeps a fraction\\of each image's features};
+\draw[cutarr] (dp.east) -- (5.53, -1.25);
+\node[lab, anchor=east] at (3.35, -2.7) {decoding\\steps};
+\end{tikzpicture}
+\caption{\textbf{Where each method acts.} Prompt processing encodes the images and runs the target model once over the prompt, which ends at the first token. Each decoding step then drafts a tree of candidate tokens and verifies it with one pass of the target model, which reads its weights and the KV cache. \vispec compresses each image into two learned queries for its draft model, and \hivis removes the image tokens from its draft model's input. Dashed boxes mark the two forms of visual sparsity of \cref{sec:sparsity}, neither of which changes prompt processing.}
+\label{fig:method}
+\end{figure*}
