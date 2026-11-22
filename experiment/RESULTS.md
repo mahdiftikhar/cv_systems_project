@@ -254,8 +254,11 @@ ran 31 arms with 100 of 100 samples each.
   took 11.5% to 13.8% longer. Latency ranged from 3.2% slower (ViSpec, TextVQA) to 2.3% faster (HiViS, COCO)
   than at 30-3-8.
 - **Prompt order.** Placing the image first changed the HiViS minus ViSpec acceptance difference by -0.004
-  (TextVQA) and +0.013 (COCO). It changed AR's own TextVQA answers more (mean output 388 to 225 tokens), and
-  both TextVQA speedups fell to about 1.56.
+  (TextVQA) and +0.013 (COCO). It changed AR's own TextVQA answers more (mean output 388 to 225 tokens). In job
+  412898 both `image-first` TextVQA speedups were about 1.56, but a rerun with the arms in reverse order (job
+  412937, token-identical outputs) gave 1.885 (ViSpec) and 1.913 (HiViS) against 1.849 and 1.860 with the image
+  last. The slow steps of 412898 came from when its last two arms ran, not from the prompt order, so timing
+  inside one job can shift by up to 21% between arms.
 - **Against 3B (context only).** ViSpec's `long` acceptance is almost the same on 7B (2.181 against 2.141 on
   TextVQA, 2.287 against 2.284 on COCO), and its speedup is somewhat lower. Exact agreement on long TextVQA is
   lower (2 of 100 against 22 of 100). The 7B `short` COCO CIDEr-D (54.63 for AR) is less than half of the 3B
@@ -272,8 +275,8 @@ ran 31 arms with 100 of 100 samples each.
   20 outputs are identical, against at least 18, and all 11 differences are near-ties. HiViS's own speculative
   and AR paths agree on 0 of these 20.
 - **Limits.** The two drafters are separately trained checkpoints, so the acceptance difference compares the
-  checkpoints and cannot be attributed to the draft's visual input alone. Every arm ran once, always in the
-  order AR, ViSpec, HiViS.
+  checkpoints and cannot be attributed to the draft's visual input alone. Every arm ran once, and every job but
+  412937 ran its arms in the order AR, ViSpec, HiViS.
 
 ## 3. Visual sparsity: why it barely helps at batch 1
 
