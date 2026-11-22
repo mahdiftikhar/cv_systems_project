@@ -27,7 +27,9 @@ Predictions, written before any run:
 These predictions were written before any run. The [Results](#results) section scores them.
 
 Status: **complete** (jobs 412893 to 412899, 2026-11-21). All 31 arms ran 100 of 100 samples. Prediction 1
-held, prediction 2 did not hold, and prediction 3 held for acceptance.
+held, prediction 2 did not hold, and prediction 3 held for acceptance. The divergence diagnosis and fp32 checks
+(job 412936, 2026-11-22) passed. The parity check against HiViS's own code (job 412935) passed four of its five
+gates. The token-count gate did not pass as written, and every difference it found is a near-tie.
 
 ## Changes from the baseline
 
@@ -212,7 +214,8 @@ near zero for every method, because strict scoring rejects paragraph answers, as
 - **Agreement.** In bf16, the `long` outputs of both methods rarely match AR exactly (2 to 18 of 100). The median
   matching prefix before the first differing token is 56.5 (ViSpec) and 60.0 (HiViS) tokens on long TextVQA,
   and 72.5 and 55.0 tokens on long COCO. The `short` outputs match on 84 to 100 of 100, and the `short` quality
-  of the three methods is within 0.20 CIDEr-D and 0.0 VQA points.
+  of the three methods is within 0.20 CIDEr-D and 0.0 VQA points. Every differing pair is a bf16 near-tie (see
+  [Exactness checks](#exactness-checks-job-412936)).
 - **Memory.** The decode peak is 17.20 to 17.28 GiB for HiViS, 17.29 to 17.36 GiB for ViSpec and 17.23 to 17.33
   GiB for AR, in every AR arm and every 30-3-8 arm.
 
@@ -221,7 +224,11 @@ Compared with the 3B results (`experiment/RESULTS.md` on branch `qwen-results`, 
 speedup is somewhat lower (1.85 to 2.00 against 2.15 to 2.20 on TextVQA, 1.98 to 2.07 against 2.13 to 2.32 on COCO).
 Exact agreement on long TextVQA is lower (2 of 100 against 22 of 100). The 7B `short` COCO CIDEr-D (54.63 for AR)
 is less than half of the 3B value (121.40) on the same 100 images. The 7B AR captions are longer (19.4 output
-tokens on average, against 14.8 for 3B AR in job 398923). The cause of the lower score was not examined.
+tokens on average, against 14.8 for 3B AR in job 398923) and more descriptive. They average 15.2 words against
+12.1, 13 of 100 are wrapped in quotation marks (none for 3B), and 54% of their words occur in at least one
+reference caption, against 76% for 3B. CIDEr-D rewards words and phrases shared with the references, so this
+style fits the lower score. The three 7B methods are within 0.20 CIDEr-D of each other, so the method comparison
+is unaffected.
 
 ### Tree size (jobs 412896 and 412897)
 
@@ -260,6 +267,65 @@ identical outputs). The 60-5-10 tree raised the decode peak by about 0.10 GiB fo
   longer than in the `image-last` arms of the same job, while AR steps took 5% less. The COCO steps did not change
   (within 1.4%). The cause of the longer TextVQA steps was not examined.
 
+### Exactness checks (job 412936)
+
+Job 412936 (node c4-3, folder `JaXa78`, commit `def2e96`) ran the plan's diagnosis step after the comparison
+runs. It diagnosed the first differing token of every AR and speculative output pair in the three primary jobs,
+using the comparisons in the analysis files below, and then ran two fp32 checks.
+
+| Comparison | Job | Differing outputs | Near-ties | Unexplained | Both wrong | fp32 re-runs | fp32 prefers AR / speculative / another token |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| long TextVQA, ViSpec | 412893 | 98 | 98 | 0 | 0 | 50 | 27 / 20 / 3 |
+| long TextVQA, HiViS | 412893 | 97 | 97 | 0 | 0 | 50 | 24 / 25 / 1 |
+| long COCO, ViSpec | 412894 | 82 | 82 | 0 | 0 | 50 | 27 / 21 / 2 |
+| long COCO, HiViS | 412894 | 91 | 91 | 0 | 0 | 50 | 24 / 26 / 0 |
+| short COCO, ViSpec | 412895 | 13 | 13 | 0 | 0 | 13 | 4 / 9 / 0 |
+| short COCO, HiViS | 412895 | 16 | 16 | 0 | 0 | 16 | 6 / 10 / 0 |
+
+`short` TextVQA has no differing outputs (100 of 100 identical for both methods).
+
+- **Near-ties.** All 397 differences are near-ties. At the first differing token, the stock model's bf16
+  margin between its top two logits is at most 0.5 (median 0.0 to 0.125 per comparison).
+- **fp32 re-runs.** In the fp32 re-runs (the first 50 cases of each comparison, or all of them), the stock
+  model prefers AR's token in 112 of 229 cases, the speculative method's token in 111 and a third token in 6.
+  Neither method's token is systematically the better one.
+- **fp32 exactness.** In fp32, the 7B ViSpec draft gives the same tokens as AR on 5 of 5 long TextVQA questions
+  (`image-last`, 30-3-8), and HiViS does so on 5 of 5 long COCO images with the image first. With job 402297
+  (HiViS, 5 of 5 in each prompt order on TextVQA), the speculative methods match AR exactly on all 20 questions
+  of the four fp32 checks.
+
+Both gates of the plan passed: no unexplained or both-wrong case at the 0.5-logit threshold, and AR equal to
+the speculative method on 5 of 5 in each fp32 check. The low bf16 agreement in the tables above therefore comes
+from near-ties, as on 3B.
+
+### Parity with the HiViS reference code (job 412935)
+
+Job 412935 (node c4-2, folder `DRNcWa`, commit `def2e96`) ran HiViS's own code and our port on the same 20
+TextVQA questions, the first 20 of the 100 used above. HiViS's code ran from its checkout at `6db36b2`, in its
+own environment (torch 2.6.0, Transformers 4.54.0), offline. Both sides used the 60-5-10 tree, fp16, greedy
+decoding, at most 500 new tokens and HiViS's own prompt.
+
+| Check | Required | Result |
+| --- | --- | --- |
+| Inputs | the same samples, digests and settings on both sides | Passed, 20 of 20 |
+| Pruned token IDs, kept positions and position offset | exact integers equal | Passed, 20 of 20 |
+| First draft tree, with the drafter fed HiViS's recorded hidden states | equal trees | Passed. 14 of 20 equal in fp16. The other 6 are equal once both sides run in fp32, so they are rounding ties in the kernels |
+| Output tokens end to end | at least 18 of 20 identical, and every difference a near-tie | **Not passed as written.** 9 of 20 identical. All 11 differences are near-ties, with stock fp16 top-2 margins of 0.0 to 0.078 logits |
+| Acceptance on the identical samples | within 3% relative | Passed. 2.8646 on both sides, over 842 iterations each |
+
+- **The token gate fails on the count, not on the kind of difference.** Every difference is a near-tie. HiViS's
+  own code agrees with itself less often: its speculative and AR paths give identical tokens on 0 of 20 of these
+  outputs, and ours on 6 of 20. We read this as near-tie divergence between two different torch and Transformers
+  stacks over 500 fp16 tokens, not as a defect of the port. That reading is an inference.
+- **The checks of the port itself pass exactly.** The drafter's pruning and positions are equal, its first tree
+  is equal up to fp16 rounding ties, and where the outputs are identical the acceptance is identical.
+- **Acceptance over all 20 samples.** 2.896 on HiViS's side and 2.829 on ours (2.3% lower) by the gate's rule,
+  and 2.906 and 2.827 by HiViS's own averaging rule. The paper's 3.95 at 60-5-10 used other samples and is
+  context only.
+
+The plan treated a failed parity gate as a stop condition, but this check ran after the comparison runs. The
+outcome is recorded as not passed, with the evidence above.
+
 ### Predictions
 
 | Prediction | Cutoff | Outcome | Evidence |
@@ -279,6 +345,13 @@ identical outputs). The 60-5-10 tree raised the decode peak by about 0.10 GiB fo
   limit.
 - `pooled_decode.py` and its `.txt` output give the pooled tokens per iteration, step time and TTFT share.
 
+`experiment/sweeps/20261122T020510Z_qwen7b_comparisons/` holds the 22 same-job `compare_metrics --mode method`
+comparisons (AR against each speculative arm, within one prompt order), their commands, and the two list files
+of the diagnosis job.
+
+`experiment/sweeps/20261122T020838Z_qwen7b_open_questions/` holds `coco_caption_style.py` (the caption length,
+quoting and word overlap above) and `order_step_time.py` (per-sample step times in job 412898), with their outputs.
+
 Each script reads only saved answer files and runs without a GPU.
 
 ## Limitations
@@ -291,9 +364,11 @@ Each script reads only saved answer files and runs without a GPU.
 - Re:Verse+ on 7B and KV eviction on 7B are not run.
 - The ViSpec and HiViS drafters are separately trained checkpoints released by their authors. The acceptance
   difference compares the two checkpoints, so it cannot be attributed to the draft's visual input alone.
-- fp32 exactness was checked for HiViS (5 questions in each prompt order, job 402297), not for the 7B ViSpec
-  draft, and the bf16 divergences of these runs were not diagnosed. The 7B speedups are observed ratios with
-  their agreement next to them.
+- The fp32 checks cover 20 questions (5 per check), and the diagnosis covers the primary jobs only, with fp32
+  re-runs for the first 50 cases of each comparison. The speedups are observed ratios on bf16 outputs that
+  differ from AR at near-ties, with their agreement next to them.
+- The parity check compares our port with HiViS's code on 20 TextVQA questions at 60-5-10 in fp16 only. Its
+  token-count gate did not pass as written.
 - Every job runs its arms in the same order: AR first, then ViSpec, then HiViS. Any drift in GPU clock or
   temperature over a 1-2 hour job falls on the later arms, so a small speed difference between methods can
   partly reflect when an arm ran. The device report records the GPU at the start of each arm only.
