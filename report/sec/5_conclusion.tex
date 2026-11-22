@@ -1,0 +1,15 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+Speculative decoding keeps the output of a vision-language model.
+Full precision reproduces autoregressive decoding in all \fpqAll replayed samples, and \diagNearAll of \diagCasesAll bf16 differences are near-ties of the target's logits, with the remaining token also close to a tie in float32.
+On long answers it is \sbLongTextvqaVisSpeedMin to \sbLongCocoHivSpeedMax times faster on the Qwen targets and \llavaLongGqaSpeedup to \llavaLongTextvqaSpeedup times on \llava. Short answers see no gain because prompt processing fills nearly all of their time.
+
+Decoding needs little of the image.
+\hivis, whose draft model reads no image tokens, leads \vispec by up to \sbLongCocoHovMax times on long captions, and KV eviction cuts the live cache to \spEvictKvMin of its size without making a step cheaper, since the cache is \costTbThousand to \costTbSevenThousand\% of the bytes a step reads and the GPU is busy for at most \profileBusyMax\% of it.
+
+On manga pages the time to the first token becomes the limit.
+It takes \tbPagesShareMin to \sbPagesHivShare\% of a speculative decoder's time, which holds \vispec to \tbPagesSpeedMin to \tbPagesSpeedMax times on \qwenS and \hivis to \sbPagesHivSpeedMin to \sbPagesHivSpeedMax times on \qwenL, and the next gains for multi-page inputs lie in prompt processing, where methods that reduce image tokens before the language model act.
+
+\noindent\textbf{Limitations.}
+The two drafters come from separate training runs, \hivis reads several pages through our extension of its one-image rule, and every measurement runs at batch size one, where saved cache memory is not turned into throughput.

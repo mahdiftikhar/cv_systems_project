@@ -1,0 +1,13 @@
+\begin{abstract}
+A picture enters a vision-language model as thousands of tokens and leaves it as a few sentences of text.
+The pages of a comic multiply that input while the answer stays a single paragraph.
+Speculative decoding lets a small draft model propose several tokens that the target model verifies in one pass, and recent drafters for vision-language models compress the image or hide it from the draft model entirely.
+We evaluate the drafters \vispec and \hivis against autoregressive decoding on single-image question answering and captioning and on story summarization over windows of manga pages from \rvp.
+We also prune the draft model's visual input and evict image entries from the target's cache.
+An exactness protocol traces every disagreement with autoregressive decoding to a near-tie in the target's own logits, and full precision reproduces the autoregressive output on every sample it replays.
+Speculative decoding roughly halves the time of a long answer.
+Yet a draft model that never sees the image is as fast as one that does, and evicting most image entries leaves the cost of a decoding step almost unchanged.
+The cost of the image falls before the first token, where no drafter acts.
+Its cache entries are a few percent of the bytes each decoding step reads.
+On manga pages prompt processing takes close to half of a speculative decoder's time and holds its end-to-end gain below two times.
+\end{abstract}

@@ -1,0 +1,23 @@
+\section{Related Work}
+\label{sec:related}
+
+\noindent\looseness=-1\textbf{Speculative decoding.} 
+Speculative decoding~\cite{leviathan2023fast,chen2023accelerating} drafts tokens with a cheap model and verifies them with the target model in parallel, with an acceptance rule that preserves the target's output distribution.
+Medusa~\cite{cai2024medusa} attaches extra decoding heads to the target, and EAGLE~\cite{li2024eagle} drafts at the feature level of the target with a one-layer model.
+EAGLE-2~\cite{li2024eagle2} grows the draft into a tree whose shape adapts to the draft model's confidence, which is the tree search that every drafter in this report uses.
+
+\noindent\looseness=-1\textbf{Speculative decoding for vision-language models.} 
+A draft model for a vision-language model must choose which part of the visual input to read.
+\vispec~\cite{kang2025vispec} passes the image tokens through an adaptor that compresses each image into a few learned queries and adds a global image feature to the draft's text tokens.
+\hivis~\cite{xie2025hivis} hides the image tokens from the draft model and lets the target's hidden states carry the visual information, and SpecVLM~\cite{huang2025specvlm} trains an elastic visual compressor for an EAGLE-2 style drafter on LLaVA models.
+We take released checkpoints of \vispec and \hivis and measure them under one protocol, on single images as well as on manga page windows.
+
+\noindent\textbf{Visual token reduction and KV cache compression.}
+FastV~\cite{chen2024fastv} drops image tokens after an early layer of prompt processing, VisionZip~\cite{yang2025visionzip} selects a few dominant tokens before the language model, and PyramidDrop~\cite{xing2025pyramiddrop} removes tokens in stages across layers.
+These methods shorten prompt processing itself.
+H2O~\cite{zhang2023h2o} and SnapKV~\cite{li2024snapkv} instead evict entries from the KV cache by their attention scores, which saves memory during generation.
+The draft pruning and KV eviction of this report follow the second family and act after prompt processing, where speculative decoding acts as well.
+
+\noindent\textbf{Benchmarks.}
+TextVQA~\cite{singh2019textvqa} asks questions that require reading text in images, GQA~\cite{hudson2019gqa} tests compositional reasoning over scenes, MM-Vet~\cite{yu2024mmvet} tests integrated capabilities with open-ended answers, and COCO Captions~\cite{chen2015coco} pairs images with five reference captions each.
+Re:Verse~\cite{baranwal2025reverse} evaluates how well vision-language models read manga.

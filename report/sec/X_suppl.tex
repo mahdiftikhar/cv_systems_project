@@ -1,0 +1,104 @@
+\FloatBarrier
+
+\section{Experimental details}
+\label{sec:details}
+
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3.4pt}
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{Latency (s)} & \multicolumn{2}{c}{Speedup} & \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}
+Date & AR & \vispec & \hivis & \vispec & \hivis & TTFT \% \\
+\midrule
+\csname @@input\endcsname generated/jobs_single.tex
+\bottomrule
+\end{tabular}
+\caption{\textbf{Every single-image job.} TTFT \% is the share of the time to the first token in the latency of \vispec.}
+\label{tab:jobs-single}
+\end{table}
+
+\noindent\textbf{Prompts.}
+Every Qwen prompt begins with the same system turn, ``A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.''
+\Cref{tab:prompts} lists the instruction of each benchmark and style.
+On single images the image follows the instruction, and in a manga window the pages come first, in reading order, followed by the instruction.
+
+\begin{table}[h]
+\centering
+\footnotesize
+\begin{tabular}{p{0.24\linewidth}p{0.66\linewidth}}
+\toprule
+Benchmark and style & Instruction \\
+\midrule
+TextVQA, long & Perform an OCR task on the provided image. Please extract the text accurately and provide a detailed explanation of the process. Ensure the response is comprehensive and well-structured. \\
+TextVQA, short & Answer the question using a single word or phrase. \\
+COCO, long & Please provide a detailed description of the given image. \\
+COCO, short & Provide a one-sentence caption for the provided image. \\
+Manga window & Summarize the story told in these manga pages, in order. \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Instructions of the Qwen prompts.} TextVQA prompts also carry the question.}
+\label{tab:prompts}
+\end{table}
+
+\noindent\textbf{Image resolution.}
+Single images are limited to $1280 \times 28 \times 28$ pixels.
+Manga pages are limited to $1200 \times 28 \times 28$ pixels, so that the longest window, the 1,024 new tokens and the draft tree fit within the 8,192 positions of the \vispec draft model's rotary table for \qwenS.
+Each page passes through the vision encoder in its own call.
+
+\noindent\textbf{Cache and memory.}
+Every Qwen run sizes the KV cache for each sample, to hold the kept prompt, the new tokens and the draft tree.
+Live KV is the arithmetic size of that cache at the end of a sample.
+
+\noindent\textbf{Software.}
+All Qwen runs use PyTorch 2.7.0 with CUDA 12.8, Transformers 4.51.3 and the released checkpoints at fixed revisions.
+
+\noindent\textbf{Runs.}
+\Cref{tab:jobs-single,tab:jobs-pages} list every Qwen job whose timings enter the report, one row for each benchmark, style and job, with the date it ran.
+Each job ran on one pinned GPU, and the outputs of each method are token-identical across the jobs of one row group.
+
+\FloatBarrier
+\section{Results of every job}
+\label{sec:jobs}
+
+
+
+\begin{table}[h]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.6pt}
+\begin{tabular}{llcccccc}
+\toprule
+& & \multicolumn{3}{c}{Latency (s)} & & \multicolumn{2}{c}{Speedup} \\
+\cmidrule(lr){3-5}\cmidrule(lr){7-8}
+Target & Date & AR & \vispec & \hivis & TTFT (s) & \vispec & \hivis \\
+\midrule
+\csname @@input\endcsname generated/jobs_pages.tex
+\bottomrule
+\end{tabular}
+\caption{\textbf{Every manga-window job.} TTFT is the mean time to the first token of AR.}
+\label{tab:jobs-pages}
+\end{table}
+
+The \qwenS manga jobs show the largest spread between jobs with identical outputs.
+The AR latency of the slowest job exceeds that of the fastest by \tbPagesArSpread\%, while the speedup stays within \tbPagesSpeedMin to \tbPagesSpeedMax.
+On \qwenL the AR latency varies by \sbPagesArSpread\% across the three jobs, which ran the three methods in rotated order, and the lead of \hivis over \vispec stays at \sbPagesHovMin.
+
+\FloatBarrier
+\section{Exactness checks}
+\label{sec:exact-details}
+
+\noindent\textbf{Full-precision replays.}
+On \qwenS the replays cover the first five long TextVQA questions under three eviction settings, \fpqTbSingle samples, and the first three manga windows with the full cache, with KV eviction at a quarter and with both forms at a quarter, \fpqTbPages samples.
+On \qwenL they cover \fpqSbSingle single-image samples of \vispec and \hivis in both image positions and \fpqSbPages manga-window samples of the two drafters.
+Every replay is identical to AR.
+
+\noindent\textbf{Divergence diagnosis.}
+The diagnosis covers \diagCasesTb first differences of \vispec on \qwenS, from long and short single-image answers and from the manga windows, \diagCasesSb of \vispec and \hivis on single images of \qwenL and \diagCasesSbPages on the manga windows of \qwenL.
+All are near-ties except the two differences on the manga windows of \qwenL described in \cref{sec:exactness}.
+
+\noindent\textbf{\hivis on several images.}
+With one image the multi-image mask hands the prompt to the released mask, and five long TextVQA answers of \hivis on \qwenL are token-identical to those of the single-image runs.
+On the manga windows the full-precision replay of \hivis matches AR on all three windows, which also covers the position bookkeeping of the removed pages.

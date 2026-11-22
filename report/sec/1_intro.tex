@@ -1,0 +1,40 @@
+\section{Introduction}
+\label{sec:intro}
+
+\looseness=-1 A vision-language model answers in text, one token at a time, and each token costs a full pass over the weights of its language model.
+The answers that matter most in practice are long ones, such as a description of a photograph, the text read off a sign with an explanation of how it was read, or a summary of a story told across several comic pages.
+Before the first of those tokens appears, the model encodes every image and processes a prompt in which image tokens far outnumber the words of the question.
+A single page becomes about a thousand tokens and a run of manga pages several thousand.
+The time a user waits therefore has two parts, the processing of the prompt and the generation of the answer (\cref{fig:teaser}).
+
+\looseness=-1 Speculative decoding~\cite{leviathan2023fast,chen2023accelerating} shortens the second part without changing the output.
+A cheaper draft model proposes several tokens, and the target model checks all of them with a single forward pass and keeps the longest prefix it agrees with.
+Draft models that read the target's hidden features~\cite{li2024eagle,li2024eagle2} make this practical for language models, and recent drafters adapt it to vision-language models by deciding how much of the image the draft model sees.
+\vispec~\cite{kang2025vispec} summarizes every image with a handful of learned queries, \hivis~\cite{xie2025hivis} keeps image tokens out of the draft model's input altogether, and SpecVLM~\cite{huang2025specvlm} prunes them with an elastic compressor.
+Each reports a speedup on its own benchmarks.
+Three questions remain open about what such a speedup is made of.
+
+\noindent\textbf{Does speculative decoding keep the target's output?}
+With greedy acceptance, speculative decoding commits only tokens the target model would choose, so in exact arithmetic it reproduces autoregressive decoding token for token.
+Deployed models run in half precision, where verifying a tree of draft tokens and decoding one token at a time use different kernels and can round tied logits differently.
+Evaluations of vision-language drafters report agreement rates or task scores but leave open whether a changed output is a rounding effect or an error of the method.
+We build an \textbf{exactness protocol} that replays outputs in full precision and classifies every first difference from autoregressive decoding by the target's own logit margin (\cref{sec:exactness}).
+
+\noindent\textbf{How much of the image does decoding need?}
+Image tokens dominate the prompt, and a large body of work prunes them during prompt processing~\cite{chen2024fastv,yang2025visionzip,xing2025pyramiddrop} or evicts entries from the key-value (KV) cache~\cite{zhang2023h2o,li2024snapkv}.
+Inside speculative decoding the image can be cut in two places, at the draft model's input and in the target's cache, and a drafter blind to the image tests the extreme of the first.
+How much each cut saves depends on what a decoding step spends its time on.
+We sweep \textbf{draft pruning} and \textbf{KV eviction} over four budgets and two selection policies, compare drafters that see and do not see the image, and relate both to a \textbf{cost model} of the memory traffic of decoding (\cref{sec:visual}).
+
+\noindent\looseness=-1\textbf{How far does the gain carry to many pages?} 
+Comics, documents and slide decks reach a model as several images at once, and the manga benchmark Re:Verse~\cite{baranwal2025reverse} probes how well models follow a story across pages.
+A prompt of five or six pages holds several thousand image tokens, while \hivis was trained and released for one image per prompt.
+We pose \textbf{page-window summarization} on \rvp, an extension of Re:Verse, and extend \hivis to prompts that hold several images, removing one span per page (\cref{sec:pages}).
+
+\noindent In summary, our contributions are:
+\begin{itemize}[leftmargin=*,itemsep=1pt,topsep=2pt]
+\item A controlled comparison of autoregressive decoding with the drafter \vispec on \llava, \qwenS and \qwenL and with \hivis on \qwenL, over single-image question answering and captioning in a short-answer and a long-answer style and over multi-page story summarization. Every speedup compares two methods inside one GPU allocation, and every Qwen run records its commit, device and prompt fingerprints.
+\item An exactness protocol for speculative decoding in half precision. It decodes sampled prompts in full precision and replays the first differing token of every output that departs from autoregressive decoding, labelling each as a near-tie or an unexplained difference.
+\item A study of visual sparsity inside speculative decoding, with draft pruning, KV eviction and both together at four retention budgets under a spatial and an attention-based selection policy, together with the bytes read per decoding step and a profile of where that step spends its time.
+\item A multi-page version of \hivis and a summarization setting on \rvp that measures speculative decoding on prompts of several thousand image tokens.
+\end{itemize}
