@@ -1,7 +1,8 @@
 # Results: ViSpec speculative decoding and visual sparsity on Qwen2.5-VL-3B, with a 7B method comparison
 
-Status on 2026-11-21: Weeks 1 to 4 are measured. All 14 Re:Verse+ manga arms are complete (five Slurm jobs),
-with their fp32 check and divergence diagnosis. The ViSpec and HiViS comparison on Qwen2.5-VL-7B is complete (section 2.4). Experiments 00 and 01 (LLaVA-1.6) are an
+Status on 2026-11-22: Weeks 1 to 4 are measured. All 14 Re:Verse+ manga arms are complete (five Slurm jobs),
+with their fp32 check and divergence diagnosis. The ViSpec and HiViS comparison on Qwen2.5-VL-7B is complete on
+single images (section 2.4) and on the manga windows (section 2.5). Experiments 00 and 01 (LLaVA-1.6) are an
 earlier, separate study and are summarised in the [register](README.md), not here.
 
 **How to read this page.**
@@ -22,7 +23,7 @@ earlier, separate study and are summarised in the [register](README.md), not her
   their links resolve only in a checkout that has them.
 
 **Setup.** The target is `Qwen/Qwen2.5-VL-3B-Instruct` and the draft is `JLKang/ViSpec-Qwen2.5-VL-3B-Instruct`,
-except in section 2.4, which uses the 7B target.
+except in sections 2.4 and 2.5, which use the 7B target.
 
 - **Decoding:** bf16, greedy decoding (temperature 0), batch size 1, at most 1,024 new tokens.
 - **Draft tree:** depth 3, top-k 8, total-token 30, `num_q` 2.
@@ -73,6 +74,11 @@ what visual sparsity adds on top of it.
    2.34 times faster than AR on long answers, against 1.85 to 2.07 for ViSpec in the same jobs. It was 1.11
    times faster than ViSpec on long COCO and 1.01 to 1.04 times on long TextVQA (section 2.4). The two drafters
    were trained separately, so this compares two checkpoints, not the visual input alone.
+6. **On the 7B manga windows, HiViS stays ahead of ViSpec, and prompt processing caps both.** In three jobs
+   with identical outputs, HiViS was 1.33 to 1.43 times and ViSpec 1.19 to 1.28 times faster than AR, and HiViS
+   was 1.12 times faster than ViSpec in each job (section 2.5). TTFT is the same for all three methods and is
+   51% to 57% of the speculative methods' time. HiViS reads the pages through an extension of its one-image
+   rule, which is not HiViS as released.
 
 ## 2. Speculative decoding: ViSpec against AR
 
@@ -277,6 +283,44 @@ ran 31 arms with 100 of 100 samples each.
 - **Limits.** The two drafters are separately trained checkpoints, so the acceptance difference compares the
   checkpoints and cannot be attributed to the draft's visual input alone. Every arm ran once, and every job but
   412937 ran its arms in the order AR, ViSpec, HiViS.
+
+### 2.5 Qwen2.5-VL-7B on the manga windows: ViSpec and HiViS
+
+Experiment 11 ([11 README](11_qwen7b_reverse/README.md#results)) runs AR, ViSpec and HiViS with the 7B models of
+section 2.4 on the 55 Re:Verse+ windows of section 2.3, with the same prompts (all 55 input-ID fingerprints are
+equal). HiViS's released code removes one image from its draft's input, so here it removes each page by the same
+rule. With one image the mask is HiViS's own, and 5 of 5 TextVQA outputs equal those of experiment 10. Three jobs
+(413078, 413082 and 413084) ran the three arms in rotated order on one node, and each method gave identical
+output tokens in all three.
+
+| Job | Arm order | AR latency (s) | ViSpec speedup over AR | HiViS speedup over AR | HiViS over ViSpec | Decode-only speedup below the cap, ViSpec (44) / HiViS (47) |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| 413078 | AR, ViSpec, HiViS | 18.21 | 1.284 | 1.434 | 1.117 | 1.815 / 1.938 |
+| 413082 | ViSpec, HiViS, AR | 16.41 | 1.187 | 1.329 | 1.120 | 1.581 / 1.692 |
+| 413084 | HiViS, AR, ViSpec | 17.91 | 1.258 | 1.410 | 1.121 | 1.745 / 1.873 |
+
+In every job, ViSpec and HiViS accept 1.984 and 2.333 draft tokens per iteration. The summaries average 275.1
+(AR), 352.9 (ViSpec) and 310.5 (HiViS) tokens, and 4, 9 and 6 of them stop at the 1,024-token cap. ROUGE-1 is
+21.36, 20.52 and 20.77, and exact agreement with AR is 5 of 55 (ViSpec) and 3 of 55 (HiViS).
+
+- **Prompt processing caps the gain more than at 3B.** TTFT is 7.11 to 7.30 s for all three methods, within
+  0.1% of AR's in each job. It is 40% to 43% of AR's time, 51% of ViSpec's and 57% of HiViS's. The 7B AR
+  summaries are shorter than the 3B ones (275.1 tokens against 497.3), so decoding is a smaller part of each
+  window, and ViSpec's end-to-end speedup is lower than the 1.74 to 1.87 of section 2.3.
+- **HiViS against ViSpec.** HiViS accepts 2.33 draft tokens per iteration against 1.98, although its draft
+  prompt is the same 54 tokens for every window. It is 1.12 times faster end to end, 1.11 times per output
+  token, and 1.06 times on decode time over the 41 windows where neither method stopped at the cap. The rest of
+  the end-to-end difference comes from ViSpec's longer summaries.
+- **Timing spread.** With identical outputs, AR's mean latency varied by 11% across the jobs and the
+  speculative methods' by about 3%. The HiViS over ViSpec ratio moved by 0.004.
+- **Exactness.** In fp32, HiViS and ViSpec each give AR's tokens on 3 of 3 windows (job 413077). In the
+  diagnosis (job 413085), 49 of 50 (ViSpec) and 51 of 52 (HiViS) bf16 differences from AR are near-ties. The
+  remaining one is the same token in both pairs (window `v1_ch09_p030-034`, output index 37). Its bf16 margin is
+  0.75, but in fp32 it is 0.16 in favour of AR's token, so it is a near-tie in fp32. The gate, which uses the
+  bf16 margin, did not pass as written.
+- **Limits.** HiViS was trained on one image per prompt, so these figures describe the multi-image extension.
+  The two drafters are separately trained checkpoints. The jobs shared a node with each other and with another
+  user's job, and host load was not recorded.
 
 ## 3. Visual sparsity: why it barely helps at batch 1
 
@@ -504,6 +548,10 @@ above.
 | On 7B, ViSpec and HiViS both beat AR in the `long` style, on both benchmarks ([10](10_qwen7b_methods/README.md)) | **Held** | Speedup over AR 1.972 and 1.989 on TextVQA, 1.980 and 2.203 on COCO in the primary jobs. Every `long` speculative arm was faster than its same-job AR reference (1.550 to 2.392) |
 | HiViS's acceptance relative to ViSpec depends on prompt order, a change of at least 0.1 (10) | **Not held** | The HiViS minus ViSpec difference changed by -0.004 on TextVQA and +0.013 on COCO |
 | The 60-5-10 tree raises acceptance for both methods on both benchmarks (10) | **Held** | +0.31 (ViSpec) and +0.47 (HiViS) on TextVQA, +0.38 and +0.61 on COCO. Latency, left open, ranged from 3.2% slower to 2.3% faster |
+| On the 7B manga windows, ViSpec and HiViS beat AR by less than their lowest long TextVQA speedup on 7B (1.85 and 1.93) ([11](11_qwen7b_reverse/README.md)) | **Held** | ViSpec 1.187 to 1.284 and HiViS 1.329 to 1.434 in three jobs |
+| On the 7B manga windows, HiViS accepts at least as many draft tokens per iteration as ViSpec, in every job (11) | **Held** | 2.333 against 1.984 in each job |
+| On the 7B manga windows, ViSpec and HiViS TTFT are within 5% of AR's (11) | **Held** | TTFT method / AR 0.999 to 1.001 |
+| On the 7B manga windows, AR equals HiViS and AR equals ViSpec in fp32 on 3 of 3 windows (11) | **Held** | 3 of 3 for each method, job 413077 |
 
 ## 7. Anti-goal checklist (from the design spec)
 
@@ -552,6 +600,10 @@ above.
   cannot be attributed to the visual input alone. The parity check against HiViS's own code did not pass its
   token-count gate as written (9 of 20 identical, all differences near-ties). The experiment README is
   [10_qwen7b_methods/README.md](10_qwen7b_methods/README.md).
+- **HiViS on the 7B manga windows.** HiViS reads the pages through an extension of its one-image rule, so
+  section 2.5 does not measure HiViS as released. Its divergence gate did not pass as written: one
+  difference, shared by both methods, has a bf16 margin of 0.75 and an fp32 margin of 0.16. The experiment
+  README is [11_qwen7b_reverse/README.md](11_qwen7b_reverse/README.md).
 
 ## Data credits and terms
 

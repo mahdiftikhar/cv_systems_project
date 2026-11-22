@@ -385,7 +385,8 @@ Each script reads only saved answer files and runs without a GPU.
   before comparing text between methods.
 - The HiViS paper's numbers use a different harness (fp16, 500 new tokens, an image-first prompt, the first
   80 TextVQA test rows). They are context only and are never substituted for these results.
-- Re:Verse+ on 7B and KV eviction on 7B are not run.
+- KV eviction on 7B is not run. Re:Verse+ on 7B is measured separately, in
+  [experiment 11](../11_qwen7b_reverse/README.md).
 - The ViSpec and HiViS drafters are separately trained checkpoints released by their authors. The acceptance
   difference compares the two checkpoints, so it cannot be attributed to the draft's visual input alone.
 - The fp32 checks cover 20 questions (5 per check), and the diagnosis covers the primary jobs only, with fp32
