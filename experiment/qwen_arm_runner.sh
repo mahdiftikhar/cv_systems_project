@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared by the run.sh of experiments 05_qwen_draft_pruning, 06_qwen_kv_eviction, 08_qwen_combined_sparsity,
-# 09_qwen_reverse_longcontext and 10_qwen7b_methods.
+# 09_qwen_reverse_longcontext, 10_qwen7b_methods and 11_qwen7b_reverse.
 # Source it; do not run it. The caller sets: experiment_dir, repo_dir, sweep (reference|draft|kv|combined|methods),
 # arms (space-separated <retention>:<policy>[:<method>]; reference sweeps take `ar` and `vispec`), prompt_style, and has done
 # `set -euo pipefail` and `cd "$repo_dir"`.
@@ -232,6 +232,9 @@ qwen_run_arm() {
     cp "$repo_dir/experiment/check_cuda.sh" "$run_dir/check_cuda.sh"
     if [[ -f "$repo_dir/.preparation/assets_${asset_suite}.json" ]]; then
         cp "$repo_dir/.preparation/assets_${asset_suite}.json" "$run_dir/prepared-assets.json"
+    fi
+    if [[ " ${qwen_benchmarks} " == *" reverse_summary "* && -f "$repo_dir/.preparation/assets_reverse.json" ]]; then
+        cp "$repo_dir/.preparation/assets_reverse.json" "$run_dir/prepared-assets-reverse.json"
     fi
 
     # Use a pipeline so logging also works on systems that restrict /dev/fd.

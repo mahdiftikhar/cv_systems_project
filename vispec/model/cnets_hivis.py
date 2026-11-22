@@ -1123,7 +1123,49 @@ import json
 HIVIS_VISION_START_ID = 151652
 HIVIS_IMAGE_TOKEN_ID = 151655
 HIVIS_VIDEO_TOKEN_ID = 151656
+# <|vision_end|>, which multi_image_mask uses to find where each image ends.
+HIVIS_VISION_END_ID = 151653
 POSITION_MODES = ("original", "pruned")
+
+
+def multi_image_mask(input_ids: torch.Tensor):
+    """HiViS's ``build_mask`` rule applied to every image of a 1-D prompt.
+
+    HiViS's own ``build_mask`` handles one image. It removes ``<|vision_start|>``, the image
+    pads, ``<|vision_end|>`` and the one token after it, with an end clamp at
+    ``numel - 1``. This function removes the same span for each image in turn, counting
+    that image's own pads and keeping the same clamp. A prompt with at most one
+    ``<|vision_start|>`` goes to ``build_mask`` unchanged, so the single-image mask is
+    HiViS's exactly.
+
+    Raises ValueError unless every image is ``<|vision_start|>``, image pads only and then
+    ``<|vision_end|>``, before the next image starts.
+    """
+    starts = (input_ids == HIVIS_VISION_START_ID).nonzero().flatten().tolist()
+    if len(starts) <= 1:
+        return build_mask(input_ids)
+    ends = (input_ids == HIVIS_VISION_END_ID).nonzero().flatten().tolist()
+    if len(ends) != len(starts):
+        raise ValueError(
+            f"the prompt has {len(starts)} <|vision_start|> but {len(ends)} <|vision_end|> tokens"
+        )
+    length = input_ids.numel()
+    mask = torch.ones_like(input_ids, dtype=torch.bool)
+    for start, end, following in zip(starts, ends, starts[1:] + [length]):
+        if not start < end < following:
+            raise ValueError(
+                f"image span {start}..{end} is not closed before the next image or the end "
+                f"of the prompt ({following})"
+            )
+        count = int((input_ids[start + 1 : end] == HIVIS_IMAGE_TOKEN_ID).sum())
+        if count != end - start - 1:
+            raise ValueError(
+                f"image span {start}..{end} holds {end - start - 1 - count} tokens that are "
+                "not image pads"
+            )
+        stop = min(start + count + 1, length - 1)
+        mask[start : stop + 2] = False
+    return mask
 
 
 class HiViSDraft(Model):
@@ -1151,6 +1193,12 @@ class HiViSDraft(Model):
     token is ``<|im_end|>``, so only ``\\n<|im_start|>assistant\\n`` follows the image in the
     draft's prompt. With the image first it is the first question token, as in HiViS's own
     evaluation. A prompt without an image keeps every token, and ``add`` stays 0.
+
+    With several images, as in the Re:Verse+ page windows, ``multi_image_mask`` removes the
+    same span for each image. The pages there follow one another, so the token after each
+    page's ``<|vision_end|>`` is the next page's ``<|vision_start|>``, and after the last page
+    it is the first instruction token, as with one image placed first. HiViS was trained and
+    released for one image per prompt, so several images are an extension of it.
 
     The class attribute ``position_mode`` is ``"original"``. Setting it to ``"pruned"`` gives
     the kept prompt tokens the positions ``0 .. P-1`` instead, so ``add`` is 0. Only a
@@ -1208,26 +1256,20 @@ class HiViSDraft(Model):
         self.add = 0
 
     def keep_mask(self, prompt_ids, image_mask=None):
-        """HiViS's keep mask (``build_mask``) for one prompt row, after the guards.
+        """HiViS's keep mask for one prompt row, after the guards.
 
-        ``prompt_ids`` is 1-D, the prompt without the first generated token. Raises
-        ValueError for more than one ``<|vision_start|>`` (HiViS's ``.item()`` would fail,
-        and it was trained on one image), for any video pad, and for an image position
-        outside the removed span. The image positions are those of ``image_mask`` (when
-        given, one flag per prompt token) and the image pads in ``prompt_ids``.
+        ``prompt_ids`` is 1-D, the prompt without the first generated token. With at most one
+        image the mask is HiViS's ``build_mask``, and with several it is ``multi_image_mask``,
+        the same rule for each image. Raises ValueError for any video pad and for an image
+        position outside the removed spans. The image positions are those of ``image_mask``
+        (when given, one flag per prompt token) and the image pads in ``prompt_ids``.
         """
         if prompt_ids.dim() != 1:
             raise ValueError(f"prompt_ids must be 1-D, got shape {tuple(prompt_ids.shape)}")
-        starts = int((prompt_ids == self.vision_start_id).sum())
-        if starts > 1:
-            raise ValueError(
-                f"the HiViS draft takes at most one image, but the prompt has {starts} "
-                "<|vision_start|> tokens"
-            )
         videos = int((prompt_ids == self.video_token_id).sum())
         if videos:
             raise ValueError(f"the HiViS draft takes no video, but the prompt has {videos} video pads")
-        keep = build_mask(prompt_ids)
+        keep = multi_image_mask(prompt_ids)
         image_positions = {"image pad ids": prompt_ids == self.image_token_id}
         if image_mask is not None:
             image_mask = image_mask.reshape(-1)
@@ -1341,6 +1383,12 @@ def load_hivis_draft(config_path, state_dict, total_token, depth, top_k, thresho
         raise ValueError(
             "the HiViS draft needs a checkpoint with a 'residual' tensor; "
             f"none was found (config {config_path})"
+        )
+    vision_end_id = getattr(base_config, "vision_end_token_id", None)
+    if vision_end_id != HIVIS_VISION_END_ID:
+        raise ValueError(
+            f"the HiViS draft needs the Qwen2.5-VL vision end id {HIVIS_VISION_END_ID}, "
+            f"got {vision_end_id}"
         )
     config = EConfig.from_pretrained(config_path)
     with open(config_path, "r") as f:

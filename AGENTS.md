@@ -48,6 +48,9 @@
   `Irisssme/HiViS-Qwen2.5-VL-7B-Instruct`, on the same TextVQA and COCO Captions subsets, in both prompt
   styles. This extends the scope to a 7B Qwen model by the user's decision of 2026-11-05. Experiments 02
   to 09 stay on the 3B model.
+- Experiment 11 (`experiment/11_qwen7b_reverse`) runs autoregressive decoding, ViSpec and HiViS with the same
+  7B models on the 55 Re:Verse+ page windows of experiment 09, by the user's decision of 2026-11-22. The
+  HiViS draft takes several images there through an extension of its one-image rule.
 - The Qwen experiments (02 to 09, including the 04 profile, the 05 and 06 sparsity experiments, the 07 drift probe, the 08 combined sparsity experiment and the 09 Re:Verse long-context experiment) use `Qwen/Qwen2.5-VL-3B-Instruct` and
   `JLKang/ViSpec-Qwen2.5-VL-3B-Instruct` on TextVQA and COCO Captions in both the
   `long` and `short` prompt styles, with Re:Verse page windows added later. They run
