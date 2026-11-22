@@ -230,11 +230,6 @@ def draft_sparsity_config(args):
 def check_arguments(parser, args):
     if args.method == "autoregressive" and args.temperature > 1e-5:
         parser.error("--method autoregressive is greedy only; use --temperature 0.0")
-    if args.method == "hivis" and args.benchmark == "reverse_summary":
-        parser.error(
-            "--method hivis cannot run reverse_summary: its prompts hold several page images "
-            "and the HiViS draft handles one image per prompt"
-        )
     if args.num_samples < 1:
         parser.error("--num-samples must be positive")
     try:
