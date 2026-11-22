@@ -10,8 +10,10 @@ from typing import Optional
 import torch
 import torch.nn as nn
 from huggingface_hub import hf_hub_download
+from safetensors import safe_open
 from transformers import AutoConfig, AutoTokenizer
 
+from .cnets_hivis import load_hivis_draft
 from .cnets_ours import Model
 from .configs import EConfig
 from .kv_cache import (
@@ -38,6 +40,45 @@ from .sparsity import SparsityConfig, keep_positions, kept_per_image
 from .utils import *
 
 QWEN2_5_VL = "Qwen2_5_VLForConditionalGeneration"
+# The draft network SpecModel builds: the ViSpec draft (cnets_ours.Model, the default) or
+# the HiViS draft (cnets_hivis.HiViSDraft).
+DRAFT_METHODS = ("vispec", "hivis")
+
+
+def check_draft_method(draft_method):
+    """Raise ValueError unless ``draft_method`` is one of ``DRAFT_METHODS``."""
+    if draft_method not in DRAFT_METHODS:
+        raise ValueError(f"draft_method must be one of {DRAFT_METHODS}, got {draft_method!r}")
+
+
+def check_draft_checkpoint(spec_model_path, draft_method):
+    """Raise ValueError if the draft checkpoint does not match ``draft_method``.
+
+    Reads only the tensor names of ``<spec_model_path>/model.safetensors``. A ``residual``
+    tensor marks a HiViS checkpoint and ``imadpt.q`` a ViSpec one. ``"hivis"`` needs a HiViS
+    checkpoint, and ``"vispec"`` refuses one. The check is skipped when that file is absent
+    or a ``pytorch_model.bin`` sits next to it, because the loader then reads the ``.bin``
+    file (the LLaVA drafts) or downloads from the Hub.
+    """
+    path = os.path.join(spec_model_path, "model.safetensors")
+    if not os.path.exists(path) or os.path.exists(
+        os.path.join(spec_model_path, "pytorch_model.bin")
+    ):
+        return
+    with safe_open(path, framework="pt", device="cpu") as f:
+        names = set(f.keys())
+    is_hivis = "residual" in names
+    is_vispec = "imadpt.q" in names
+    if draft_method == "hivis" and not is_hivis:
+        kind = "a ViSpec checkpoint" if is_vispec else "not a HiViS checkpoint"
+        raise ValueError(
+            f"draft_method='hivis' needs a HiViS draft (a 'residual' tensor), but {path} is {kind}"
+        )
+    if draft_method == "vispec" and is_hivis:
+        raise ValueError(
+            f"draft_method='vispec' was given a HiViS draft checkpoint ({path} has a "
+            "'residual' tensor); use draft_method='hivis'"
+        )
 
 
 def check_kv_layout(kv_layout, architecture):
@@ -211,9 +252,12 @@ class SpecModel(nn.Module):
         slim_prefill: bool = False,
         kv_capacity: int | None = None,
         kv_layout: str = "fixed",
+        draft_method: str = "vispec",
     ):
 
+        check_draft_method(draft_method)
         super().__init__()
+        self.draft_method = draft_method
         self.base_model = base_model
         self.config = base_model.config
         # The compact layout needs the Qwen2.5-VL KV fork itself, not only its name.
@@ -248,22 +292,34 @@ class SpecModel(nn.Module):
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.base_model_name_or_path, use_fast=False
         )
-        config = EConfig.from_pretrained(spec_model_path)
-        with open(spec_model_path, "r") as f:
-            con = json.loads(f.read())
-        try:
-            bias = con["bias"]
-        except:
-            bias = True
-        self.spec_layer = Model(
-            config,
-            bias=bias,
-            total_tokens=total_token,
-            depth=depth,
-            top_k=top_k,
-            threshold=threshold,
-            num_q=num_q,
-        )
+        if draft_method == "hivis":
+            # Built and loaded with strict=True; num_q has no meaning for this draft.
+            self.spec_layer = load_hivis_draft(
+                spec_model_path,
+                spec_layer_state_dict,
+                total_token,
+                depth,
+                top_k,
+                threshold,
+                self.config,
+            )
+        else:
+            config = EConfig.from_pretrained(spec_model_path)
+            with open(spec_model_path, "r") as f:
+                con = json.loads(f.read())
+            try:
+                bias = con["bias"]
+            except:
+                bias = True
+            self.spec_layer = Model(
+                config,
+                bias=bias,
+                total_tokens=total_token,
+                depth=depth,
+                top_k=top_k,
+                threshold=threshold,
+                num_q=num_q,
+            )
 
         low_memory = False
 
@@ -279,7 +335,7 @@ class SpecModel(nn.Module):
 
         else:
             self.spec_layer.diff_device = False
-        if spec_layer_state_dict is not None:
+        if draft_method == "vispec" and spec_layer_state_dict is not None:
             # self.spec_layer.load_state_dict(spec_layer_state_dict, strict=True)
             missing_keys, unexpected_keys = self.spec_layer.load_state_dict(
                 spec_layer_state_dict, strict=False
@@ -313,12 +369,15 @@ class SpecModel(nn.Module):
         slim_prefill: bool = False,
         kv_capacity: int | None = None,
         kv_layout: str = "fixed",
+        draft_method: str = "vispec",
         **kwargs,
     ):
         # assert Type=="LLaMA" or "Mixtral"
+        check_draft_method(draft_method)
         Type = AutoConfig.from_pretrained(base_model_path).architectures[0]
         # Fail before any weights load.
         check_kv_layout(kv_layout, Type)
+        check_draft_checkpoint(spec_model_path, draft_method)
         if Type == "LlamaForCausalLM":
             base_model = KVLlamaForCausalLM.from_pretrained(base_model_path, **kwargs)
         elif Type == "Qwen2ForCausalLM":
@@ -375,6 +434,7 @@ class SpecModel(nn.Module):
             slim_prefill=slim_prefill,
             kv_capacity=kv_capacity,
             kv_layout=kv_layout,
+            draft_method=draft_method,
         )
 
         if total_token == -1:
@@ -476,7 +536,8 @@ class SpecModel(nn.Module):
         on_kv_compacted=None,
         **kwargs,
     ):
-        """ViSpec generation.
+        """Speculative generation with the ViSpec draft or, with ``draft_method="hivis"``,
+        the HiViS draft.
 
         ``kv_sparsity`` (a ``SparsityConfig``, compact layout only) evicts image positions
         from the target KV cache once, after ``initialize_tree``: the first token and the
@@ -486,7 +547,8 @@ class SpecModel(nn.Module):
         to the kept tokens before the draft's image adaptor compresses them to ``num_q``
         rows. Only the draft's prefill forward (in ``initialize_tree``) takes the image
         branch; later draft calls reuse the draft's own KV. The target is unchanged.
-        ``None`` prunes nothing.
+        ``None`` prunes nothing. The HiViS draft sees no image tokens, so it refuses
+        ``draft_sparsity``.
 
         ``on_kv_compacted()`` (compact layout only) is called once, right after the target
         cache is compacted and the prefill-sized buffer is released, before decoding goes on.
@@ -498,6 +560,10 @@ class SpecModel(nn.Module):
             )
         check_kv_sparsity(kv_sparsity, self.kv_layout)
         check_draft_sparsity(draft_sparsity)
+        if draft_sparsity is not None and self.draft_method == "hivis":
+            raise ValueError(
+                "draft_sparsity is not supported with the HiViS draft, which sees no image tokens"
+            )
 
         if is_llama3:
             stop_token_id = self.tokenizer.convert_tokens_to_ids("<|eot_id|>")

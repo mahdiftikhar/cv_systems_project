@@ -165,6 +165,68 @@ def refuse_unreproducible_eviction(*runs):
                 )
 
 
+DRAFT_NAMES = {"vispec_speculative": "ViSpec", "hivis_speculative": "HiViS"}
+DEFAULT_PROMPT_ORDER = "image-last"  # same as the evaluator default (benchmarks.PROMPT_ORDERS[0])
+
+
+def run_prompt_orders(run):
+    """The prompt orders a run recorded, from each runtime.json ``generation_args``.
+
+    An absent value (every run before the option existed) means image-last. A metadata.txt
+    ``prompt_order`` line, when present, counts as well.
+    """
+    orders = set()
+    for path in sorted((run / "results").glob("*_test/*/*.runtime.json")):
+        args = json.loads(path.read_text()).get("generation_args") or {}
+        orders.add(args.get("prompt_order") or DEFAULT_PROMPT_ORDER)
+    declared = (metadata(run).get("prompt_order") or "").strip()
+    if declared:
+        orders.add(declared)
+    return orders or {DEFAULT_PROMPT_ORDER}
+
+
+def check_prompt_order(original_run, draft_run):
+    """Return the one prompt order both runs used; refuse a mismatch or a mixed run."""
+    orders = {"original": run_prompt_orders(original_run), "draft": run_prompt_orders(draft_run)}
+    for name, values in orders.items():
+        if len(values) > 1:
+            raise ValueError(
+                f"The {name} run records several prompt orders: {sorted(values)}"
+            )
+    original, draft = (next(iter(v)) for v in orders.values())
+    if original != draft:
+        raise ValueError(
+            f"prompt_order differs between the runs: {original!r} vs {draft!r}; the prompt "
+            "cannot be rebuilt for both. No diagnosis was run."
+        )
+    return original
+
+
+def check_runs(comparison, original_meta, draft_meta, original_run, draft_run):
+    """Method, prompt style and prompt order checks; return (name of the draft method,
+    prompt style, prompt order). Loads no model."""
+    if comparison.get("mode", "method") == "sparsity":
+        # Reference and candidate share one method (AR or ViSpec).
+        methods = {original_meta.get("method"), draft_meta.get("method")}
+        if len(methods) != 1 or not methods <= {"autoregressive", "vispec_speculative"}:
+            raise ValueError(
+                f"Sparsity-mode runs must share one method, got {sorted(methods, key=repr)}"
+            )
+    else:
+        if original_meta.get("method") != "autoregressive":
+            raise ValueError(f"{original_run} is not an autoregressive run")
+        if draft_meta.get("method") not in DRAFT_NAMES:
+            raise ValueError(f"{draft_run} is not a ViSpec or HiViS run")
+    prompt_style = original_meta.get("prompt_style")
+    if not prompt_style or prompt_style != draft_meta.get("prompt_style"):
+        raise ValueError(
+            f"prompt_style differs or is missing: {prompt_style!r} vs "
+            f"{draft_meta.get('prompt_style')!r}"
+        )
+    prompt_order = check_prompt_order(original_run, draft_run)
+    return DRAFT_NAMES.get(draft_meta.get("method"), "ViSpec"), prompt_style, prompt_order
+
+
 def collect_cases(comparison, original_run, draft_run):
     """Mismatches whose report indices point at the two given run folders."""
     original_runs = [report_run_dir(p) for p in comparison["original_reports"]]
@@ -314,11 +376,14 @@ def inspect(logits, case, tokenizer):
     }
 
 
-def run_pass(model, cases, processor, samples, prompt_style, label, check_prompt):
+def run_pass(model, cases, processor, samples, prompt_style, label, check_prompt,
+             prompt_order=DEFAULT_PROMPT_ORDER):
     mismatched = []
     for number, case in enumerate(cases, 1):
         sample = samples[case["benchmark"]][str(case["question_id"])]
-        inputs = build_inputs(processor, case["benchmark"], sample, prompt_style, DEVICE)
+        # The keyword is passed only for a non-default order, so image-last calls are unchanged.
+        extra = {} if prompt_order == DEFAULT_PROMPT_ORDER else {"prompt_order": prompt_order}
+        inputs = build_inputs(processor, case["benchmark"], sample, prompt_style, DEVICE, **extra)
         if check_prompt:
             rebuilt = fingerprint(inputs["input_ids"])
             recorded = {
@@ -516,6 +581,14 @@ def token_ref(case, key):
 
 def write_markdown(path, result):
     summary = result["summary"]
+    # The JSON keeps "vispec" for the draft side; the markdown names the draft run's method.
+    name = result["inputs"].get("draft_method_name", "ViSpec")
+    tag = name.lower()
+
+    def side(value):
+        return tag if value == "vispec" else value
+
+    order = result["inputs"].get("prompt_order")
     lines = ["# Greedy divergence diagnosis", ""]
     if summary["prompt_fingerprint_mismatches"]:
         lines += [
@@ -527,9 +600,10 @@ def write_markdown(path, result):
     lines += [
         f"Comparison: `{result['inputs']['comparison']['path']}`. Original run: "
         f"`{result['inputs']['original_run']}`. Draft run: `{result['inputs']['draft_run']}`. "
-        f"Prompt style: `{result['inputs']['prompt_style']}`.",
+        f"Prompt style: `{result['inputs']['prompt_style']}`."
+        + (f" Prompt order: `{order}`." if order else ""),
         "",
-        "For every turn whose greedy autoregressive (AR) and ViSpec token sequences differ, "
+        f"For every turn whose greedy autoregressive (AR) and {name} token sequences differ, "
         "the prompt is rebuilt, the shared output prefix (AR IDs before the first differing "
         "zero-based index) is appended, and one full forward pass of the stock "
         f"`transformers.Qwen2_5_VLForConditionalGeneration` "
@@ -540,7 +614,7 @@ def write_markdown(path, result):
         f"than {BOTH_WRONG_GAP} below the bf16 maximum; otherwise it is `near_tie` when the "
         f"bf16 margin is at most {NEAR_TIE_MARGIN}, else `unexplained`. "
         "`bf16 agrees` / `fp32 agrees` say whether that pass's argmax equals the AR token, "
-        "the ViSpec token, or neither. The fp32 pass (TF32 disabled) runs for at most "
+        f"the {name} token, or neither. The fp32 pass (TF32 disabled) runs for at most "
         f"{result['settings']['fp32_limit']} cases in sorted order; other cases show "
         "`not_run`.",
         "",
@@ -555,7 +629,7 @@ def write_markdown(path, result):
         "",
         "## Counts",
         "",
-        "| Benchmark | Cases | near_tie | unexplained | both_wrong | fp32 agrees ar | fp32 agrees vispec | fp32 agrees neither | fp32 not run |",
+        f"| Benchmark | Cases | near_tie | unexplained | both_wrong | fp32 agrees ar | fp32 agrees {tag} | fp32 agrees neither | fp32 not run |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     rows = [*summary["per_benchmark"].items(), ("all", summary["overall"])]
@@ -581,9 +655,9 @@ def write_markdown(path, result):
         )
     lines += [
         "",
-        "## AR vs ViSpec token logit gap (logits)",
+        f"## AR vs {name} token logit gap (logits)",
         "",
-        "`|AR token logit - ViSpec token logit|` in each pass; ended sequences are left out.",
+        f"`|AR token logit - {name} token logit|` in each pass; ended sequences are left out.",
         "",
         "| Benchmark | Pass | Cases | Min | Median | Max |",
         "| --- | --- | ---: | ---: | ---: | ---: |",
@@ -598,13 +672,13 @@ def write_markdown(path, result):
     lines += ["", "## Ended sequences", ""]
     if summary["ended_sequences"]:
         lines += [
-            "| Benchmark | Question | Choice/turn | First diff | Ended | AR stop reason | ViSpec stop reason | Class |",
+            f"| Benchmark | Question | Choice/turn | First diff | Ended | AR stop reason | {name} stop reason | Class |",
             "| --- | --- | --- | ---: | --- | --- | --- | --- |",
         ]
         for row in summary["ended_sequences"]:
             lines.append(
                 f"| {row['benchmark']} | {row['question_id']} | {row['choice']}/{row['turn']} | "
-                f"{row['first_mismatch_index']} | {row['ended']} | {row['original_stop_reason']} | "
+                f"{row['first_mismatch_index']} | {side(row['ended'])} | {row['original_stop_reason']} | "
                 f"{row['draft_stop_reason']} | {row['class']} |"
             )
     else:
@@ -617,7 +691,7 @@ def write_markdown(path, result):
         "Top-1 is `torch.argmax` (first maximal index, the decoders' tie-break); top-2 is the "
         "best remaining token. `bf16 ties` counts tokens whose bf16 logit equals the maximum.",
         "",
-        "| Benchmark | Question | Choice/turn | Runs (orig/draft) | First diff | AR token | ViSpec token | bf16 top-1 | bf16 top-2 | bf16 margin | bf16 ties | bf16 agrees | fp32 margin | fp32 agrees | Class | Prompt match |",
+        f"| Benchmark | Question | Choice/turn | Runs (orig/draft) | First diff | AR token | {name} token | bf16 top-1 | bf16 top-2 | bf16 margin | bf16 ties | bf16 agrees | fp32 margin | fp32 agrees | Class | Prompt match |",
         "| --- | --- | --- | --- | ---: | --- | --- | --- | --- | ---: | ---: | --- | ---: | --- | --- | --- |",
     ]
     for case in result["cases"]:
@@ -627,8 +701,8 @@ def write_markdown(path, result):
             f"{case['original_run_index']}/{case['draft_run_index']} | {case['first_mismatch_index']} | "
             f"{token_ref(case, 'ar')} | {token_ref(case, 'vispec')} | {token_cell(bf16['top2'][0])} | "
             f"{token_cell(bf16['top2'][1])} | {fmt(bf16['margin'])} | "
-            f"{bf16['tokens_tied_at_max']} | {bf16['agrees']} | "
-            f"{fmt(fp32['margin']) if fp32 else 'n/a'} | {case['fp32_agrees']} | "
+            f"{bf16['tokens_tied_at_max']} | {side(bf16['agrees'])} | "
+            f"{fmt(fp32['margin']) if fp32 else 'n/a'} | {side(case['fp32_agrees'])} | "
             f"{case['class']} | {case['prompt_fingerprint_matches']} |"
         )
     lines.append("")
@@ -643,24 +717,9 @@ def main(argv=None):
     comparison = json.loads(args.comparison.read_text())
     original_meta, draft_meta = metadata(original_run), metadata(draft_run)
     refuse_unreproducible_eviction(original_run, draft_run)
-    if comparison.get("mode", "method") == "sparsity":
-        # Reference and candidate share one method (AR or ViSpec).
-        methods = {original_meta.get("method"), draft_meta.get("method")}
-        if len(methods) != 1 or not methods <= {"autoregressive", "vispec_speculative"}:
-            raise ValueError(
-                f"Sparsity-mode runs must share one method, got {sorted(methods, key=repr)}"
-            )
-    else:
-        if original_meta.get("method") != "autoregressive":
-            raise ValueError(f"{original_run} is not an autoregressive run")
-        if draft_meta.get("method") != "vispec_speculative":
-            raise ValueError(f"{draft_run} is not a ViSpec run")
-    prompt_style = original_meta.get("prompt_style")
-    if not prompt_style or prompt_style != draft_meta.get("prompt_style"):
-        raise ValueError(
-            f"prompt_style differs or is missing: {prompt_style!r} vs "
-            f"{draft_meta.get('prompt_style')!r}"
-        )
+    draft_name, prompt_style, prompt_order = check_runs(
+        comparison, original_meta, draft_meta, original_run, draft_run
+    )
 
     cases, skipped = collect_cases(comparison, original_run, draft_run)
     result_files = attach_ids(cases, original_run, draft_run)
@@ -695,7 +754,8 @@ def main(argv=None):
         model = load_model(args.base_model_path, torch.bfloat16)
         attn = model.config._attn_implementation
         mismatched = run_pass(
-            model, cases, processor, samples, prompt_style, "bf16", check_prompt=True
+            model, cases, processor, samples, prompt_style, "bf16", check_prompt=True,
+            prompt_order=prompt_order,
         )
         del model
         gc.collect()
@@ -707,7 +767,8 @@ def main(argv=None):
         torch.set_float32_matmul_precision("highest")
         model = load_model(args.base_model_path, torch.float32)
         run_pass(
-            model, fp32_cases, processor, samples, prompt_style, "fp32", check_prompt=False
+            model, fp32_cases, processor, samples, prompt_style, "fp32", check_prompt=False,
+            prompt_order=prompt_order,
         )
         del model
 
@@ -738,6 +799,8 @@ def main(argv=None):
             "base_model_path": str(Path(args.base_model_path).resolve()),
             "run_base_models": [original_meta.get("base_model"), draft_meta.get("base_model")],
             "prompt_style": prompt_style,
+            **({"draft_method_name": draft_name} if draft_name != "ViSpec" else {}),
+            **({"prompt_order": prompt_order} if prompt_order != DEFAULT_PROMPT_ORDER else {}),
         },
         "settings": {
             "model_class": "transformers.Qwen2_5_VLForConditionalGeneration",
@@ -757,9 +820,14 @@ def main(argv=None):
                 f"more than {BOTH_WRONG_GAP} below the bf16 max; otherwise near_tie if bf16 "
                 f"margin <= {NEAR_TIE_MARGIN}, else unexplained"
             ),
-            "ar_vispec_logit_gap": "|AR token logit - ViSpec token logit| in that pass; None when a sequence ended",
+            "ar_vispec_logit_gap": f"|AR token logit - {draft_name} token logit| in that pass; None when a sequence ended",
             "gate_passes": "true when unexplained + both_wrong == 0",
-            "agrees": "whether that pass's argmax equals the AR token, the ViSpec token, or neither",
+            "agrees": f"whether that pass's argmax equals the AR token, the {draft_name} token, or neither"
+            + (
+                f"; the value 'vispec' in this JSON means the draft run's token ({draft_name})"
+                if draft_name != "ViSpec" or prompt_order != DEFAULT_PROMPT_ORDER
+                else ""
+            ),
             "argmax": "torch.argmax, the first maximal index (decoder tie-break); top-2 is the best remaining token",
             "tokens_tied_at_max": "number of vocabulary entries whose logit equals the argmax logit",
         },

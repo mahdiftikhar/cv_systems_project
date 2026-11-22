@@ -363,6 +363,16 @@ Record verified per-benchmark results in the experiment guides and register,
 with hardware and artifact links. Inspect output counts and quality and repeat
 runs before drawing broader conclusions.
 
+### HiViS and prompt order in method mode
+
+The draft group may hold ViSpec runs or HiViS runs (`method` `hivis_speculative`), not a mix, and
+the title reads `# Original vs HiViS` for HiViS. Without a HiViS run the `spec_model` guard is
+unchanged: one value across all reports. With a HiViS draft group, each group must share one
+`spec_model`, because the autoregressive runs record the ViSpec draft they load and do not use.
+Every other guard is unchanged. A new guard requires one `generation_args.prompt_order` across all
+reports of a benchmark; an absent value counts as `image-last`. Sparsity mode still accepts only
+autoregressive or ViSpec runs.
+
 ### Sparsity mode
 
 `--mode sparsity` compares a sparsity arm (`--draft`, the candidate) with the same
@@ -422,6 +432,11 @@ no `runtime.json`, or an answer file has none beside it, the tool also reads
 source gives a value (no `metadata.txt`, or no `kv_retention` key in it, as in a 02 or 03
 reference) or the value is not a number, the run is refused as well, because its eviction
 setting is unknown.
+
+`diagnose_divergence` also accepts a HiViS run as the draft run in method mode. It rebuilds the prompts
+with the runs' `prompt_order` (absent means `image-last`), and refuses the pair, before any model
+loads, when the two runs differ. Labels that name the draft method use "HiViS" for a HiViS run; the
+output for ViSpec runs is unchanged.
 
 ### Offset check (`offset_check`)
 
@@ -489,6 +504,20 @@ python -m vispec.evaluation.sweep_table --run-dirs <run>... --output-dir experim
 - `kv_min_kept_per_image`, `kv_image_tokens`, `draft_min_kept_per_image` and the
   `post_compaction_peak_allocated_gib` memory field are read when present. Week 2 runs lack them,
   and their cells stay empty.
+
+### Methods layout
+
+`sweep_table --layout methods` (default `--layout sweep`) tables autoregressive, ViSpec and HiViS
+runs. The default layout refuses HiViS runs, any tree other than 30-3-8 and any prompt order other
+than `image-last`, and names `--layout methods`. Runs are grouped by (prompt style, Slurm job) with
+the same final-attempt, single-GPU and allocation checks. `spec_model` is shared within the
+autoregressive and ViSpec runs together, and within the HiViS runs. Prompt fingerprints are checked
+per benchmark, prompt order and sample. The layout refuses runs with sparsity settings, and more than
+one completed folder per method, tree and prompt order. It writes one row per method, tree (total
+tokens, depth and top-k, for example `30-3-8`), prompt order and benchmark. `speedup_vs_ar` is the AR
+mean latency over the row's, taken from the AR run of the same job and prompt order. `speedup_vs_vispec`
+(HiViS rows) uses the ViSpec run at the same tree, and `speedup_vs_tree_30_3_8` (60-5-10 rows) uses
+the same method at 30-3-8. A missing reference gives an empty cell and a note.
 
 ## Trade-off plots (Week 5)
 

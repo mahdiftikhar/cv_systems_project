@@ -83,6 +83,11 @@ def parse_args(argv=None):
     add_generation_arguments(parser)
     parser.set_defaults(num_samples=3)
     args = parser.parse_args(argv)
+    if args.method == "hivis":
+        parser.error(
+            "--method hivis is not profiled; the step counting here knows only "
+            "autoregressive and vispec"
+        )
     check_arguments(parser, args)
     return args
 
@@ -399,7 +404,14 @@ def run(args):
         f"prompt_style={args.prompt_style} samples={len(samples)} device={device}"
     )
     inputs = [
-        build_inputs(processor, args.benchmark, sample, args.prompt_style, device=device)
+        build_inputs(
+            processor,
+            args.benchmark,
+            sample,
+            args.prompt_style,
+            device=device,
+            prompt_order=args.prompt_order,
+        )
         for sample in samples
     ]
 
